@@ -99,3 +99,22 @@ Not a PRD gap, but a consequence of one. All three client flavours share
 `type: client`, so composition nodes cannot be a zod discriminated union. A plain
 union reports every branch's complaints, which is unusable on a node face.
 `flattenIssues` in `validate.ts` picks the branch with the fewest issues.
+
+## 9. "Write zero auth code" — kept, with one exception
+
+§12 puts auth in IAP: no user table, no passwords, no sessions. That is followed
+exactly — `owner_id` is the subject IAP asserts and there is no users table.
+
+**The exception:** the `x-goog-authenticated-user-*` headers are trustworthy only if
+nothing can reach the service except through IAP. That is an ingress setting, and an
+ingress setting is one console click from turning the app into an open door that
+still looks authenticated. So the signed assertion (`x-goog-iap-jwt-assertion`) is
+verified against Google's JWKS in production. ~40 lines, in
+`apps/api/src/http/identity.ts`.
+
+Config refuses to boot on the combinations that fail open: a dev identity in
+production, or verification enabled without an audience. Production without
+verification is legal but warns loudly at boot.
+
+**To reverse:** set `CIVIL_VERIFY_IAP_JWT=false`, which drops back to trusting the
+headers. Only correct if Terraform has ingress locked to the load balancer.

@@ -1,0 +1,28 @@
+{
+  "name": "@civil/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
+    "dev": "npm run build --silent && concurrently -k -n tsc,api -c cyan,green \"tsc -b --watch --preserveWatchOutput\" \"node --watch --env-file=../../.env dist/main.js\"",
+    "start": "node dist/main.js",
+    "migrate": "node-pg-migrate --migrations-dir migrations --migrations-table schema_migrations",
+    "test": "npm run build --silent && node --test \"test/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@civil/schema": "*",
+    "fastify": "^5.2.1",
+    "jose": "^5.10.0",
+    "pg": "^8.13.1",
+    "pino": "^9.6.0",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "node-pg-migrate": "^9.0.0",
+    "pino-pretty": "^13.1.3"
+  }
+}
