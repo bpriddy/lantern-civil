@@ -63,10 +63,26 @@ here.
 
 ### Symptom if you skip it
 
-The service returns **502** with `x-goog-iap-generated-response: true`. That header
-means IAP is in the path and working; the 502 is IAP failing to *start* a login flow
-because no OAuth client exists. It is not a Cloud Run error and no amount of looking
-at the container will explain it.
+The service returns **502** with `x-goog-iap-generated-response: true`, and the body
+says:
+
+```
+Empty Google Account OAuth client ID(s)/secret(s).
+```
+
+That header means IAP is in the path and working. The 502 is IAP failing to *start*
+a login flow because no OAuth client exists. It is not a Cloud Run error and nothing
+in the container logs will explain it.
+
+`gcloud run services proxy` does not route around this. With IAP attached directly to
+the service rather than to a load balancer, every path in goes through IAP — which is
+the point, but it does mean the service is genuinely unreachable until the consent
+screen exists.
+
+What that leaves verifiable in the meantime is more than it sounds: the migrate job
+runs the same image with the same service account and the same Cloud SQL mount. If it
+succeeds, the container boots, the Secret Manager reference resolves, and Postgres is
+reachable. Only the HTTP surface is untested.
 
 Then confirm IAP sees the service:
 
