@@ -4,14 +4,18 @@ import { z } from 'zod';
 export const CIVIL_API_VERSION = 'civil/v1' as const;
 
 /**
- * PRD 6.4. Ids are lowercase-kebab, unique within their canvas.
- * Note this forbids underscores; see docs/prd-deltas.md.
+ * PRD 6.4 states `^[a-z][a-z0-9-]{0,63}$`, but its own example graph declares
+ * `search_tools`. Widened to admit underscores so a code node's id can match the
+ * Python module it points at. See docs/prd-deltas.md.
  */
-export const ID_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+export const ID_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export const zId = z
   .string()
-  .regex(ID_PATTERN, 'must be lowercase letters, digits and hyphens, starting with a letter, max 64 chars');
+  .regex(
+    ID_PATTERN,
+    'must be lowercase letters, digits, hyphens and underscores, starting with a letter, max 64 chars',
+  );
 
 export const zApiVersion = z.literal(CIVIL_API_VERSION);
 

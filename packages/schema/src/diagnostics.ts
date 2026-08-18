@@ -26,6 +26,8 @@ export const DIAGNOSTIC_CODES = [
   'exposes-non-service',
   'calls-non-service',
   'client-is-edge-target',
+  'edge-kind-bad-source',
+  'edge-kind-bad-target',
   'capability-edge-bad-source',
   'capability-edge-bad-target',
   'flow-code-node-needs-entrypoint',

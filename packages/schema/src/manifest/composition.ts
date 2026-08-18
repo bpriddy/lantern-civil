@@ -86,8 +86,21 @@ export const zCompositionNode = z.union([
   zProcessNode,
 ]);
 
+/**
+ * PRD 4 names two relations at this altitude. They are carried explicitly rather
+ * than inferred from endpoint types so the canvas can draw them differently and a
+ * service-to-service dependency has somewhere to live. See docs/prd-deltas.md.
+ *
+ * `routes-to` — traffic flows this way. Originates at a client.
+ * `depends-on` — this needs that to exist. Originates at a service or process.
+ *
+ * Neither is dataflow. Nothing executes at this altitude (PRD 4).
+ */
+export const zCompositionEdgeKind = z.enum(['routes-to', 'depends-on']);
+
 export const zCompositionEdge = z.object({
   id: zId,
+  kind: zCompositionEdgeKind,
   from: z.object({ node: zId }),
   to: z.object({ node: zId }),
 });
@@ -106,6 +119,7 @@ export const zComposition = z.object({
 export type Composition = z.infer<typeof zComposition>;
 export type CompositionNode = z.infer<typeof zCompositionNode>;
 export type CompositionEdge = z.infer<typeof zCompositionEdge>;
+export type CompositionEdgeKind = z.infer<typeof zCompositionEdgeKind>;
 export type ServiceNode = z.infer<typeof zServiceNode>;
 export type ClientNode = z.infer<typeof zClientNode>;
 export type ProcessNode = z.infer<typeof zProcessNode>;

@@ -9,33 +9,42 @@ behaviour is a placeholder that works.
 
 ---
 
-## 1. Node ids forbid underscores, but the example uses one — **needs a call**
+## 1. Node ids forbid underscores, but the example uses one — **resolved**
 
 §6.4 is normative: `^[a-z][a-z0-9-]{0,63}$`. §6.3's example graph declares
 `search_tools`, which that pattern rejects.
 
-**Decided:** the regex wins, since it is the stated rule and the example is
-illustrative. The example app uses `search-tools`.
+**Owner's call: widen the pattern.** `ID_PATTERN` is now
+`^[a-z][a-z0-9_-]{0,63}$`, so a code node's id can match the Python module it points
+at. The example keeps the PRD's own `search_tools` spelling.
 
-**To reverse:** widen `ID_PATTERN` in `packages/schema/src/manifest/common.ts` to
-`^[a-z][a-z0-9_-]{0,63}$`. Worth weighing: node ids appear in generated client code,
-where kebab must be transformed anyway, so allowing underscores does not remove a
-transformation step. But Python function names are snake_case, and a code node whose
-id matches its module reads better.
+**Consequence to watch:** two spellings of the same concept can now coexist across a
+project and nothing forbids it. If that becomes noise, a lint rule is a better
+remedy than narrowing the pattern, which would be a manifest migration.
+**§6.4 of the PRD should be updated to match.**
 
-## 2. Composition edges carry no `kind` — **needs a call**
+## 2. Composition edges carry no `kind` — **resolved**
 
 §4 says composition edges mean "depends-on / routes-to", two distinct relations. The
 §6.2 example has no `kind` field, unlike graph edges which do.
 
-**Decided:** implemented exactly as the example shows — no `kind`. The relation is
-inferred from endpoint types (client→service is routes-to; process→service is
-depends-on, and is already expressed by `calls`).
+**Owner's call: add it now,** before M3 writes real manifests and the change becomes
+a migration. Composition edges now require `kind: routes-to | depends-on`.
 
-**Risk if left:** the canvas cannot render the two relations differently, and a
-process that both calls a service and depends on another has one field and one edge
-type doing two jobs. Adding `kind` later is a manifest migration, so this is worth
-deciding before M3 writes real files.
+Carrying the relation explicitly is what makes it checkable, so validation gained
+rules the inferred version could not express:
+
+| kind | source | target |
+|---|---|---|
+| `routes-to` | client | client or service, never a process |
+| `depends-on` | service or process | service |
+
+A process is never a `routes-to` target because it has a trigger, not a caller (§4).
+Service→client stays a distinct diagnostic (`client-is-edge-target`) rather than
+folding into these, because dragging an edge backwards is the likeliest way to
+produce it and deserves its own message.
+
+**§6.2 and §4 of the PRD should be updated to match.**
 
 ## 3. Diagnostics needed a `severity` the PRD's shape does not have
 

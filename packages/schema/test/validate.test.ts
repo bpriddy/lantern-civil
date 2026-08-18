@@ -45,15 +45,24 @@ const graph = (spec: unknown, layout: unknown = { nodes: {} }) => ({
   layout,
 });
 
-test('ids must match the kebab pattern', () => {
-  const r = validateComposition(
-    composition({ nodes: [{ id: 'Not_An_Id', type: 'process', trigger: { kind: 'schedule', cron: '* * * * *' } }] }),
+test('ids reject uppercase but admit underscores', () => {
+  const bad = validateComposition(
+    composition({ nodes: [{ id: 'NotAnId', type: 'process', trigger: { kind: 'schedule', cron: '* * * * *' } }] }),
     'app.yaml',
     emptyFiles,
   );
-  assert.equal(r.doc, undefined);
-  assert.deepEqual(codes(r.diagnostics), ['invalid-manifest']);
-  assert.match(r.diagnostics[0]!.message, /lowercase/);
+  assert.equal(bad.doc, undefined);
+  assert.deepEqual(codes(bad.diagnostics), ['invalid-manifest']);
+  assert.match(bad.diagnostics[0]!.message, /lowercase/);
+
+  // Widened from the PRD's stated pattern so a code node id can match its Python
+  // module. See docs/prd-deltas.md.
+  const ok = validateComposition(
+    composition({ nodes: [{ id: 'search_tools', type: 'process', trigger: { kind: 'schedule', cron: '* * * * *' } }] }),
+    'app.yaml',
+    emptyFiles,
+  );
+  assert.deepEqual(ok.diagnostics, []);
 });
 
 test('duplicate ids within a canvas are rejected and point at the second one', () => {
@@ -96,13 +105,63 @@ test('a client may not be the edge target of a service', () => {
         { id: 'svc', type: 'service', impl: { entrypoint: 'src/s.py' } },
         { id: 'api', type: 'client', client: 'api', exposes: ['svc'] },
       ],
-      edges: [{ id: 'e1', from: { node: 'svc' }, to: { node: 'api' } }],
+      edges: [{ id: 'e1', kind: 'routes-to', from: { node: 'svc' }, to: { node: 'api' } }],
     }),
     'app.yaml',
     MemoryFiles.from({ 'src/s.py': '' }),
   );
   assert.deepEqual(codes(r.diagnostics), ['client-is-edge-target']);
   assert.equal(r.diagnostics[0]!.edgeId, 'e1');
+});
+
+test('composition edge kinds have different legal endpoints', () => {
+  const files = MemoryFiles.from({ 'src/a.py': '', 'src/b.py': '' });
+  const nodes = [
+    { id: 'api', type: 'client', client: 'api', exposes: ['a'] },
+    { id: 'a', type: 'service', impl: { entrypoint: 'src/a.py' } },
+    { id: 'b', type: 'service', impl: { entrypoint: 'src/b.py' } },
+    { id: 'cron', type: 'process', trigger: { kind: 'schedule', cron: '0 3 * * *' } },
+  ];
+
+  // The shapes that should be accepted: a client routing to a service, and one
+  // service depending on another.
+  const good = validateComposition(
+    composition({
+      nodes,
+      edges: [
+        { id: 'ok1', kind: 'routes-to', from: { node: 'api' }, to: { node: 'a' } },
+        { id: 'ok2', kind: 'depends-on', from: { node: 'a' }, to: { node: 'b' } },
+        { id: 'ok3', kind: 'depends-on', from: { node: 'cron' }, to: { node: 'a' } },
+      ],
+    }),
+    'app.yaml',
+    files,
+  );
+  assert.deepEqual(good.diagnostics, []);
+
+  const bad = validateComposition(
+    composition({
+      nodes,
+      edges: [
+        { id: 'x1', kind: 'routes-to', from: { node: 'a' }, to: { node: 'b' } },
+        { id: 'x2', kind: 'routes-to', from: { node: 'api' }, to: { node: 'cron' } },
+        { id: 'x3', kind: 'depends-on', from: { node: 'api' }, to: { node: 'a' } },
+        { id: 'x4', kind: 'depends-on', from: { node: 'a' }, to: { node: 'cron' } },
+      ],
+    }),
+    'app.yaml',
+    files,
+  );
+  assert.deepEqual(codes(bad.diagnostics), [
+    'edge-kind-bad-source',
+    'edge-kind-bad-source',
+    'edge-kind-bad-target',
+    'edge-kind-bad-target',
+  ]);
+  assert.match(
+    bad.diagnostics.find((d) => d.edgeId === 'x2')!.message,
+    /a process has a trigger, not a caller/,
+  );
 });
 
 test('capability edges must run agent → code', () => {

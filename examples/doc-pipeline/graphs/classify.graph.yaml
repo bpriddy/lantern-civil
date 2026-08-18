@@ -9,7 +9,7 @@ spec:
     - { id: normalize, type: code, name: Normalize, include: ["src/steps/normalize/**/*.py"], entrypoint: src/steps/normalize/main.py }
     - { id: classifier, type: agent, ref: agents/classifier/agent.yaml }
     - { id: enrich, type: subgraph, ref: graphs/enrich.graph.yaml }
-    - { id: search-tools, type: code, name: Search tools, include: ["src/tools/search/**/*.py"] }
+    - { id: search_tools, type: code, name: Search tools, include: ["src/tools/search/**/*.py"] }
     - { id: thinking, type: io, direction: out, kind: progress }
     - { id: record, type: io, direction: out, schema: schemas/record.schema.json }
 
@@ -18,7 +18,7 @@ spec:
     - { id: e2, kind: flow, from: { node: normalize },  to: { node: classifier } }
     - { id: e3, kind: flow, from: { node: classifier }, to: { node: enrich } }
     - { id: e4, kind: flow, from: { node: enrich },     to: { node: record } }
-    - { id: e5, kind: capability, from: { node: classifier }, to: { node: search-tools, function: search_docs } }
+    - { id: e5, kind: capability, from: { node: classifier }, to: { node: search_tools, function: search_docs } }
 
 layout:
   nodes:
@@ -28,4 +28,4 @@ layout:
     enrich: { x: 640, y: 120 }
     record: { x: 860, y: 120 }
     thinking: { x: 640, y: 300 }
-    search-tools: { x: 420, y: 300 }
+    search_tools: { x: 420, y: 300 }

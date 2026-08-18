@@ -326,16 +326,59 @@ export function validateComposition(
       });
     }
 
-    // PRD 6.4: client nodes may not be edge targets of services. Traffic flows
-    // client → service, so the reverse would put a generated boundary downstream
-    // of the thing it exposes.
     const from = byId.get(edge.from.node);
     const to = byId.get(edge.to.node);
-    if (from?.type === 'service' && to?.type === 'client') {
+    if (!from || !to) return;
+
+    // PRD 6.4: client nodes may not be edge targets of services. Traffic flows
+    // client → service, so the reverse would put a generated boundary downstream
+    // of the thing it exposes. Reported specifically because it is the mistake
+    // most likely to be made by dragging an edge backwards.
+    if (from.type === 'service' && to.type === 'client') {
       s.push({
         jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
         code: 'client-is-edge-target',
         message: `edge "${edge.id}" points from service "${from.id}" to client "${to.id}"; clients are never edge targets of services`,
+        edgeId: edge.id,
+      });
+      return;
+    }
+
+    // PRD 4's two relations have different legal endpoints. Carrying `kind`
+    // explicitly is what makes these checkable at all.
+    if (edge.kind === 'routes-to') {
+      if (from.type !== 'client') {
+        s.push({
+          jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
+          code: 'edge-kind-bad-source',
+          message: `routes-to edge "${edge.id}" starts at ${from.type} "${from.id}"; traffic originates at a client`,
+          edgeId: edge.id,
+        });
+      }
+      if (to.type === 'process') {
+        s.push({
+          jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
+          code: 'edge-kind-bad-target',
+          message: `routes-to edge "${edge.id}" ends at process "${to.id}"; a process has a trigger, not a caller`,
+          edgeId: edge.id,
+        });
+      }
+      return;
+    }
+
+    if (from.type === 'client') {
+      s.push({
+        jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
+        code: 'edge-kind-bad-source',
+        message: `depends-on edge "${edge.id}" starts at client "${from.id}"; a client routes to what it exposes rather than depending on it`,
+        edgeId: edge.id,
+      });
+    }
+    if (to.type !== 'service') {
+      s.push({
+        jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
+        code: 'edge-kind-bad-target',
+        message: `depends-on edge "${edge.id}" ends at ${to.type} "${to.id}"; only a service can be depended on`,
         edgeId: edge.id,
       });
     }

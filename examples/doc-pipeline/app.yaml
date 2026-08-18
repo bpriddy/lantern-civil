@@ -35,9 +35,9 @@ spec:
       calls: [classify]
 
   edges:
-    - { id: c1, from: { node: web },        to: { node: public-api } }
-    - { id: c2, from: { node: public-api }, to: { node: classify } }
-    - { id: c3, from: { node: public-api }, to: { node: save-record } }
+    - { id: c1, kind: routes-to, from: { node: web },        to: { node: public-api } }
+    - { id: c2, kind: routes-to, from: { node: public-api }, to: { node: classify } }
+    - { id: c3, kind: routes-to, from: { node: public-api }, to: { node: save-record } }
 
 layout:
   nodes:
