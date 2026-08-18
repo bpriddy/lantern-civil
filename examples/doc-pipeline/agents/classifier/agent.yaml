@@ -1,0 +1,6 @@
+apiVersion: civil/v1
+kind: Agent
+metadata: { id: classifier, name: Classifier }
+spec:
+  promptFile: agents/classifier/prompt.md
+  maxTurns: 8

@@ -1,0 +1,8 @@
+apiVersion: civil/v1
+kind: Project
+metadata:
+  id: doc-pipeline
+  name: Document Pipeline
+spec:
+  composition: app.yaml
+  language: python

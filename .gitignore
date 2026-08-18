@@ -1,0 +1,31 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Civil project working state — never truth, always reconstructible (PRD 12)
+.civil/
+
+# Local env and secrets — never in the repo (PRD 2)
+.env
+.env.local
+*.tfvars
+!example.tfvars
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Python runtime
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Local Postgres data directory
+.pgdata/
+
+.DS_Store

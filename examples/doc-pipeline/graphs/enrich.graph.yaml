@@ -1,0 +1,20 @@
+apiVersion: civil/v1
+kind: Graph
+metadata:
+  id: enrich
+  name: Enrich
+spec:
+  nodes:
+    - { id: classified, type: io, direction: in, schema: schemas/record.schema.json }
+    - { id: lookup, type: code, name: Lookup, include: ["src/steps/enrich/**/*.py"], entrypoint: src/steps/enrich/main.py }
+    - { id: enriched, type: io, direction: out, schema: schemas/record.schema.json }
+
+  edges:
+    - { id: n1, kind: flow, from: { node: classified }, to: { node: lookup } }
+    - { id: n2, kind: flow, from: { node: lookup },     to: { node: enriched } }
+
+layout:
+  nodes:
+    classified: { x: 40, y: 120 }
+    lookup: { x: 240, y: 120 }
+    enriched: { x: 460, y: 120 }

@@ -1,0 +1,6 @@
+{
+  "name": "doc-pipeline-web",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite" }
+}

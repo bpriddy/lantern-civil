@@ -1,0 +1,49 @@
+apiVersion: civil/v1
+kind: Composition
+metadata:
+  id: doc-pipeline
+  name: Document Pipeline
+spec:
+  nodes:
+    - id: web
+      type: client
+      client: frontend
+      path: web
+      dev: "npm run dev"
+
+    - id: public-api
+      type: client
+      client: api
+      exposes: [classify, save-record]
+
+    - id: agent-tools
+      type: client
+      client: mcp
+      exposes: [classify]
+
+    - id: classify
+      type: service
+      impl: { graph: graphs/classify.graph.yaml }
+
+    - id: save-record
+      type: service
+      impl: { entrypoint: src/services/save_record.py }
+
+    - id: nightly-reindex
+      type: process
+      trigger: { kind: schedule, cron: "0 3 * * *" }
+      calls: [classify]
+
+  edges:
+    - { id: c1, from: { node: web },        to: { node: public-api } }
+    - { id: c2, from: { node: public-api }, to: { node: classify } }
+    - { id: c3, from: { node: public-api }, to: { node: save-record } }
+
+layout:
+  nodes:
+    web: { x: 40, y: 120 }
+    public-api: { x: 260, y: 120 }
+    classify: { x: 500, y: 60 }
+    save-record: { x: 500, y: 220 }
+    agent-tools: { x: 260, y: 300 }
+    nightly-reindex: { x: 500, y: 380 }
