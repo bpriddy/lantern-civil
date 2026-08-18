@@ -65,6 +65,6 @@ resource "google_cloud_run_v2_job" "migrate" {
   }
 
   depends_on = [
-    google_secret_manager_secret_iam_member.api_database_url,
+    google_secret_manager_secret_iam_member.api,
   ]
 }

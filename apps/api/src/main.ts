@@ -29,7 +29,11 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
 try {
   await app.listen({ port: config.port, host: config.host });
   logger.info(
-    { port: config.port, env: config.env, verifyIapJwt: config.verifyIapJwt },
+    {
+      port: config.port,
+      env: config.env,
+      auth: config.devIdentity ? 'dev-identity' : 'google-oauth',
+    },
     'civil api listening',
   );
 } catch (error) {

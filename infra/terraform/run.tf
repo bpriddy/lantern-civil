@@ -18,32 +18,22 @@ resource "google_project_iam_member" "api_log_writer" {
   member  = google_service_account.api.member
 }
 
-resource "google_secret_manager_secret_iam_member" "api_database_url" {
-  secret_id = google_secret_manager_secret.database_url.id
-  role      = "roles/secretmanager.secretAccessor"
-  member    = google_service_account.api.member
-}
-
 resource "google_storage_bucket_iam_member" "api_payloads" {
   bucket = google_storage_bucket.payloads.name
   role   = "roles/storage.objectAdmin"
   member = google_service_account.api.member
 }
 
-# google-beta and launch_stage BETA are required for iap_enabled on Cloud Run v2.
 resource "google_cloud_run_v2_service" "civil" {
   provider = google-beta
 
   name     = var.service_name
   location = var.region
 
-  launch_stage = "BETA"
-  iap_enabled  = true
-
-  # IAP is the only front door. Public ingress plus IAP is the supported shape for
-  # direct Cloud Run IAP — the service itself rejects unauthenticated invocations,
-  # and the API additionally verifies the signed assertion (see http/identity.ts),
-  # so a misconfiguration here does not silently become an open door.
+  # Public, because the application authenticates for itself now. IAP was removed at
+  # the owner's direction: it cannot admit users outside a Workspace organisation,
+  # and this project has none, so sharing the application was impossible with it.
+  # Every unauthenticated request is refused by the onRequest hook in http/server.ts.
   ingress = "INGRESS_TRAFFIC_ALL"
 
   deletion_protection = false
@@ -92,17 +82,13 @@ resource "google_cloud_run_v2_service" "civil" {
         value = "info"
       }
 
-      # PRD 12 / docs: the Cloud Run IAP assertion audience. Wired from Terraform
-      # rather than hand-copied, because a wrong audience fails closed and looks
+      # The origin Google was told to redirect back to. Computed rather than taken
+      # from the service's own uri attribute, which would be a dependency cycle, and
+      # rather than hand-copied, because a mismatch here fails closed and looks
       # exactly like a broken login.
       env {
-        name  = "CIVIL_IAP_AUDIENCE"
-        value = "/projects/${data.google_project.this.number}/locations/${var.region}/services/${var.service_name}"
-      }
-
-      env {
-        name  = "CIVIL_VERIFY_IAP_JWT"
-        value = "true"
+        name  = "CIVIL_PUBLIC_URL"
+        value = local.public_url
       }
 
       env {
@@ -115,6 +101,36 @@ resource "google_cloud_run_v2_service" "civil" {
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.database_url.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "GOOGLE_CLIENT_ID"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.google_client_id.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "GOOGLE_CLIENT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.google_client_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "SESSION_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.session_secret.secret_id
             version = "latest"
           }
         }
@@ -150,6 +166,22 @@ resource "google_cloud_run_v2_service" "civil" {
   }
 
   depends_on = [
-    google_secret_manager_secret_iam_member.api_database_url,
+    google_secret_manager_secret_iam_member.api,
   ]
+}
+
+locals {
+  # Cloud Run's deterministic hostname. Using the service's own uri attribute here
+  # would be a cycle, since the env var is part of the service definition.
+  public_url = "https://${var.service_name}-${data.google_project.this.number}.${var.region}.run.app"
+}
+
+# The application does its own authentication, so Cloud Run must let requests through
+# to it. Without this, every visitor gets a 403 from the platform before the sign-in
+# page can render.
+resource "google_cloud_run_v2_service_iam_member" "public" {
+  name     = google_cloud_run_v2_service.civil.name
+  location = google_cloud_run_v2_service.civil.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
 }

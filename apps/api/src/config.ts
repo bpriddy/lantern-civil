@@ -2,8 +2,12 @@ import { z } from 'zod';
 
 /**
  * PRD 2: secrets in env and Secret Manager, never in the repo. Everything the server
- * needs is read here once and validated, so a misconfigured deploy fails at boot with
- * a readable message rather than at the first request with a stack trace.
+ * needs is read once and validated, so a misconfigured deploy fails at boot with a
+ * readable message rather than at the first request with a stack trace.
+ *
+ * Auth was IAP (PRD 12) until the owner chose to share the application, which IAP
+ * cannot do without a Workspace organisation. It is now application-owned Google
+ * OAuth. See docs/prd-deltas.md.
  */
 const zEnv = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -13,35 +17,26 @@ const zEnv = z.object({
 
   DATABASE_URL: z.string().min(1),
 
-  /**
-   * PRD 12: IAP asserts identity; there is no user table. In development there is no
-   * IAP, so this stands in for it. It must never be set in production — see
-   * `assertCoherent` below.
-   */
-  CIVIL_DEV_IDENTITY: z.string().optional(),
+  /** Absolute origin this instance is reached at. The OAuth redirect must match exactly. */
+  CIVIL_PUBLIC_URL: z.string().url().optional(),
+
+  GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+  GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+
+  /** Signs the session cookie. Rotating it invalidates every existing login. */
+  SESSION_SECRET: z.string().min(32).optional(),
 
   /**
-   * The IAP JWT audience, of the form
-   * `/projects/<project-number>/locations/global/backendServices/<id>` behind a load
-   * balancer, or `/projects/<project-number>/apps/<project-id>` for App Engine.
-   * Required whenever assertions are verified.
+   * Skips OAuth entirely and treats every request as this user. PRD 2 asks for one
+   * command to run locally, and a laptop has no OAuth redirect. Refused in
+   * production by assertCoherent below.
    */
-  CIVIL_IAP_AUDIENCE: z.string().optional(),
+  CIVIL_DEV_IDENTITY: z.string().email().optional(),
 
-  /**
-   * Absolute path to the built SPA. IAP fronts a single Cloud Run service, so the
-   * API serves the frontend too; in development Vite serves it and this is unset.
-   */
+  /** Where the built SPA lives. Unset in development, where Vite serves it. */
   CIVIL_WEB_ROOT: z.string().optional(),
 
-  /**
-   * Defence in depth against a misconfigured ingress. See http/identity.ts.
-   * Defaults on in production and off elsewhere.
-   */
-  CIVIL_VERIFY_IAP_JWT: z
-    .enum(['true', 'false'])
-    .optional()
-    .transform((v) => (v === undefined ? undefined : v === 'true')),
+  CIVIL_PAYLOAD_BUCKET: z.string().optional(),
 });
 
 export type Config = Readonly<{
@@ -51,10 +46,12 @@ export type Config = Readonly<{
   host: string;
   logLevel: string;
   databaseUrl: string;
+  publicUrl: string | undefined;
+  google: { clientId: string; clientSecret: string } | undefined;
+  sessionSecret: string | undefined;
   devIdentity: string | undefined;
-  iapAudience: string | undefined;
-  verifyIapJwt: boolean;
   webRoot: string | undefined;
+  payloadBucket: string | undefined;
 }>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
@@ -67,47 +64,64 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
   }
 
   const e = parsed.data;
-  const isProduction = e.NODE_ENV === 'production';
   const config: Config = {
     env: e.NODE_ENV,
-    isProduction,
+    isProduction: e.NODE_ENV === 'production',
     port: e.PORT,
     host: e.HOST,
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
+    publicUrl: e.CIVIL_PUBLIC_URL,
+    google:
+      e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
+        ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }
+        : undefined,
+    sessionSecret: e.SESSION_SECRET,
     devIdentity: e.CIVIL_DEV_IDENTITY,
-    iapAudience: e.CIVIL_IAP_AUDIENCE,
-    verifyIapJwt: e.CIVIL_VERIFY_IAP_JWT ?? isProduction,
     webRoot: e.CIVIL_WEB_ROOT,
+    payloadBucket: e.CIVIL_PAYLOAD_BUCKET,
   };
 
   assertCoherent(config);
   return config;
 }
 
+/** The OAuth redirect Google must be told about, and which it will match exactly. */
+export function redirectUri(config: Config): string {
+  const base = config.publicUrl ?? `http://127.0.0.1:${config.port}`;
+  return new URL('/auth/google/callback', base).toString();
+}
+
 /**
- * Combinations that parse individually but are wrong together. Each of these would
- * otherwise fail open — as an unauthenticated production server, which is the one
- * failure mode worth crashing at boot to avoid.
+ * Combinations that parse individually but are wrong together. Each one would leave
+ * a production server either unauthenticated or unable to authenticate anyone, and
+ * both are worth crashing at boot to avoid.
  */
 function assertCoherent(c: Config): void {
-  if (c.isProduction && c.devIdentity !== undefined) {
+  if (!c.isProduction) {
+    if (!c.devIdentity && !c.google) {
+      throw new Error(
+        'Neither CIVIL_DEV_IDENTITY nor Google OAuth credentials are set, so nobody could sign in. ' +
+          'Set CIVIL_DEV_IDENTITY for local work.',
+      );
+    }
+    return;
+  }
+
+  if (c.devIdentity) {
     throw new Error(
-      'CIVIL_DEV_IDENTITY is set in production. It bypasses IAP entirely; refusing to start.',
+      'CIVIL_DEV_IDENTITY is set in production. It authenticates every request as one user without any credential check; refusing to start.',
     );
   }
-  if (c.verifyIapJwt && !c.iapAudience) {
-    throw new Error(
-      'IAP assertion verification is on but CIVIL_IAP_AUDIENCE is unset. ' +
-        'Set the audience, or set CIVIL_VERIFY_IAP_JWT=false if this service sits behind a proxy that already verifies it.',
-    );
+  if (!c.google) {
+    throw new Error('GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are required in production.');
   }
-  if (c.isProduction && !c.verifyIapJwt) {
-    // Legal — the ingress may genuinely be locked to IAP — but it should be a choice
-    // someone made on purpose, so it is loud.
-    process.emitWarning(
-      'Running in production without verifying IAP assertions. This is only safe if ingress is restricted to the load balancer.',
-      'CivilSecurityWarning',
+  if (!c.sessionSecret) {
+    throw new Error('SESSION_SECRET is required in production; it signs the session cookie.');
+  }
+  if (!c.publicUrl) {
+    throw new Error(
+      'CIVIL_PUBLIC_URL is required in production. The OAuth redirect must be an absolute URL that matches what Google was told.',
     );
   }
 }

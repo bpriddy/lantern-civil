@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react';
-import { fetchMe, type SessionState } from './identity.js';
+import {
+  SIGN_IN_ERRORS,
+  fetchConnections,
+  fetchMe,
+  signIn,
+  signOut,
+  type Connection,
+  type Me,
+  type SessionState,
+} from './identity.js';
 
 /**
- * PRD 14 M0: an empty authenticated shell. The frame is PRD 7's — project tree left,
- * canvas or Monaco centre, inspector right, breadcrumb and branch and Run on top.
- * M1 fills the centre; everything here is deliberately inert so that when the canvas
- * arrives it lands in a layout that already exists.
+ * PRD 14 M0: an authenticated shell. The frame is PRD 7's — project tree left, canvas
+ * or Monaco centre, inspector right, breadcrumb and branch and Run on top. M1 fills
+ * the centre; everything here is inert so the canvas lands in a layout that exists.
+ *
+ * The sign-in screen is new. IAP used to render one; the owner replaced it with
+ * application-owned Google OAuth so the application can be shared.
  */
 export function App(): React.ReactElement {
   const [session, setSession] = useState<SessionState>({ status: 'loading' });
@@ -16,30 +27,42 @@ export function App(): React.ReactElement {
     return () => controller.abort();
   }, []);
 
-  if (session.status === 'loading') {
-    return <div className="gate" />;
+  switch (session.status) {
+    case 'loading':
+      return <div className="gate" />;
+    case 'signedOut':
+      return <SignIn />;
+    case 'error':
+      return <Unreachable message={session.message} />;
+    case 'authenticated':
+      return <Shell me={session.me} />;
   }
-
-  if (session.status !== 'authenticated') {
-    return <Gate session={session} />;
-  }
-
-  return <Shell me={session.me} />;
 }
 
-function Gate({ session }: { session: Extract<SessionState, { status: 'unauthenticated' | 'error' }> }) {
-  const unauthenticated = session.status === 'unauthenticated';
+function SignIn() {
+  const error = new URLSearchParams(window.location.search).get('error');
+  const message = error ? (SIGN_IN_ERRORS[error] ?? 'Sign-in failed. Try again.') : null;
+
   return (
     <div className="gate">
       <div className="gate-card">
-        <h1>{unauthenticated ? 'Not signed in' : 'Cannot reach the API'}</h1>
-        <p>
-          {unauthenticated
-            ? // PRD 12 puts auth in IAP, so there is no login form to render here —
-              // a reload is genuinely the only remedy the SPA has.
-              'Access is granted by Identity-Aware Proxy. Reloading will send you through the Google sign-in flow.'
-            : session.message}
-        </p>
+        <h1>Civil</h1>
+        <p>A web IDE for building applications at graph altitude.</p>
+        {message ? <p className="gate-error">{message}</p> : null}
+        <button type="button" onClick={signIn}>
+          Continue with Google
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Unreachable({ message }: { message: string }) {
+  return (
+    <div className="gate">
+      <div className="gate-card">
+        <h1>Cannot reach the API</h1>
+        <p>{message}</p>
         <button type="button" onClick={() => window.location.reload()}>
           Reload
         </button>
@@ -48,7 +71,9 @@ function Gate({ session }: { session: Extract<SessionState, { status: 'unauthent
   );
 }
 
-function Shell({ me }: { me: { email: string; environment: string } }) {
+function Shell({ me }: { me: Me }) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
   return (
     <div className="shell">
       <header className="top">
@@ -66,18 +91,19 @@ function Shell({ me }: { me: { email: string; environment: string } }) {
           no pending changes
         </span>
         {/* PRD 4: nothing executes at the composition altitude, so Run has no meaning
-            here. Disabled rather than hidden, so the rule is visible. */}
+            here. Disabled rather than hidden, so the rule stays visible. */}
         <button className="run" type="button" disabled title="Run has no meaning on the composition canvas">
           Run
+        </button>
+        <button className="avatar" type="button" onClick={() => setSettingsOpen((v) => !v)} title={me.email}>
+          {me.avatarUrl ? <img src={me.avatarUrl} alt="" /> : (me.email[0] ?? '?').toUpperCase()}
         </button>
       </header>
 
       <aside className="pane tree">
         <div className="pane-title">Project</div>
         <div className="pane-body">
-          <p style={{ color: 'var(--text-faint)', margin: 0, lineHeight: 1.6 }}>
-            No project open. Cloning and the file tree arrive with M1.
-          </p>
+          <p className="muted">No project open. Cloning and the file tree arrive with M1.</p>
         </div>
       </aside>
 
@@ -92,16 +118,85 @@ function Shell({ me }: { me: { email: string; environment: string } }) {
       </main>
 
       <aside className="pane inspector">
-        <div className="pane-title">Inspector</div>
-        <div className="pane-body">
-          <dl className="kv">
-            <dt>Signed in</dt>
-            <dd>{me.email}</dd>
-            <dt>Environment</dt>
-            <dd>{me.environment}</dd>
-          </dl>
-        </div>
+        {settingsOpen ? <Settings me={me} onClose={() => setSettingsOpen(false)} /> : <Inspector me={me} />}
       </aside>
     </div>
+  );
+}
+
+function Inspector({ me }: { me: Me }) {
+  return (
+    <>
+      <div className="pane-title">Inspector</div>
+      <div className="pane-body">
+        <p className="muted">Nothing selected.</p>
+        <dl className="kv" style={{ marginTop: 16 }}>
+          <dt>Signed in</dt>
+          <dd>{me.email}</dd>
+          <dt>Environment</dt>
+          <dd>{me.environment}</dd>
+        </dl>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The owner asked for GitHub to be a settings step rather than part of signing in.
+ * Keeping it per-user rather than per-project means one connection serves every
+ * project that user owns.
+ */
+function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
+  const [connections, setConnections] = useState<Connection[] | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchConnections(controller.signal)
+      .then(setConnections)
+      .catch(() => setConnections([]));
+    return () => controller.abort();
+  }, []);
+
+  const github = connections?.find((c) => c.provider === 'github');
+
+  return (
+    <>
+      <div className="pane-title">
+        Settings
+        <button type="button" className="link" onClick={onClose}>
+          close
+        </button>
+      </div>
+      <div className="pane-body">
+        <dl className="kv">
+          <dt>Account</dt>
+          <dd>{me.email}</dd>
+        </dl>
+
+        <h3 className="section">Connections</h3>
+        {connections === null ? (
+          <p className="muted">Loading…</p>
+        ) : github ? (
+          <p className="muted">
+            GitHub connected{github.externalLogin ? ` as ${github.externalLogin}` : ''}.
+          </p>
+        ) : (
+          <>
+            <p className="muted">
+              GitHub is not connected. Civil needs it to clone the repositories your
+              projects are projections of.
+            </p>
+            <button type="button" className="connect" disabled title="Arrives with M1">
+              Connect GitHub
+            </button>
+          </>
+        )}
+
+        <h3 className="section">Session</h3>
+        <button type="button" className="connect" onClick={() => void signOut()}>
+          Sign out
+        </button>
+      </div>
+    </>
   );
 }

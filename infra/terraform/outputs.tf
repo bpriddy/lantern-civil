@@ -1,11 +1,16 @@
 output "service_url" {
-  description = "The IAP-protected URL. Opening this triggers the Google login flow."
-  value       = google_cloud_run_v2_service.civil.uri
+  description = "Public URL. Sign-in happens in the application, not in front of it."
+  value       = local.public_url
 }
 
-output "iap_audience" {
-  description = "Expected `aud` claim on the IAP assertion. Must match CIVIL_IAP_AUDIENCE."
-  value       = "/projects/${data.google_project.this.number}/locations/${var.region}/services/${var.service_name}"
+output "oauth_redirect_uri" {
+  description = "Authorised redirect URI to register on the Google OAuth client. Must match exactly."
+  value       = "${local.public_url}/auth/google/callback"
+}
+
+output "oauth_javascript_origin" {
+  description = "Authorised JavaScript origin to register on the Google OAuth client."
+  value       = local.public_url
 }
 
 output "sql_connection_name" {

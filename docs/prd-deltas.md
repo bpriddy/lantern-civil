@@ -118,3 +118,62 @@ verification is legal but warns loudly at boot.
 
 **To reverse:** set `CIVIL_VERIFY_IAP_JWT=false`, which drops back to trusting the
 headers. Only correct if Terraform has ingress locked to the load balancer.
+
+---
+
+## 10. IAP replaced by application-owned Google OAuth — **owner's decision, supersedes §12**
+
+§12 puts auth in IAP: "write zero auth code", no user table, no sessions, and
+"adding a person is an allowlist edit". §2 excludes multi-tenancy from v1 on the
+grounds that there is one user.
+
+**The owner chose to share the application instead.** That is incompatible with IAP
+on this project: IAP's managed OAuth client admits "only users within the
+organization", and a personal Google account has no organization, so the admissible
+set is empty. Sharing was not a tuning problem; it was impossible.
+
+### What changed
+
+| | Before | After |
+|---|---|---|
+| Authentication | IAP, in front of Cloud Run | Google OAuth in the application |
+| Ingress | Public, IAP-gated | Public, `roles/run.invoker` to `allUsers` |
+| Identity | IAP-asserted subject | `users` row keyed on Google `sub` |
+| Session | IAP cookie | Server-side `sessions` row, signed cookie |
+| `owner_id` | IAP subject as `text` | `uuid` FK to `users(id)` |
+| Who may sign in | One allowlisted email | Anyone with a Google account |
+| Project visibility | n/a | One owner, invisible to everyone else |
+
+Migration 001 was not rewritten. It had shipped and run against Cloud SQL, so 002
+carries the change forward — which is what §2 means by real migrations from the first
+commit, even while the tables are empty.
+
+The cost §12 was avoiding is now real and paid: the OAuth dance, PKCE, `state`,
+`nonce`, session issuance and revocation, cookie signing, and open-redirect
+protection on `returnTo` are all code in this repo, covered by ten tests that each
+fail *open* if the implementation is wrong.
+
+### Tracked risk: open signup meets no sandbox — **revisit at M4**
+
+§2 excludes "sandbox isolation of untrusted code" from v1. That was sound when the
+one user ran only their own code.
+
+With open signup, the exclusion means something different: **any person who signs in
+can have Civil clone their repository and execute their code nodes and tools**, in a
+process holding the database credentials and every other user's data, with no
+isolation.
+
+This is not yet live. There is no runtime — M4 builds it. Signing in today grants an
+editor shell with nothing to execute, which is why the decision is safe to take now.
+
+**The trigger is M4.** Before the runner executes its first user-authored code node,
+one of these must be true:
+
+1. Execution is isolated per run (a separate container or sandbox with no ambient
+   credentials), or
+2. Signup is closed back to an allowlist, or
+3. The owner accepts the exposure explicitly, knowing it means arbitrary remote code
+   execution by any signed-in stranger.
+
+Recorded here rather than left implicit, because M4's exit criterion is about a graph
+running end to end and would otherwise sail past this without anyone deciding.

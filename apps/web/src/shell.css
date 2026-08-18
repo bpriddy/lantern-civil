@@ -226,3 +226,80 @@ body {
   font: inherit;
   cursor: pointer;
 }
+
+/* ---- account, settings -------------------------------------------------- */
+
+.avatar {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+}
+
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--text-faint);
+  font: inherit;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.link:hover { color: var(--accent); }
+
+.muted { color: var(--text-faint); margin: 0; line-height: 1.6; }
+
+.section {
+  margin: 22px 0 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.connect {
+  margin-top: 10px;
+  height: 26px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.connect:hover:not(:disabled) { border-color: var(--accent-dim); color: var(--accent); }
+.connect:disabled { color: var(--text-faint); cursor: not-allowed; }
+
+.gate-error {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  color: var(--danger);
+  font-size: 12px;
+}
