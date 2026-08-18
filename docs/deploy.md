@@ -29,8 +29,18 @@ terraform -chdir=infra/terraform apply
 
 ## The one manual step: IAP's OAuth consent screen
 
-**This cannot be scripted for a project with no organization,** and it is the only
-part of the deploy that is not in Terraform.
+**This cannot be scripted at all,** and it is the only part of the deploy that is
+not in Terraform.
+
+The IAP OAuth Admin APIs — `gcloud iap oauth-brands`, and the Terraform resources
+built on them — were permanently shut down on 19 March 2026. On a project with no
+organization they now fail outright:
+
+```
+ERROR: (gcloud.iap.oauth-brands.list) INVALID_ARGUMENT: Project must belong to an organization.
+```
+
+So this is not "inconvenient to automate". There is no API left to automate against.
 
 IAP defaults to a Google-managed OAuth client that admits "only users within the
 organization." A personal Google account has no organization, so that set is empty
@@ -50,6 +60,13 @@ The fix is to configure the consent screen once, in the console:
 Test-mode OAuth clients issue refresh tokens that expire after seven days. That
 affects long-lived offline access, not IAP session logins, so it does not matter
 here.
+
+### Symptom if you skip it
+
+The service returns **502** with `x-goog-iap-generated-response: true`. That header
+means IAP is in the path and working; the 502 is IAP failing to *start* a login flow
+because no OAuth client exists. It is not a Cloud Run error and no amount of looking
+at the container will explain it.
 
 Then confirm IAP sees the service:
 

@@ -25,10 +25,13 @@ resource "google_cloud_run_v2_job" "migrate" {
       }
 
       containers {
-        image   = var.image
-        command = ["npx"]
+        image = var.image
+        # The binary directly, not through npx. npx will happily try to FETCH a
+        # missing package and then block on its install prompt, which in a
+        # non-interactive job looks exactly like a hung migration rather than a
+        # missing dependency. This path either exists or the container exits.
+        command = ["node_modules/.bin/node-pg-migrate"]
         args = [
-          "node-pg-migrate",
           "--migrations-dir", "apps/api/migrations",
           "--migrations-table", "schema_migrations",
           "up",
