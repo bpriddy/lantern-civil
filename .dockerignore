@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+**/dist
+**/dist-types
+**/*.tsbuildinfo
+.git
+.civil
+.env
+.env.*
+!.env.example
+infra/terraform/.terraform
+infra/terraform/*.tfstate*
+*.tfvars
+!example.tfvars
+examples
+docs
+.pgdata

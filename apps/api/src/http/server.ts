@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyError } from 'fastify';
 import type { Logger } from 'pino';
 import type pg from 'pg';
@@ -88,6 +89,23 @@ export async function createServer(deps: ServerDeps) {
     email: request.identity.email,
     environment: config.env,
   }));
+
+  // IAP fronts one service, so the SPA is served from the same origin as the API.
+  // Registered after the auth hook, which means static assets are behind IAP too —
+  // there is no unauthenticated surface other than the health probes.
+  if (config.webRoot) {
+    await app.register(fastifyStatic, { root: config.webRoot, index: false });
+
+    // SPA fallback. Scoped to non-/api paths so a mistyped API route still 404s as
+    // JSON rather than silently returning HTML, which is a genuinely confusing bug
+    // to chase from the client side.
+    app.setNotFoundHandler(async (request, reply) => {
+      if (request.url.startsWith('/api/')) {
+        return reply.code(404).send({ error: 'not_found', requestId: request.id });
+      }
+      return reply.sendFile('index.html');
+    });
+  }
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     request.log.error({ err: error }, 'unhandled error');

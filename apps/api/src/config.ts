@@ -29,6 +29,12 @@ const zEnv = z.object({
   CIVIL_IAP_AUDIENCE: z.string().optional(),
 
   /**
+   * Absolute path to the built SPA. IAP fronts a single Cloud Run service, so the
+   * API serves the frontend too; in development Vite serves it and this is unset.
+   */
+  CIVIL_WEB_ROOT: z.string().optional(),
+
+  /**
    * Defence in depth against a misconfigured ingress. See http/identity.ts.
    * Defaults on in production and off elsewhere.
    */
@@ -48,6 +54,7 @@ export type Config = Readonly<{
   devIdentity: string | undefined;
   iapAudience: string | undefined;
   verifyIapJwt: boolean;
+  webRoot: string | undefined;
 }>;
 
 export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
@@ -71,6 +78,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     devIdentity: e.CIVIL_DEV_IDENTITY,
     iapAudience: e.CIVIL_IAP_AUDIENCE,
     verifyIapJwt: e.CIVIL_VERIFY_IAP_JWT ?? isProduction,
+    webRoot: e.CIVIL_WEB_ROOT,
   };
 
   assertCoherent(config);

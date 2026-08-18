@@ -1,0 +1,228 @@
+/*
+ * PRD 7's shell: left project tree and git status, centre canvas or Monaco, right
+ * inspector, top breadcrumb + branch + Run + commit indicator. Only the frame exists
+ * at M0; M1 fills the centre with a canvas.
+ *
+ * PRD 15: desktop only, >=1280px. No responsive work, deliberately.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0e1116;
+  --bg-raised: #151a21;
+  --bg-inset: #0a0d11;
+  --border: #232b36;
+  --border-strong: #313c4a;
+  --text: #dfe6ef;
+  --text-dim: #8b97a8;
+  --text-faint: #5b6675;
+  --accent: #5aa9ff;
+  --accent-dim: #2f5d8f;
+  --ok: #4ec9a0;
+  --warn: #e0a458;
+  --danger: #e5674f;
+
+  --row: 34px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  display: grid;
+  grid-template-rows: var(--row) 1fr;
+  grid-template-columns: 260px 1fr 320px;
+  grid-template-areas:
+    "top    top     top"
+    "tree   centre  inspector";
+  height: 100%;
+  min-width: 1280px;
+}
+
+/* ---- top bar ------------------------------------------------------------ */
+
+.top {
+  grid-area: top;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.breadcrumb .sep { color: var(--text-faint); }
+.breadcrumb .here { color: var(--text); }
+
+.top .spacer { flex: 1; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.chip .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.chip .dot.ok { background: var(--ok); }
+.chip .dot.warn { background: var(--warn); }
+.chip .dot.danger { background: var(--danger); }
+
+/* Run is disabled at the composition altitude: PRD 4 says nothing executes there. */
+.run {
+  height: 22px;
+  padding: 0 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.run:disabled {
+  border-color: var(--border);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+
+/* ---- panes -------------------------------------------------------------- */
+
+.pane { overflow: auto; }
+
+.tree {
+  grid-area: tree;
+  background: var(--bg-raised);
+  border-right: 1px solid var(--border);
+}
+
+.inspector {
+  grid-area: inspector;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+}
+
+.centre {
+  grid-area: centre;
+  background: var(--bg-inset);
+  display: grid;
+  place-items: center;
+}
+
+.pane-title {
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-body { padding: 12px; }
+
+.empty {
+  text-align: center;
+  color: var(--text-faint);
+  max-width: 460px;
+  line-height: 1.6;
+}
+
+.empty h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.empty code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.kv dt { color: var(--text-faint); }
+.kv dd { margin: 0; font-family: var(--mono); color: var(--text-dim); word-break: break-all; }
+
+/* ---- session gate ------------------------------------------------------- */
+
+.gate {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+}
+
+.gate-card {
+  max-width: 480px;
+  text-align: center;
+  line-height: 1.6;
+  color: var(--text-dim);
+}
+
+.gate-card h1 {
+  font-size: 16px;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+
+.gate-card button {
+  margin-top: 16px;
+  height: 28px;
+  padding: 0 14px;
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
