@@ -11,6 +11,14 @@ dist/
 *.tfvars
 !example.tfvars
 
+# Downloaded OAuth client files. These carry client_secret and have no business in a
+# repo — the values belong in Secret Manager. Named broadly because Google's download
+# name varies (client_secret_*.json) and people rename them.
+civil-auth.json
+client_secret*.json
+*-oauth*.json
+*credentials*.json
+
 # Terraform
 .terraform/
 *.tfstate
