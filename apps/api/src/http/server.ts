@@ -24,18 +24,18 @@ export interface ServerDeps {
 }
 
 /**
- * Routes reachable without a session. Cloud Run's probes cannot present one, and the
- * auth routes are how you get one in the first place.
+ * Only the data is guarded. The application shell — index.html and its assets — is
+ * public, because a signed-out visitor has to be able to load the app in order to be
+ * shown a sign-in screen. Refusing the shell means the browser renders a JSON 401
+ * instead, and there is no way in.
  *
- * The SPA shell is deliberately NOT here. It renders its own signed-out state from a
- * 401 on /api/me, which keeps exactly one place deciding who is signed in.
+ * The bundle carries no secrets: every project, manifest, and file is fetched through
+ * /api, which is exactly what this guards. That is the standard SPA split, and it is
+ * also why the auth hook cannot simply cover everything.
+ *
+ * /auth/ is likewise public — it is how a session is obtained in the first place.
  */
-const PUBLIC_PREFIXES = ['/healthz', '/readyz', '/auth/'];
-
-const isPublic = (url: string): boolean => {
-  const path = url.split('?')[0]!;
-  return PUBLIC_PREFIXES.some((p) => (p.endsWith('/') ? path.startsWith(p) : path === p));
-};
+export const isGuarded = (url: string): boolean => url.split('?')[0]!.startsWith('/api/');
 
 export async function createServer(deps: ServerDeps) {
   const { config, logger, pool } = deps;
@@ -67,7 +67,7 @@ export async function createServer(deps: ServerDeps) {
   const identityReader = createIdentityReader(config, pool);
 
   app.addHook('onRequest', async (request, reply) => {
-    if (isPublic(request.url)) return;
+    if (!isGuarded(request.url)) return;
 
     try {
       request.identity = await identityReader.read(request.cookies, (value) => {
@@ -123,7 +123,11 @@ export async function createServer(deps: ServerDeps) {
   // IAP fronted one service, and so does this: the SPA is served from the same origin
   // as the API. Registered after the auth hook, so static assets are behind it too.
   if (config.webRoot) {
-    await app.register(fastifyStatic, { root: config.webRoot, index: false });
+    // `index` must be set, not false. With it disabled, @fastify/static matches the
+    // request for "/" as a directory and answers 403 — and because it matched, the
+    // SPA fallback below never runs. The root URL is the one every visitor types, so
+    // that failure locks everyone out while every other route looks correct.
+    await app.register(fastifyStatic, { root: config.webRoot, index: 'index.html' });
 
     // SPA fallback, scoped to non-/api paths so a mistyped API route still 404s as
     // JSON rather than silently returning HTML.

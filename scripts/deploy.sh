@@ -40,5 +40,38 @@ gcloud run jobs execute "$JOB" --project="$PROJECT_ID" --region="$REGION" --wait
 echo "==> Deploying"
 gcloud run deploy "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" --quiet
 
+URL=$(tf output -raw service_url)
+
+# The root URL is the one every visitor types, and it is the one most easily broken
+# without breaking anything else: a guard that covers too much, or a static handler
+# that refuses a directory, both leave every other route looking correct. Check it.
+echo "==> Smoke test"
+fail=0
+
+check() {
+  local path="$1" want_status="$2" want_type="$3"
+  local got
+  got=$(curl -sS -o /dev/null -w "%{http_code} %{content_type}" --max-time 30 "${URL}${path}" || echo "000 none")
+  if [[ "$got" == "$want_status "*"$want_type"* ]]; then
+    printf "    ok   %-16s %s\n" "$path" "$got"
+  else
+    printf "    FAIL %-16s got '%s', wanted '%s * %s'\n" "$path" "$got" "$want_status" "$want_type"
+    fail=1
+  fi
+}
+
+# The shell must load signed out, or nobody can reach the sign-in screen.
+check "/"        200 "text/html"
+# The data must not.
+check "/api/me"  401 "application/json"
+# The container must be able to answer for itself.
+check "/readyz"  200 "application/json"
+
+if [[ $fail -ne 0 ]]; then
+  echo
+  echo "Deployed, but the smoke test failed: $URL" >&2
+  exit 1
+fi
+
 echo
-echo "Deployed: $(tf output -raw service_url)"
+echo "Deployed: $URL"

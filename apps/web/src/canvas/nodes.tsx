@@ -61,7 +61,16 @@ const ClientNode = (props: NodeProps) => {
   const flavour = (data.manifest as { client?: string }).client ?? 'client';
   // PRD 4: api and mcp are generated boundaries, frontend is an app you build.
   const glyph = flavour === 'frontend' ? '▤' : flavour === 'mcp' ? '⛁' : '⇄';
-  return <Face kind={flavour} glyph={glyph} data={data} ports={{ in: false, out: true }} />;
+  // A frontend originates traffic and is never a target. An api or mcp boundary is
+  // both: a frontend routes to it, and it routes on to the services it exposes.
+  return (
+    <Face
+      kind={flavour}
+      glyph={glyph}
+      data={data}
+      ports={{ in: flavour !== 'frontend', out: true }}
+    />
+  );
 };
 
 const ServiceNode = (props: NodeProps) => {

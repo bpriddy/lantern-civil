@@ -133,6 +133,10 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
       // layer — dragging a node here would write nothing and teach the wrong thing.
       nodesDraggable={false}
       nodesConnectable={false}
+      // React Flow zooms on double-click by default, which fights the descent
+      // gesture: the same action would both zoom the parent and enter the child.
+      // PRD 7 gives double-click to descent, so the built-in has to go.
+      zoomOnDoubleClick={false}
       edgesFocusable={false}
       elementsSelectable
       minZoom={0.2}

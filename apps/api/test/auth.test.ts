@@ -109,3 +109,33 @@ test('each login gets fresh, unpredictable values', () => {
   // RFC 7636 requires 43-128 characters.
   assert.ok(a.codeVerifier.length >= 43 && a.codeVerifier.length <= 128);
 });
+
+// --- what the session guard covers -----------------------------------------
+
+test('the guard covers the data and nothing else', async () => {
+  const { isGuarded } = await import('../dist/http/server.js');
+
+  // Guarded: everything a signed-out visitor must not read.
+  assert.equal(isGuarded('/api/me'), true);
+  assert.equal(isGuarded('/api/projects'), true);
+  assert.equal(isGuarded('/api/projects/abc/bundle?path=app.yaml'), true);
+
+  // Public: the shell and its assets. Guarding these does not protect anything —
+  // the bundle holds no secrets — and it makes the sign-in screen unreachable,
+  // because the browser gets a JSON 401 instead of an app that can render one.
+  assert.equal(isGuarded('/'), false);
+  assert.equal(isGuarded('/assets/index-abc123.js'), false);
+  assert.equal(isGuarded('/assets/index-abc123.css'), false);
+
+  // Public: how a session is obtained, and how Cloud Run probes the container.
+  assert.equal(isGuarded('/auth/google/start'), false);
+  assert.equal(isGuarded('/auth/google/callback?code=x&state=y'), false);
+  assert.equal(isGuarded('/healthz'), false);
+  assert.equal(isGuarded('/readyz'), false);
+
+  // A deep SPA route is shell, not data — it must fall through to index.html.
+  assert.equal(isGuarded('/projects/abc/classify'), false);
+
+  // Not fooled by a query string that merely mentions /api/.
+  assert.equal(isGuarded('/?next=/api/me'), false);
+});
