@@ -7,6 +7,7 @@ import type pg from 'pg';
 import type { Config } from '../config.js';
 import { checkConnection } from '../db/pool.js';
 import { registerAuthRoutes } from './auth-routes.js';
+import { registerProjectRoutes } from './project-routes.js';
 import { UnauthenticatedError, createIdentityReader, type Identity } from './identity.js';
 
 declare module 'fastify' {
@@ -105,6 +106,8 @@ export async function createServer(deps: ServerDeps) {
     avatarUrl: request.identity.avatarUrl,
     environment: config.env,
   }));
+
+  registerProjectRoutes(app, { config, pool });
 
   // Placeholder for the settings surface the owner asked for: GitHub is linked here
   // rather than at sign-in, so one connection serves every project a user owns.

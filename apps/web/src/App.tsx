@@ -1,23 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Editor, type Altitude } from './canvas/Editor.js';
+import { Inspector } from './panes/Inspector.js';
+import { ProjectTree } from './panes/ProjectTree.js';
+import { Settings } from './panes/Settings.js';
 import {
   SIGN_IN_ERRORS,
-  fetchConnections,
   fetchMe,
   signIn,
-  signOut,
-  type Connection,
   type Me,
   type SessionState,
 } from './identity.js';
+import { fetchBundle, fetchProjects, type ProjectBundle } from './project.js';
 
-/**
- * PRD 14 M0: an authenticated shell. The frame is PRD 7's — project tree left, canvas
- * or Monaco centre, inspector right, breadcrumb and branch and Run on top. M1 fills
- * the centre; everything here is inert so the canvas lands in a layout that exists.
- *
- * The sign-in screen is new. IAP used to render one; the owner replaced it with
- * application-owned Google OAuth so the application can be shared.
- */
 export function App(): React.ReactElement {
   const [session, setSession] = useState<SessionState>({ status: 'loading' });
 
@@ -33,9 +27,9 @@ export function App(): React.ReactElement {
     case 'signedOut':
       return <SignIn />;
     case 'error':
-      return <Unreachable message={session.message} />;
+      return <Fatal title="Cannot reach the API" message={session.message} />;
     case 'authenticated':
-      return <Shell me={session.me} />;
+      return <Workspace me={session.me} />;
   }
 }
 
@@ -57,11 +51,11 @@ function SignIn() {
   );
 }
 
-function Unreachable({ message }: { message: string }) {
+function Fatal({ title, message }: { title: string; message: string }) {
   return (
     <div className="gate">
       <div className="gate-card">
-        <h1>Cannot reach the API</h1>
+        <h1>{title}</h1>
         <p>{message}</p>
         <button type="button" onClick={() => window.location.reload()}>
           Reload
@@ -71,28 +65,116 @@ function Unreachable({ message }: { message: string }) {
   );
 }
 
-function Shell({ me }: { me: Me }) {
+type Load =
+  | { status: 'loading' }
+  | { status: 'empty' }
+  | { status: 'ready'; bundle: ProjectBundle }
+  | { status: 'error'; message: string };
+
+function Workspace({ me }: { me: Me }) {
+  const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  /**
+   * PRD 1: the navigation model is TouchDesigner's. Double-click descends into a
+   * context and you are then INSIDE it, not looking at it in a panel. The stack is
+   * that "inside": the last entry is where you are, and the rest is how you got there.
+   */
+  const [stack, setStack] = useState<Altitude[]>([{ kind: 'composition', label: 'app' }]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const projects = await fetchProjects(controller.signal);
+        const first = projects[0];
+        if (!first) return setLoad({ status: 'empty' });
+        const bundle = await fetchBundle(first.id, controller.signal);
+        setLoad({ status: 'ready', bundle });
+        setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          setLoad({ status: 'error', message: (error as Error).message });
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, []);
+
+  const descend = useCallback((altitude: Altitude) => {
+    setSelectedId(null);
+    setStack((s) => [...s, altitude]);
+  }, []);
+
+  const ascend = useCallback(() => {
+    setSelectedId(null);
+    setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+  }, []);
+
+  const ascendTo = useCallback((index: number) => {
+    setSelectedId(null);
+    setStack((s) => s.slice(0, index + 1));
+  }, []);
+
+  const bundle = load.status === 'ready' ? load.bundle : undefined;
+  const current = stack[stack.length - 1]!;
+
+  const fatalCount = useMemo(
+    () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
+    [bundle],
+  );
+  const runBlockedCount = useMemo(
+    () => bundle?.diagnostics.filter((d) => d.severity === 'run-blocking').length ?? 0,
+    [bundle],
+  );
+
+  // PRD 4: Run has no meaning on the composition canvas. PRD 6.4: a flow cycle blocks
+  // Run without failing the save. Both are expressed here rather than hidden.
+  const runDisabled = current.kind === 'composition' || runBlockedCount > 0 || fatalCount > 0;
+  const runTitle =
+    current.kind === 'composition'
+      ? 'Run has no meaning on the composition canvas'
+      : fatalCount > 0
+        ? `${fatalCount} validation error${fatalCount === 1 ? '' : 's'}`
+        : runBlockedCount > 0
+          ? 'A flow cycle blocks Run until it is broken'
+          : 'Runtime arrives with M4';
 
   return (
     <div className="shell">
       <header className="top">
         <span className="brand">Civil</span>
         <nav className="breadcrumb" aria-label="Location">
-          <span className="here">app</span>
+          {stack.map((level, index) => (
+            <span key={`${level.kind}-${index}`}>
+              {index > 0 ? <span className="sep">/</span> : null}
+              {index === stack.length - 1 ? (
+                <span className="here">{level.label}</span>
+              ) : (
+                <button type="button" className="crumb" onClick={() => ascendTo(index)}>
+                  {level.label}
+                </button>
+              )}
+            </span>
+          ))}
         </nav>
         <span className="spacer" />
+        {fatalCount > 0 ? (
+          <span className="chip" title="Validation errors">
+            <span className="dot danger" />
+            {fatalCount} error{fatalCount === 1 ? '' : 's'}
+          </span>
+        ) : null}
         <span className="chip" title="Current branch">
           <span className="dot" />
-          main
+          {bundle?.project.defaultBranch ?? 'main'}
         </span>
-        <span className="chip" title="Pending changes are committed explicitly (PRD 7)">
+        <span className="chip" title="Edits accumulate as pending changes (PRD 7)">
           <span className="dot" />
           no pending changes
         </span>
-        {/* PRD 4: nothing executes at the composition altitude, so Run has no meaning
-            here. Disabled rather than hidden, so the rule stays visible. */}
-        <button className="run" type="button" disabled title="Run has no meaning on the composition canvas">
+        <button className="run" type="button" disabled={runDisabled} title={runTitle}>
           Run
         </button>
         <button className="avatar" type="button" onClick={() => setSettingsOpen((v) => !v)} title={me.email}>
@@ -101,102 +183,41 @@ function Shell({ me }: { me: Me }) {
       </header>
 
       <aside className="pane tree">
-        <div className="pane-title">Project</div>
-        <div className="pane-body">
-          <p className="muted">No project open. Cloning and the file tree arrive with M1.</p>
-        </div>
+        <ProjectTree bundle={bundle} />
       </aside>
 
       <main className="centre">
-        <div className="empty">
-          <h2>The canvas lands here</h2>
-          <p>
-            M0 is the authenticated shell. M1 renders <code>app.yaml</code> as the
-            composition canvas and descends into <code>graphs/*.graph.yaml</code>.
-          </p>
-        </div>
+        {load.status === 'loading' ? null : load.status === 'error' ? (
+          <div className="empty">
+            <h2>Could not load the project</h2>
+            <p>{load.message}</p>
+          </div>
+        ) : load.status === 'empty' ? (
+          <div className="empty">
+            <h2>No project open</h2>
+            <p>
+              Connect GitHub in settings, or point a local project at a checkout.
+            </p>
+          </div>
+        ) : (
+          <Editor
+            bundle={load.bundle}
+            stack={stack}
+            selectedId={selectedId}
+            onDescend={descend}
+            onAscend={ascend}
+            onSelect={setSelectedId}
+          />
+        )}
       </main>
 
       <aside className="pane inspector">
-        {settingsOpen ? <Settings me={me} onClose={() => setSettingsOpen(false)} /> : <Inspector me={me} />}
+        {settingsOpen ? (
+          <Settings me={me} onClose={() => setSettingsOpen(false)} />
+        ) : (
+          <Inspector bundle={bundle} altitude={current} selectedId={selectedId} />
+        )}
       </aside>
     </div>
-  );
-}
-
-function Inspector({ me }: { me: Me }) {
-  return (
-    <>
-      <div className="pane-title">Inspector</div>
-      <div className="pane-body">
-        <p className="muted">Nothing selected.</p>
-        <dl className="kv" style={{ marginTop: 16 }}>
-          <dt>Signed in</dt>
-          <dd>{me.email}</dd>
-          <dt>Environment</dt>
-          <dd>{me.environment}</dd>
-        </dl>
-      </div>
-    </>
-  );
-}
-
-/**
- * The owner asked for GitHub to be a settings step rather than part of signing in.
- * Keeping it per-user rather than per-project means one connection serves every
- * project that user owns.
- */
-function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
-  const [connections, setConnections] = useState<Connection[] | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchConnections(controller.signal)
-      .then(setConnections)
-      .catch(() => setConnections([]));
-    return () => controller.abort();
-  }, []);
-
-  const github = connections?.find((c) => c.provider === 'github');
-
-  return (
-    <>
-      <div className="pane-title">
-        Settings
-        <button type="button" className="link" onClick={onClose}>
-          close
-        </button>
-      </div>
-      <div className="pane-body">
-        <dl className="kv">
-          <dt>Account</dt>
-          <dd>{me.email}</dd>
-        </dl>
-
-        <h3 className="section">Connections</h3>
-        {connections === null ? (
-          <p className="muted">Loading…</p>
-        ) : github ? (
-          <p className="muted">
-            GitHub connected{github.externalLogin ? ` as ${github.externalLogin}` : ''}.
-          </p>
-        ) : (
-          <>
-            <p className="muted">
-              GitHub is not connected. Civil needs it to clone the repositories your
-              projects are projections of.
-            </p>
-            <button type="button" className="connect" disabled title="Arrives with M1">
-              Connect GitHub
-            </button>
-          </>
-        )}
-
-        <h3 className="section">Session</h3>
-        <button type="button" className="connect" onClick={() => void signOut()}>
-          Sign out
-        </button>
-      </div>
-    </>
   );
 }
