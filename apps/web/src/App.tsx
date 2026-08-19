@@ -33,6 +33,7 @@ import {
   fetchExamples,
   fetchProjects,
   syncProject,
+  type ManifestOp,
   type ProjectBundle,
   type ProjectSummary,
 } from './project.js';
@@ -373,29 +374,6 @@ function Workspace({ me }: { me: Me }) {
    * an agent will make, which is why the placement and the id are decided here rather
    * than inside a component that only the keyboard can reach.
    */
-  const addNode = useCallback(
-    async (node: Record<string, unknown>) => {
-      if (!activeId || load.status !== 'ready') return;
-      const level = stack[stack.length - 1]!;
-      const manifestPath =
-        level.kind === 'graph' ? level.path : load.bundle.compositionPath;
-
-      try {
-        const { summary } = await applyOps(activeId, manifestPath, [
-          { op: 'addNode', node },
-          // Somewhere visible rather than at the origin. Where exactly is the open
-          // question about what a command targets — see docs/roadmap.md.
-          { op: 'setLayout', id: String(node['id']), x: 120, y: 420 },
-        ]);
-        await refresh();
-        report({ title: 'Add node', detail: summary });
-      } catch (error) {
-        report({ title: 'Add node', detail: (error as Error).message, refused: true });
-      }
-    },
-    [activeId, load, stack, refresh, report],
-  );
-
   const initialize = useCallback(async () => {
     if (!activeId) return;
     setInitializing(true);
@@ -423,6 +401,47 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Sync', detail: (error as Error).message, refused: true });
     }
   }, [activeId, refresh, report]);
+
+  /**
+   * Which manifest the current canvas is a view of. Every op needs it, and getting it
+   * from the altitude rather than from the gesture is what keeps a graph edit out of
+   * the composition file.
+   */
+  const manifestPath = useMemo(() => {
+    const level = stack[stack.length - 1];
+    if (level?.kind === 'graph') return level.path;
+    return load.status === 'ready' ? load.bundle.compositionPath : undefined;
+  }, [stack, load]);
+
+  const runOps = useCallback(
+    async (ops: ManifestOp[], title: string) => {
+      if (!activeId || !manifestPath) return;
+      try {
+        const { summary } = await applyOps(activeId, manifestPath, ops);
+        await refresh();
+        report({ title, detail: summary });
+      } catch (error) {
+        report({ title, detail: (error as Error).message, refused: true });
+      }
+    },
+    [activeId, manifestPath, refresh, report],
+  );
+
+  const addNode = useCallback(
+    async (node: Record<string, unknown>) => {
+      await runOps(
+        [
+          { op: 'addNode', node },
+          // Somewhere visible rather than at the origin. Where exactly is the open
+          // question about what a command targets — see docs/roadmap.md.
+          { op: 'setLayout', id: String(node['id']), x: 120, y: 420 },
+        ],
+        'Add node',
+      );
+    },
+    [runOps],
+  );
+
 
   if (atHome) {
     return (
@@ -588,6 +607,10 @@ function Workspace({ me }: { me: Me }) {
             onDescend={descend}
             onAscend={ascend}
             onSelect={setSelectedId}
+            onConnect={(edge) => void runOps([{ op: 'addEdge', edge }], 'Connect')}
+            onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
+            onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move')}
+            onRemoveEdge={(id) => void runOps([{ op: 'removeEdge', id }], 'Disconnect')}
           />
         )}
       </main>

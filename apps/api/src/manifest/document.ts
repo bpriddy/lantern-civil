@@ -154,3 +154,52 @@ export function findSequence(manifest: ManifestDocument, path: readonly string[]
     count: items.length,
   };
 }
+
+
+/** An item in a sequence, and the span that removing it should take with it. */
+export interface SequenceItem {
+  /** Start of the removable span, including the leading newline and dash. */
+  start: number;
+  end: number;
+}
+
+/**
+ * Finds a sequence item by its `id`, for removal.
+ *
+ * The span starts at the newline before the item rather than at the item itself, so
+ * removing it does not leave the blank line and dash it used to sit on. PRD 14 M3's
+ * "the YAML looks hand-written" applies to deletions too: a file with a stray `-` in
+ * it is not something a person would have written.
+ */
+export function findSequenceItemById(
+  manifest: ManifestDocument,
+  path: readonly string[],
+  id: string,
+): SequenceItem {
+  const node = manifest.doc.getIn(path, true);
+  if (!isSeq(node)) {
+    throw new ManifestEditError(`${path.join('.')} is not a sequence in this manifest`);
+  }
+
+  const index = node.items.findIndex((item) => {
+    const value = item && typeof item === 'object' && 'get' in item
+      ? (item as { get(key: string): unknown }).get('id')
+      : undefined;
+    return value === id;
+  });
+
+  if (index === -1) throw new ManifestEditError(`no item with id "${id}" in ${path.join('.')}`);
+
+  const item = node.items[index] as { range?: [number, number, number] };
+  if (!item.range) throw new ManifestEditError(`item "${id}" has no position in the source`);
+
+  // Back up over the dash and the whitespace before it, to the end of the previous
+  // line — that whole span belongs to this item.
+  let start = item.range[0];
+  const lineStart = manifest.source.lastIndexOf('\n', start - 1);
+  if (lineStart !== -1 && manifest.source.slice(lineStart + 1, start).trim() === '-') {
+    start = lineStart;
+  }
+
+  return { start, end: trimEnd(manifest.source, item.range[1]) };
+}

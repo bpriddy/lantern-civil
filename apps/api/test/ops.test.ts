@@ -270,3 +270,78 @@ test('a scaffolded project survives more than one node', () => {
   // And no stray key escaped to the top level.
   assert.deepEqual(Object.keys(parsed).sort(), ['apiVersion', 'kind', 'layout', 'metadata', 'spec']);
 });
+
+
+test('an edge is added in the style of its neighbours and validates', () => {
+  const before = read('graphs/classify.graph.yaml');
+  const { source: after, summary } = applyOps(before, [
+    {
+      op: 'addEdge',
+      edge: { id: 'e6', kind: 'flow', from: { node: 'normalize' }, to: { node: 'record' } },
+    },
+  ]);
+
+  assert.match(summary, /Connected normalize → record/);
+  assert.ok(/- \{ id: e6, kind: flow, from: \{ node: normalize \}, to: \{ node: record \} \}/.test(after),
+    `expected a flow item:\n${after.split('\n').filter((l) => l.includes('e6')).join('\n')}`);
+  untouchedLinesSurvive(before, after);
+
+  const parsed = stillParses(after, 'addEdge') as { spec: { edges: { id: string }[] } };
+  assert.equal(parsed.spec.edges.length, 6);
+});
+
+test('removing an edge takes its whole line with it', () => {
+  const before = read('graphs/classify.graph.yaml');
+  const { source: after, summary } = applyOps(before, [{ op: 'removeEdge', id: 'e5' }]);
+
+  assert.match(summary, /Disconnected “e5”/);
+  const parsed = stillParses(after, 'removeEdge') as { spec: { edges: { id: string }[] } };
+  assert.deepEqual(parsed.spec.edges.map((e) => e.id), ['e1', 'e2', 'e3', 'e4']);
+
+  // No orphaned dash, and exactly one line fewer.
+  assert.ok(!/^\s*-\s*$/m.test(after), `a bare dash was left behind:\n${after}`);
+  assert.equal(after.split('\n').length, before.split('\n').length - 1);
+});
+
+test('an edge added to an empty list, then removed, returns the file to itself', () => {
+  const scaffold = [
+    'apiVersion: civil/v1',
+    'kind: Composition',
+    'metadata:',
+    '  id: demo',
+    'spec:',
+    '  nodes:',
+    '    - id: a',
+    '      type: service',
+    '    - id: b',
+    '      type: service',
+    '  edges: []',
+    'layout:',
+    '  nodes: {}',
+    '',
+  ].join('\n');
+
+  const added = applyOps(scaffold, [
+    { op: 'addEdge', edge: { id: 'c1', kind: 'depends-on', from: { node: 'a' }, to: { node: 'b' } } },
+  ]).source;
+  const parsed = stillParses(added, 'addEdge into an empty list') as {
+    spec: { edges: { id: string }[] };
+  };
+  assert.equal(parsed.spec.edges.length, 1);
+
+  // Removing it leaves valid YAML with no edges, even though the list is now empty
+  // in a different way than it started.
+  const removed = applyOps(added, [{ op: 'removeEdge', id: 'c1' }]).source;
+  const after = stillParses(removed, 'removeEdge back to empty') as {
+    spec: { edges: unknown };
+  };
+  assert.ok(after.spec.edges === null || (Array.isArray(after.spec.edges) && after.spec.edges.length === 0),
+    `expected no edges, got ${JSON.stringify(after.spec.edges)}`);
+});
+
+test('removing an edge that is not there is refused', () => {
+  assert.throws(
+    () => applyOps(read('app.yaml'), [{ op: 'removeEdge', id: 'nope' }]),
+    /no item with id "nope"/,
+  );
+});

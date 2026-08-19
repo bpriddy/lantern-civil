@@ -3,6 +3,7 @@ import {
   ManifestEditError,
   applySplices,
   findSequence,
+  findSequenceItemById,
   readManifest,
   trimEnd,
   type ManifestDocument,
@@ -35,7 +36,17 @@ export interface SetLayoutOp {
   y: number;
 }
 
-export type ManifestOp = AddNodeOp | SetLayoutOp;
+export interface AddEdgeOp {
+  op: 'addEdge';
+  edge: Record<string, unknown>;
+}
+
+export interface RemoveEdgeOp {
+  op: 'removeEdge';
+  id: string;
+}
+
+export type ManifestOp = AddNodeOp | SetLayoutOp | AddEdgeOp | RemoveEdgeOp;
 
 export interface ApplyResult {
   source: string;
@@ -131,6 +142,10 @@ function applyOne(manifest: ManifestDocument, op: ManifestOp): ApplyResult {
       return addNode(manifest, op);
     case 'setLayout':
       return setLayout(manifest, op);
+    case 'addEdge':
+      return addEdge(manifest, op);
+    case 'removeEdge':
+      return removeEdge(manifest, op);
   }
 }
 
@@ -159,6 +174,39 @@ function addNode(manifest: ManifestDocument, op: AddNodeOp): ApplyResult {
   return {
     source: applySplices(manifest.source, [splice]),
     summary: `Added ${op.node['type'] ?? 'node'} “${id}”.`,
+  };
+}
+
+function addEdge(manifest: ManifestDocument, op: AddEdgeOp): ApplyResult {
+  const id = op.edge['id'];
+  if (typeof id !== 'string') throw new ManifestEditError('an edge needs an id');
+
+  const target = findSequence(manifest, ['spec', 'edges']);
+  const continuation = target.itemPrefix.replace('\n', '').replace(/-\s*$/, '  ');
+  const body = target.flow
+    ? flowMapping(op.edge, continuation)
+    : blockMapping(op.edge, continuation);
+
+  const from = (op.edge['from'] as { node?: string } | undefined)?.node;
+  const to = (op.edge['to'] as { node?: string } | undefined)?.node;
+
+  return {
+    source: applySplices(manifest.source, [
+      { start: target.insertAt, end: target.replaceTo, text: `${target.itemPrefix}${body}` },
+    ]),
+    summary: `Connected ${from ?? '?'} → ${to ?? '?'}.`,
+  };
+}
+
+/**
+ * PRD 6.4 forbids dangling edges, so removing one is how a connection is undone —
+ * and removing a node has to take its edges with it.
+ */
+function removeEdge(manifest: ManifestDocument, op: RemoveEdgeOp): ApplyResult {
+  const item = findSequenceItemById(manifest, ['spec', 'edges'], op.id);
+  return {
+    source: applySplices(manifest.source, [{ start: item.start, end: item.end, text: '' }]),
+    summary: `Disconnected “${op.id}”.`,
   };
 }
 

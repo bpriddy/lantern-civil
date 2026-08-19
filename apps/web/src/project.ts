@@ -258,7 +258,9 @@ export async function removeProject(projectId: string): Promise<void> {
 
 export type ManifestOp =
   | { op: 'addNode'; node: Record<string, unknown> }
-  | { op: 'setLayout'; id: string; x: number; y: number };
+  | { op: 'setLayout'; id: string; x: number; y: number }
+  | { op: 'addEdge'; edge: Record<string, unknown> }
+  | { op: 'removeEdge'; id: string };
 
 /**
  * PRD 7.1: the client never constructs YAML. It posts ops and the server applies

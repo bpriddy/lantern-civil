@@ -11,6 +11,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import type { ProjectBundle } from '../project.js';
+import { nextEdgeId, proposeCompositionEdge, proposeGraphEdge } from './edges.js';
 import { compositionToFlow, graphToFlow } from './model.js';
 import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js';
 
@@ -47,6 +48,12 @@ export interface EditorProps {
   onDescend: (altitude: Altitude) => void;
   onAscend: () => void;
   onSelect: (id: string | null) => void;
+  /** Drawing a connection. The kind is inferred here and sent explicitly. */
+  onConnect: (edge: Record<string, unknown>) => void;
+  /** Refused connections say why rather than silently not happening. */
+  onRefuse: (reason: string) => void;
+  onMoveNode: (id: string, x: number, y: number) => void;
+  onRemoveEdge: (id: string) => void;
 }
 
 export function Editor(props: EditorProps) {
@@ -57,7 +64,18 @@ export function Editor(props: EditorProps) {
   );
 }
 
-function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: EditorProps) {
+function Surface({
+  bundle,
+  stack,
+  selectedId,
+  onDescend,
+  onAscend,
+  onSelect,
+  onConnect,
+  onRefuse,
+  onMoveNode,
+  onRemoveEdge,
+}: EditorProps) {
   const flow = useReactFlow();
   // A code level is rendered by the takeover, not here; the deepest canvas level is
   // what stays behind it.
@@ -97,6 +115,45 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   }, [bundle, current]);
 
   const depth = stack.length - 1;
+
+  /** The manifest nodes behind the current canvas, for inferring what a link means. */
+  const manifestNodes = useMemo(() => {
+    if (current.kind === 'composition') return bundle.composition?.spec.nodes ?? [];
+    return bundle.graphs[current.path]?.spec.nodes ?? [];
+  }, [bundle, current]);
+
+  const existingEdgeIds = useMemo(() => edges.map((e) => e.id), [edges]);
+
+  const propose = useCallback(
+    (connection: { source: string; target: string }) =>
+      current.kind === 'composition'
+        ? proposeCompositionEdge(manifestNodes as never, connection)
+        : proposeGraphEdge(manifestNodes as never, connection),
+    [current.kind, manifestNodes],
+  );
+
+  const handleConnect = useCallback(
+    (connection: { source: string | null; target: string | null }) => {
+      if (!connection.source || !connection.target) return;
+      if (connection.source === connection.target) {
+        onRefuse('A node cannot connect to itself.');
+        return;
+      }
+
+      const { kind, refusal } = propose({ source: connection.source, target: connection.target });
+      // PRD 6.4 would reject this anyway; saying so at the moment of the gesture is
+      // better than drawing an edge and then marking it red.
+      if (refusal) return onRefuse(refusal);
+
+      onConnect({
+        id: nextEdgeId(existingEdgeIds, current.kind === 'composition' ? 'c' : 'e'),
+        kind,
+        from: { node: connection.source },
+        to: { node: connection.target },
+      });
+    },
+    [propose, onConnect, onRefuse, existingEdgeIds, current.kind],
+  );
 
   // Arriving at a new altitude: fit the new content over the same interval the parent
   // spent zooming in. The two motions read as one continuous move rather than a cut.
@@ -148,15 +205,18 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
       onNodeDoubleClick={handleDoubleClick}
       onNodeClick={(_e, node) => onSelect(node.id)}
       onPaneClick={() => onSelect(null)}
-      // M1 is read-only. PRD 14 puts visual editing in M3, behind the structured op
-      // layer — dragging a node here would write nothing and teach the wrong thing.
-      nodesDraggable={false}
-      nodesConnectable={false}
+      onConnect={handleConnect}
+      // Sent on drop rather than per frame: a position is worth one op, and one op is
+      // one pending change, not sixty.
+      onNodeDragStop={(_e, node) => onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y))}
+      onEdgesDelete={(deleted) => deleted.forEach((edge) => onRemoveEdge(edge.id))}
+      nodesDraggable
+      nodesConnectable
+      edgesFocusable
       // React Flow zooms on double-click by default, which fights the descent
       // gesture: the same action would both zoom the parent and enter the child.
       // PRD 7 gives double-click to descent, so the built-in has to go.
       zoomOnDoubleClick={false}
-      edgesFocusable={false}
       elementsSelectable
       minZoom={0.2}
       maxZoom={3}
