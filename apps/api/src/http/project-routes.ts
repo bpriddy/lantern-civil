@@ -20,7 +20,7 @@ import {
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
-import { GitHubApp } from '../github/app.js';
+import { GitHubApp, GitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
 import {
   BranchMovedError,
@@ -82,13 +82,29 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       if (!connection?.installationId) {
         throw new SourceError(409, 'github_not_connected', 'Connect GitHub in settings first.');
       }
-      base = await GitHubSource.load(
-        githubApp,
-        connection.installationId,
-        project.repoOwner,
-        project.repoName,
-        project.defaultBranch,
-      );
+      try {
+        base = await GitHubSource.load(
+          githubApp,
+          connection.installationId,
+          project.repoOwner,
+          project.repoName,
+          project.defaultBranch,
+        );
+      } catch (error) {
+        // Without this, a rate limit, a deleted branch, or a network blip surfaces
+        // as an opaque 500 with nothing actionable in it. GitHub already said what
+        // was wrong; pass it on.
+        if (error instanceof GitHubError) {
+          throw new SourceError(
+            error.status === 404 ? 404 : 502,
+            'github_unreachable',
+            error.status === 404
+              ? `${project.repoOwner}/${project.repoName} has no branch "${project.defaultBranch}", or the installation cannot see it.`
+              : `GitHub could not be reached (${error.status}).`,
+          );
+        }
+        throw error;
+      }
     } else {
       throw new SourceError(500, 'source_unresolvable', 'This project does not name a readable source.');
     }
@@ -245,6 +261,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     };
   });
 
+  /**
+   * PRD 7: save writes a pending change. Nothing auto-commits — edits accumulate and
+   * the commit indicator counts them.
+   */
   /**
    * PRD 7: save writes a pending change. Nothing auto-commits — edits accumulate and
    * the commit indicator counts them.

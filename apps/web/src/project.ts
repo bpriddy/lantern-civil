@@ -131,8 +131,24 @@ export async function fetchFile(
     `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`,
     { signal: signal ?? null },
   );
-  if (!response.ok) throw new Error(`could not open ${path} (${response.status})`);
+  if (!response.ok) throw new Error(await describeFailure(response, `could not open ${path}`));
   return (await response.json()) as FileContents;
+}
+
+/**
+ * The server says what went wrong and, on a 500, returns the request id that finds
+ * the stack in the logs. Throwing away both and reporting a bare status turns a
+ * traceable failure into a guess.
+ */
+async function describeFailure(response: Response, prefix: string): Promise<string> {
+  const body = (await response.json().catch(() => ({}))) as {
+    message?: string;
+    error?: string;
+    requestId?: string;
+  };
+  const detail = body.message ?? body.error ?? response.statusText;
+  const trace = body.requestId ? ` [${body.requestId}]` : '';
+  return `${prefix}: ${response.status} ${detail}${trace}`;
 }
 
 /** PRD 7: save writes a pending change. Nothing auto-commits. */
@@ -142,10 +158,7 @@ export async function saveFile(projectId: string, path: string, content: string)
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path, content }),
   });
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(body.message ?? `could not save ${path} (${response.status})`);
-  }
+  if (!response.ok) throw new Error(await describeFailure(response, `could not save ${path}`));
 }
 
 export async function revertFile(projectId: string, path: string): Promise<void> {
