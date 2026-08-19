@@ -105,7 +105,9 @@ export async function discoverContracts(
     child.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0 && !collected) {
-        unavailable ??= `civil_runtime.discover exited ${code}: ${stderr.slice(0, 200)}`;
+        // Enough of the traceback to name the failing line. 200 characters cut off
+        // exactly the part that says what went wrong.
+        unavailable ??= `civil_runtime.discover exited ${code}: ${stderr.trim().slice(-600)}`;
         resolve(undefined);
         return;
       }

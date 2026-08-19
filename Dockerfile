@@ -29,8 +29,13 @@ ENV NODE_ENV=production
 # M4 the runtime binds arguments to these same functions and one implementation of
 # "what is this function's contract" is the point. civil_runtime.discover is
 # stdlib-only, so this needs an interpreter and nothing else — no pip, no venv.
+#
+# python3, not python3-minimal: Debian's minimal package is the interpreter without
+# the full standard library, and it omits `json` — which discover.py needs to answer
+# at all. The boot probe caught this in production; nothing else would have, because
+# discovery degrades silently by design.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends python3-minimal \
+ && apt-get install -y --no-install-recommends python3 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
