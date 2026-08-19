@@ -59,18 +59,20 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   const viewports = useRef<Map<number, Viewport>>(new Map());
 
   const { nodes, edges, nodeTypes } = useMemo(() => {
+    const context = { graphs: bundle.graphs, agents: bundle.agents, files: bundle.files };
+
     if (current.kind === 'composition') {
       const composition = bundle.composition;
       if (!composition) return { nodes: [], edges: [], nodeTypes: compositionNodeTypes };
       return {
-        ...compositionToFlow(composition, bundle.compositionPath, bundle.diagnostics),
+        ...compositionToFlow(composition, bundle.compositionPath, bundle.diagnostics, context),
         nodeTypes: compositionNodeTypes,
       };
     }
     const graph = bundle.graphs[current.path];
     if (!graph) return { nodes: [], edges: [], nodeTypes: graphNodeTypes };
     return {
-      ...graphToFlow(graph, current.path, bundle.diagnostics, bundle.agents),
+      ...graphToFlow(graph, current.path, bundle.diagnostics, context),
       nodeTypes: graphNodeTypes,
     };
   }, [bundle, current]);
@@ -92,11 +94,11 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   const handleDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       const data = node.data as NodeData;
-      if (!data.descendable) return;
+      // Code descent opens Monaco (PRD 5), which is M2. Until it exists, a code node
+      // says what it would open rather than pretending to open it.
+      if (data.descent?.into !== 'canvas') return;
 
       const target = descentTarget(data);
-      // A function-backed service is descendable too, but its interior is Monaco
-      // (PRD 4). That takeover arrives with M2; until then, do not pretend.
       if (!target) return;
 
       viewports.current.set(depth, flow.getViewport());

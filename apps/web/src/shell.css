@@ -495,3 +495,54 @@ body {
 .example-name { color: var(--text); font-size: 13px; margin-bottom: 4px; }
 .example-description { color: var(--text-faint); font-size: 11px; line-height: 1.55; }
 .example .connect { margin-top: 10px; }
+
+/* ---- descent: a canvas, or code ----------------------------------------- */
+
+/* PRD 5: "A node is a canvas or it is code. Never both." The face has to say which,
+   or the rule is invisible until you double-click and find out. */
+
+.node-descends { position: relative; }
+
+/* A canvas behind the door: the node reads as a container, stacked. */
+.node-descends-canvas {
+  box-shadow: 3px 3px 0 -1px var(--bg-raised), 3px 3px 0 0 var(--border-strong);
+}
+
+/* Code behind the door: a gutter down the left edge, like an editor margin. */
+.node-descends-code { border-left: 3px solid var(--ok); padding-left: 8px; }
+
+.node-descend { margin-left: auto; font-size: 10px; color: var(--text-faint); }
+.node-descends-canvas .node-descend { color: #7cc4ff; }
+.node-descends-code .node-descend { font-family: var(--mono); color: var(--ok); }
+
+/* The interior, previewed on the face. PRD 5: a subgraph's boundary ports ARE its
+   io nodes seen from inside. */
+.node-interior {
+  margin-top: 7px;
+  padding: 5px 6px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-inset);
+}
+
+.node-port {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.node-port-arrow { color: var(--text-faint); width: 8px; }
+.node-port-out { justify-content: flex-end; }
+.node-port-out .node-port-arrow { order: 2; }
+.node-interior-empty { font-size: 10px; color: var(--text-faint); font-style: italic; }
+
+.node-code-meta {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
