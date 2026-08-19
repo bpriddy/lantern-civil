@@ -11,6 +11,7 @@ import {
 import { parse } from 'yaml';
 import { validateComposition } from '@civil/schema';
 import type { ProjectSource } from './source.js';
+import { discoverContracts, type ContractRequest, type ContractResult } from './contracts.js';
 
 /**
  * Everything the editor needs to render a project at every altitude, in one response.
@@ -33,6 +34,11 @@ export interface AgentEntry {
 
 export interface ProjectBundle {
   compositionPath: string;
+  /**
+   * PRD 7.2: discovered contracts, keyed `manifestPath:nodeId`. Read from source
+   * rather than declared, so editing the function is editing the ports.
+   */
+  contracts: Record<string, ContractResult>;
   composition: Composition | undefined;
   graphs: Record<string, Graph>;
   agents: Record<string, AgentEntry>;
@@ -60,7 +66,7 @@ export function compositionPathFor(source: ProjectSource): string {
   return parsed.success ? parsed.data.spec.composition : 'app.yaml';
 }
 
-export function loadBundle(source: ProjectSource): ProjectBundle {
+export async function loadBundle(source: ProjectSource): Promise<ProjectBundle> {
   const compositionPath = compositionPathFor(source);
 
   // The shared validator walks the project and reports every diagnostic. Doing this
@@ -103,5 +109,55 @@ export function loadBundle(source: ProjectSource): ProjectBundle {
     agents,
     diagnostics,
     files: source.list(),
+    contracts: await discoverProjectContracts(source, compositionPath, compositionResult.doc, graphs),
   };
+}
+
+/**
+ * Collects every place PRD 7.2 says a contract is discoverable — function-backed
+ * services, code steps, and the functions agents call — and reads them in one batch.
+ */
+async function discoverProjectContracts(
+  source: ProjectSource,
+  compositionPath: string,
+  composition: Composition | undefined,
+  graphs: Record<string, Graph>,
+): Promise<Record<string, ContractResult>> {
+  const requests: ContractRequest[] = [];
+
+  const request = (manifest: string, nodeId: string, file: string, fn?: string) => {
+    const text = source.read(file);
+    // A file the source cannot read yields no contract rather than an error: it is
+    // usually a manifest pointing at something that does not exist yet, which the
+    // validator already reports as its own diagnostic.
+    if (text === undefined) return;
+    requests.push({ key: `${manifest}:${nodeId}`, source: text, function: fn });
+  };
+
+  for (const node of composition?.spec.nodes ?? []) {
+    if (node.type === 'service' && 'entrypoint' in node.impl) {
+      request(compositionPath, node.id, node.impl.entrypoint);
+    }
+  }
+
+  for (const [path, graph] of Object.entries(graphs)) {
+    // A capability edge names the function an agent may call (PRD 5), so the contract
+    // to read is that function's, not the module's entrypoint.
+    const capabilityFunctions = new Map<string, string>();
+    for (const edge of graph.spec.edges) {
+      if (edge.kind === 'capability' && edge.to.function) {
+        capabilityFunctions.set(edge.to.node, edge.to.function);
+      }
+    }
+
+    for (const node of graph.spec.nodes) {
+      if (node.type !== 'code') continue;
+      const fn = capabilityFunctions.get(node.id);
+      const file = node.entrypoint ?? (fn ? source.glob(node.include[0] ?? '')[0] : undefined);
+      if (file) request(path, node.id, file, fn);
+    }
+  }
+
+  const results = await discoverContracts(requests);
+  return Object.fromEntries(results);
 }

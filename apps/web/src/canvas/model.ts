@@ -1,6 +1,6 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { Composition, Diagnostic, Graph } from '@civil/schema';
-import type { AgentEntry } from '../project.js';
+import { isContract, type AgentEntry, type ContractResult } from '../project.js';
 import type { Descent, NodeData } from './nodes.js';
 
 /**
@@ -26,6 +26,16 @@ export interface FlowContext {
   graphs: Record<string, Graph>;
   agents: Record<string, AgentEntry>;
   files: string[];
+  contracts: Record<string, ContractResult>;
+}
+
+/** Contracts are keyed by the manifest they were found from plus the node id. */
+function contractFor(context: FlowContext, manifest: string, nodeId: string) {
+  const result = context.contracts[`${manifest}:${nodeId}`];
+  return {
+    contract: isContract(result) ? result : undefined,
+    contractError: result && 'error' in result ? result.error : undefined,
+  };
 }
 
 /**
@@ -109,6 +119,7 @@ export function compositionToFlow(
         label: node.id,
         descent,
         detail,
+        ...contractFor(context, file, node.id),
         diagnostics: attach(diagnostics, file, node.id),
         manifest: node,
       },
@@ -187,6 +198,7 @@ export function graphToFlow(
         label: 'name' in node && node.name ? node.name : node.id,
         descent,
         detail,
+        ...contractFor(context, file, node.id),
         diagnostics: attach(diagnostics, file, node.id),
         manifest: node,
       },

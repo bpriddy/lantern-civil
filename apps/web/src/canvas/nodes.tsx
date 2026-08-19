@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { CompositionNode, Diagnostic, GraphNode } from '@civil/schema';
+import type { Contract } from '../project.js';
 
 /**
  * PRD 3: node types are units of architecture, never units of computation. Every face
@@ -27,6 +28,14 @@ export type Descent =
 export interface NodeData extends Record<string, unknown> {
   label: string;
   descent: Descent;
+  /**
+   * PRD 7.2: "Signature and type hints parsed; projected onto the node face as
+   * ports." Undefined when there is nothing to read, or a message when reading
+   * failed — a node that cannot state its contract should say so rather than look
+   * like one with no arguments.
+   */
+  contract: Contract | undefined;
+  contractError: string | undefined;
   diagnostics: Diagnostic[];
   detail: string | undefined;
   manifest: CompositionNode | GraphNode;
@@ -89,6 +98,35 @@ function Face({
             ))
           )}
         </div>
+      ) : null}
+
+      {/* The discovered contract, as ports. Editing the function is editing these,
+          because there is no manifest holding a second copy (PRD 7.2). */}
+      {data.contract ? (
+        <div className="node-contract">
+          <div className="node-contract-name">
+            {data.contract.isAsync ? 'async ' : ''}
+            {data.contract.name}
+          </div>
+          {data.contract.inputs.map((port) => (
+            <div key={port.name} className="node-port node-port-in">
+              <span className="node-port-arrow">→</span>
+              {port.name}
+              {port.required ? '' : '?'}
+              {port.type ? <span className="node-port-type">{port.type}</span> : null}
+            </div>
+          ))}
+          <div className="node-port node-port-out">
+            {data.contract.output.type ? (
+              <span className="node-port-type">{data.contract.output.type}</span>
+            ) : (
+              <span className="node-port-untyped">untyped</span>
+            )}
+            <span className="node-port-arrow">⇥</span>
+          </div>
+        </div>
+      ) : data.contractError ? (
+        <div className="node-diagnostic">{data.contractError}</div>
       ) : null}
 
       {descent?.into === 'code' ? (

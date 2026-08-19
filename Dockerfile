@@ -25,6 +25,14 @@ FROM node:24-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 
+# PRD 7.2's contract discovery reads Python with Python's own ast module, because at
+# M4 the runtime binds arguments to these same functions and one implementation of
+# "what is this function's contract" is the point. civil_runtime.discover is
+# stdlib-only, so this needs an interpreter and nothing else — no pip, no venv.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3-minimal \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY package.json package-lock.json ./
 COPY packages/schema/package.json packages/schema/
 COPY apps/api/package.json apps/api/
@@ -40,6 +48,7 @@ COPY apps/api/migrations apps/api/migrations
 # Quickstarts, opened from the empty state. Immutable and shipped with the code, so
 # reading them from the image does not make the container the only copy of anything.
 COPY examples ./examples
+COPY runtime/src ./runtime/src
 
 ENV CIVIL_WEB_ROOT=/app/apps/web/dist
 ENV PORT=8080

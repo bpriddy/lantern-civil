@@ -29,6 +29,26 @@ export interface PendingChange {
   updatedAt: string;
 }
 
+export interface ContractPort {
+  name: string;
+  type: string | null;
+  schema: Record<string, unknown> | null;
+  required: boolean;
+}
+
+export interface Contract {
+  name: string;
+  description: string | null;
+  isAsync: boolean;
+  inputs: ContractPort[];
+  output: { type: string | null; schema: Record<string, unknown> | null };
+}
+
+export type ContractResult = Contract | { error: string };
+
+export const isContract = (c: ContractResult | undefined): c is Contract =>
+  c !== undefined && !('error' in c);
+
 export interface ProjectBundle {
   project: {
     id: string;
@@ -44,6 +64,8 @@ export interface ProjectBundle {
   diagnostics: Diagnostic[];
   files: string[];
   pending: PendingChange[];
+  /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
+  contracts: Record<string, ContractResult>;
 }
 
 export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummary[]> {

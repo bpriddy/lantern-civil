@@ -192,7 +192,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         // The client needs this to know whether committing is even possible.
         sourceKind: project.sourceKind,
       },
-      ...loadBundle(overlay),
+      ...(await loadBundle(overlay)),
       // PRD 7: the commit indicator shows a count, and the tree badges what changed.
       pending: pending.map((c) => ({ path: c.path, kind: c.kind, updatedAt: c.updatedAt })),
     };

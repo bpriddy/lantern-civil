@@ -667,3 +667,21 @@ body {
 }
 
 .commit-message:focus { outline: none; border-color: var(--accent-dim); }
+
+/* ---- discovered contracts (PRD 7.2) ------------------------------------- */
+
+.node-contract {
+  margin-top: 7px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.node-contract-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 3px;
+}
+
+.node-port-type { color: var(--text-faint); font-size: 9px; }
+.node-port-untyped { color: var(--warn); font-size: 9px; font-style: italic; }

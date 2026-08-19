@@ -71,7 +71,12 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   const viewports = useRef<Map<number, Viewport>>(new Map());
 
   const { nodes, edges, nodeTypes } = useMemo(() => {
-    const context = { graphs: bundle.graphs, agents: bundle.agents, files: bundle.files };
+    const context = {
+      graphs: bundle.graphs,
+      agents: bundle.agents,
+      files: bundle.files,
+      contracts: bundle.contracts,
+    };
 
     if (current.kind === 'composition') {
       const composition = bundle.composition;
