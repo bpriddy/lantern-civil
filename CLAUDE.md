@@ -50,8 +50,20 @@ This keeps "what does `app.yaml` mean" answerable without a second notion of roo
 it keeps a project's identity and a repository's identity the same thing — which the
 commit path, the branch model, and `pending_changes` all assume.
 
-`examples/doc-pipeline` in this repository is a **test fixture**, not an openable
-project. Opening it in Civil would mean giving it its own repository.
+## Examples are the exception, and only they
+
+Example projects ship inside Civil and are opened as quickstarts from the empty
+state. They are not repositories, so they do not bend the rule above — they are a
+third source kind with no repository at all, and no commit destination.
+
+Reading them from the container image does not bend no-local-file-storage either:
+they are immutable, shipped with the code, and reconstructible by rebuilding the
+image, exactly like the SPA bundle.
+
+The list in `apps/api/src/project/examples.ts` is closed and hand-edited, in the same
+spirit as PRD §3's node vocabulary. Adding one is a commit to Civil, not a feature of
+Civil. This exception exists for quickstarts and nothing else — a user's project is
+still a repository, whole.
 
 ## The repo is the truth
 

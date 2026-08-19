@@ -37,6 +37,9 @@ COPY --from=build /app/apps/web/dist apps/web/dist
 # Migrations ship with the image so the migrate job and the service are always the
 # same version — a job running older SQL than the code it precedes is a bad night.
 COPY apps/api/migrations apps/api/migrations
+# Quickstarts, opened from the empty state. Immutable and shipped with the code, so
+# reading them from the image does not make the container the only copy of anything.
+COPY examples ./examples
 
 ENV CIVIL_WEB_ROOT=/app/apps/web/dist
 ENV PORT=8080

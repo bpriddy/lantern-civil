@@ -11,7 +11,13 @@ import {
   revertPending,
   savePending,
 } from '../project/pending.js';
-import { createGitHubProject, getProject, listProjects } from '../project/repository.js';
+import {
+  createGitHubProject,
+  getProject,
+  listProjects,
+  openExampleProject,
+} from '../project/repository.js';
+import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
 import { GitHubApp } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -56,7 +62,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
   async function openSource(ownerId: string, project: ProjectRow): Promise<ProjectSource> {
     let base: ProjectSource;
 
-    if (project.sourceKind === 'local' && project.localPath) {
+    if (project.sourceKind === 'example' && project.exampleSlug) {
+      const example = openExample(project.exampleSlug);
+      if (!example) {
+        throw new SourceError(410, 'example_missing', 'That example is no longer bundled with Civil.');
+      }
+      base = example;
+    } else if (project.sourceKind === 'local' && project.localPath) {
       base = new LocalSource(project.localPath);
     } else if (project.sourceKind === 'github' && project.repoOwner && project.repoName) {
       if (!githubApp) throw new SourceError(503, 'github_not_configured', 'GitHub is not configured on this server.');
@@ -81,6 +93,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
   app.get('/api/projects', async (request) => ({
     projects: await listProjects(pool, request.identity.id),
   }));
+
+  /** The quickstarts bundled with Civil. */
+  app.get('/api/examples', async () => ({ examples: EXAMPLES }));
+
+  /** Opens a bundled example as a project of your own. */
+  app.post('/api/examples/:slug/open', async (request, reply) => {
+    const { slug } = request.params as { slug: string };
+    const example = findExample(slug);
+    if (!example) return reply.code(404).send({ error: 'unknown_example' });
+
+    const project = await openExampleProject(pool, request.identity.id, slug, example.name);
+    return reply.code(201).send({ project });
+  });
 
   /** Opens a repository as a project. One project per repository. */
   app.post('/api/projects', async (request, reply) => {

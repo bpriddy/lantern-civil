@@ -10,7 +10,14 @@ import {
   type Me,
   type SessionState,
 } from './identity.js';
-import { fetchBundle, fetchProjects, type ProjectBundle } from './project.js';
+import {
+  fetchBundle,
+  fetchExamples,
+  fetchProjects,
+  openExample,
+  type ExampleDefinition,
+  type ProjectBundle,
+} from './project.js';
 
 export function App(): React.ReactElement {
   const [session, setSession] = useState<SessionState>({ status: 'loading' });
@@ -70,6 +77,60 @@ type Load =
   | { status: 'empty' }
   | { status: 'ready'; bundle: ProjectBundle }
   | { status: 'error'; message: string };
+
+/**
+ * PRD 14 M1 ends with an example rendering at both altitudes. Offering it here — as a
+ * thing you click rather than a project that appears by magic — means development and
+ * production behave identically, and the first thing a new account sees is a canvas
+ * rather than an explanation of why there isn't one.
+ */
+function EmptyState() {
+  const [examples, setExamples] = useState<ExampleDefinition[] | null>(null);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchExamples(controller.signal).then(setExamples).catch(() => setExamples([]));
+    return () => controller.abort();
+  }, []);
+
+  const open = async (slug: string) => {
+    setOpening(slug);
+    try {
+      await openExample(slug);
+      window.location.reload();
+    } catch {
+      setOpening(null);
+    }
+  };
+
+  return (
+    <div className="empty">
+      <h2>No project open</h2>
+      <p>Connect GitHub in settings to open one of your repositories.</p>
+
+      {examples && examples.length > 0 ? (
+        <>
+          <h3 className="section" style={{ marginTop: 28 }}>Or start from an example</h3>
+          {examples.map((example) => (
+            <div key={example.slug} className="example">
+              <div className="example-name">{example.name}</div>
+              <div className="example-description">{example.description}</div>
+              <button
+                type="button"
+                className="connect"
+                disabled={opening !== null}
+                onClick={() => void open(example.slug)}
+              >
+                {opening === example.slug ? 'Opening…' : 'Open'}
+              </button>
+            </div>
+          ))}
+        </>
+      ) : null}
+    </div>
+  );
+}
 
 function Workspace({ me }: { me: Me }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
@@ -193,12 +254,7 @@ function Workspace({ me }: { me: Me }) {
             <p>{load.message}</p>
           </div>
         ) : load.status === 'empty' ? (
-          <div className="empty">
-            <h2>No project open</h2>
-            <p>
-              Connect GitHub in settings, or point a local project at a checkout.
-            </p>
-          </div>
+          <EmptyState />
         ) : (
           <Editor
             bundle={load.bundle}

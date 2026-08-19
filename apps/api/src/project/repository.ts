@@ -10,8 +10,9 @@ import type pg from 'pg';
 export interface ProjectRow {
   id: string;
   name: string;
-  sourceKind: 'github' | 'local';
+  sourceKind: 'github' | 'local' | 'example';
   localPath: string | null;
+  exampleSlug: string | null;
   repoOwner: string | null;
   repoName: string | null;
   defaultBranch: string;
@@ -21,6 +22,7 @@ const COLUMNS = `id,
                  name,
                  source_kind    AS "sourceKind",
                  local_path     AS "localPath",
+                 example_slug   AS "exampleSlug",
                  repo_owner     AS "repoOwner",
                  repo_name      AS "repoName",
                  default_branch AS "defaultBranch"`;
@@ -82,6 +84,24 @@ export async function createGitHubProject(
                      updated_at = now()
      RETURNING ${COLUMNS}`,
     [ownerId, input.name, input.repoOwner, input.repoName, input.defaultBranch, input.installationId],
+  );
+  return rows[0]!;
+}
+
+/** Opening the same example twice returns the one you already have, edits and all. */
+export async function openExampleProject(
+  pool: pg.Pool,
+  ownerId: string,
+  slug: string,
+  name: string,
+): Promise<ProjectRow> {
+  const { rows } = await pool.query<ProjectRow>(
+    `INSERT INTO projects (owner_id, name, source_kind, example_slug)
+     VALUES ($1, $2, 'example', $3)
+     ON CONFLICT (owner_id, example_slug) WHERE source_kind = 'example'
+       DO UPDATE SET updated_at = now()
+     RETURNING ${COLUMNS}`,
+    [ownerId, name, slug],
   );
   return rows[0]!;
 }

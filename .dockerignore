@@ -12,6 +12,5 @@ infra/terraform/.terraform
 infra/terraform/*.tfstate*
 *.tfvars
 !example.tfvars
-examples
 docs
 .pgdata

@@ -59,3 +59,22 @@ export function diagnosticsByNode(diagnostics: Diagnostic[], file: string): Map<
   }
   return map;
 }
+
+export interface ExampleDefinition {
+  slug: string;
+  name: string;
+  description: string;
+}
+
+/** Quickstarts bundled with Civil. Not repositories — see CLAUDE.md. */
+export async function fetchExamples(signal?: AbortSignal): Promise<ExampleDefinition[]> {
+  const response = await fetch('/api/examples', { signal: signal ?? null });
+  if (!response.ok) return [];
+  return ((await response.json()) as { examples: ExampleDefinition[] }).examples;
+}
+
+export async function openExample(slug: string): Promise<ProjectSummary> {
+  const response = await fetch(`/api/examples/${slug}/open`, { method: 'POST' });
+  if (!response.ok) throw new Error(`could not open example: ${response.status}`);
+  return ((await response.json()) as { project: ProjectSummary }).project;
+}

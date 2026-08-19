@@ -480,3 +480,18 @@ body {
   font-size: 10px;
   color: var(--text-faint);
 }
+
+/* ---- examples in the empty state ---------------------------------------- */
+
+.example {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  text-align: left;
+}
+
+.example-name { color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.example-description { color: var(--text-faint); font-size: 11px; line-height: 1.55; }
+.example .connect { margin-top: 10px; }

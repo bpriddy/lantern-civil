@@ -263,5 +263,13 @@ The migration was never committed and never ran against Cloud SQL, so it was rem
 rather than reversed with a forward migration — `CLAUDE.md`'s rule against rewriting
 applied migrations did not apply.
 
-**Consequence:** `examples/doc-pipeline` stays as a test fixture. Opening it in Civil
-means giving it its own repository.
+**One exception, at the owner's direction:** example projects. They ship inside Civil
+and exist to be opened as quickstarts, so they are not a repository question at all —
+a third source kind, with no repository and no commit destination. `examples/` is now
+copied into the container image and offered from the empty state.
+
+That does not weaken no-local-file-storage. Examples are immutable, shipped with the
+code, and reconstructible by rebuilding the image, exactly like the SPA bundle;
+nothing on that disk is the only copy of anything. Pending edits against an example
+still live in Postgres like any other project, so a quickstart is explorable rather
+than read-only — only committing has nowhere to go.
