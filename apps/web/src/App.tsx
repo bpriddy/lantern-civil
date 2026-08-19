@@ -211,7 +211,14 @@ function Workspace({ me }: { me: Me }) {
    */
   const openFile = useCallback((path: string) => {
     setSelectedId(null);
-    setStack((current) => [...current, { kind: 'code', label: path.split('/').pop() ?? path, files: [path] }]);
+    setStack((current) => {
+      const level = { kind: 'code' as const, label: path.split('/').pop() ?? path, files: [path] };
+      // Code contexts do not nest. Opening a file while already looking at one takes
+      // you there rather than deeper, so Escape still returns to the canvas you came
+      // from rather than to a stack of files you happened to visit.
+      const top = current[current.length - 1];
+      return top?.kind === 'code' ? [...current.slice(0, -1), level] : [...current, level];
+    });
   }, []);
 
   const enterProject = useCallback((id: string) => {

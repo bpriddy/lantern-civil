@@ -40,6 +40,14 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
   const state = useRef({ projectId, openPath, tabs });
   state.current = { projectId, openPath, tabs };
 
+  // The component is reused when the file set changes, so state can be left pointing
+  // at a file that is no longer here — which showed as a list that had changed and an
+  // editor that had not.
+  useEffect(() => {
+    if (openPath && files.includes(openPath)) return;
+    setOpenPath(files[0]);
+  }, [files, openPath]);
+
   useEffect(() => {
     if (!openPath || tabs.has(openPath)) return;
     const controller = new AbortController();
@@ -103,8 +111,17 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
 
   const openTabs = useMemo(() => [...tabs.keys()], [tabs]);
 
+  /**
+   * The file list is the contents of a code node — PRD 5 calls one "a named set of
+   * files", and seeing that set is the point of descending into it. A single file
+   * opened from the tree has no set to show, so a column listing one thing is noise
+   * and an extra click.
+   */
+  const showFileList = files.length > 1;
+
   return (
-    <div className="code-context">
+    <div className={`code-context${showFileList ? '' : ' is-single'}`}>
+      {showFileList ? (
       <aside className="code-files">
         <div className="code-files-title">Files</div>
         {files.length === 0 ? (
@@ -126,6 +143,7 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
           ))
         )}
       </aside>
+      ) : null}
 
       <div className="code-main">
         <div className="code-tabs">

@@ -555,6 +555,8 @@ body {
 /* ---- code takeover (PRD 7) ---------------------------------------------- */
 
 .code-context { display: grid; grid-template-columns: 200px 1fr; height: 100%; }
+/* One file is not a set; the list would show a single entry and cost a click. */
+.code-context.is-single { grid-template-columns: 1fr; }
 
 .code-files {
   background: var(--bg-raised);
