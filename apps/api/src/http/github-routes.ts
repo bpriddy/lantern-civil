@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Config } from '../config.js';
 import { githubRedirectUri } from '../config.js';
-import { GitHubApp, type Repository } from '../github/app.js';
+import { GitHubApp, GitHubError, describeGitHubError, type Repository } from '../github/app.js';
 import {
   GitHubAuthError,
   beginUserAuth,
@@ -135,10 +135,20 @@ export function registerGitHubRoutes(app: FastifyInstance, deps: Deps): void {
       });
     }
 
-    const result = await githubApp.asInstallation<{ repositories: Repository[]; total_count: number }>(
-      connection.installationId,
-      '/installation/repositories?per_page=100&sort=updated',
-    );
+    let result: { repositories: Repository[]; total_count: number };
+    try {
+      result = await githubApp.asInstallation(
+        connection.installationId,
+        '/installation/repositories?per_page=100&sort=updated',
+      );
+    } catch (error) {
+      if (error instanceof GitHubError) {
+        const described = describeGitHubError(error);
+        request.log.warn({ err: error }, 'could not list repositories');
+        return reply.code(described.status).send({ error: described.code, message: described.message });
+      }
+      throw error;
+    }
 
     return {
       total: result.total_count,

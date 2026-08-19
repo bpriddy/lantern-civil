@@ -85,17 +85,29 @@ export class GitHubApp {
   }
 
   private async request<T>(path: string, auth: string, init: RequestInit = {}): Promise<T> {
-    const response = await fetch(`${API}${path}`, {
-      ...init,
-      headers: {
-        accept: ACCEPT,
-        'x-github-api-version': API_VERSION,
-        authorization: auth,
-        'user-agent': 'civil',
-        ...(init.body ? { 'content-type': 'application/json' } : {}),
-        ...init.headers,
-      },
-    });
+    const send = () =>
+      fetch(`${API}${path}`, {
+        ...init,
+        headers: {
+          accept: ACCEPT,
+          'x-github-api-version': API_VERSION,
+          authorization: auth,
+          'user-agent': 'civil',
+          ...(init.body ? { 'content-type': 'application/json' } : {}),
+          ...init.headers,
+        },
+      });
+
+    let response = await send();
+
+    // GitHub throttles bursts separately from the hourly quota and answers 403 or 429
+    // with how long to wait. Surfacing that as an error makes a momentary slowdown
+    // look like a broken integration; it is a request that has not finished yet.
+    const wait = retryDelayMs(response);
+    if (wait !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      response = await send();
+    }
 
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
@@ -128,6 +140,74 @@ export class GitHubApp {
   async asInstallation<T>(installationId: string, path: string, init?: RequestInit): Promise<T> {
     return this.request<T>(path, `Bearer ${await this.installationToken(installationId)}`, init);
   }
+}
+
+/**
+ * How long to wait before one retry, or undefined if retrying will not help.
+ *
+ * Only for throttling. A 403 for a permission the app was never granted is
+ * permanent, and retrying it wastes the caller's time to reach the same answer, so
+ * the distinction is drawn on what GitHub actually says.
+ */
+function retryDelayMs(response: Response): number | undefined {
+  if (response.status !== 403 && response.status !== 429) return undefined;
+
+  const retryAfter = Number(response.headers.get('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    // Capped: a request that hangs for a minute is worse than one that reports a
+    // throttle the caller can act on.
+    return Math.min(retryAfter, 5) * 1000;
+  }
+
+  // The hourly quota is exhausted rather than a burst throttled — waiting for the
+  // reset could be many minutes, which is not a retry, it is a hang.
+  if (response.headers.get('x-ratelimit-remaining') === '0') return undefined;
+
+  // A secondary limit without a Retry-After. GitHub asks for at least a minute
+  // between retries in that case, but one short pause is the useful middle: enough
+  // to clear a brief burst, not enough to hold a request open.
+  return 2000;
+}
+
+/**
+ * A GitHub failure as the client should see it.
+ *
+ * Letting GitHubError reach the generic error handler produces a 500 saying "internal
+ * server error", which is both wrong — nothing internal failed — and useless, because
+ * GitHub had already said what was wrong.
+ */
+export function describeGitHubError(error: GitHubError): {
+  status: number;
+  code: string;
+  message: string;
+} {
+  if (error.status === 404) {
+    return {
+      status: 404,
+      code: 'github_not_found',
+      message: 'GitHub could not find that, or the installation cannot see it.',
+    };
+  }
+  if (error.status === 401) {
+    return {
+      status: 502,
+      code: 'github_unauthorized',
+      message: 'GitHub rejected Civil’s credentials. The app may need reinstalling.',
+    };
+  }
+  if (error.status === 403 || error.status === 429) {
+    return {
+      status: 503,
+      code: 'github_throttled',
+      message:
+        'GitHub is rate limiting Civil. This clears on its own; try again in a moment.',
+    };
+  }
+  return {
+    status: 502,
+    code: 'github_unreachable',
+    message: `GitHub refused the request (${error.status}).`,
+  };
 }
 
 export interface AppIdentity {

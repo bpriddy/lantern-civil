@@ -18,6 +18,17 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
   return fetch(input, { ...init, cache: 'no-store' });
 }
 
+/**
+ * Cancelling a request is not a failure.
+ *
+ * Every load here aborts on cleanup, and React runs cleanup immediately in
+ * development, so an uncaught abort is guaranteed rather than rare. Treating it as an
+ * error would also mean showing the user a message about something they did not do.
+ */
+export function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;

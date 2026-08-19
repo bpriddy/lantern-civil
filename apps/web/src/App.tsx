@@ -210,6 +210,19 @@ function Workspace({ me }: { me: Me }) {
    * — one file rather than a node's set. Without it, a file no node points at, like
    * CIVIL.md, could not be reached at all.
    */
+  /**
+   * Stable identity on purpose. An inline arrow is a new value every render, and the
+   * effect that reports the active file depends on it — which would run the effect on
+   * every render forever.
+   */
+  const reportActiveFile = useCallback((path: string) => {
+    setStack((s) => {
+      const top = s[s.length - 1];
+      if (top?.kind !== 'code' || top.active === path) return s;
+      return [...s.slice(0, -1), { ...top, active: path, label: path.split('/').pop() ?? path }];
+    });
+  }, []);
+
   const openFile = useCallback((path: string) => {
     setSelectedId(null);
     setStack((current) => {
@@ -560,16 +573,7 @@ function Workspace({ me }: { me: Me }) {
               projectId={load.bundle.project.id}
               files={current.files}
               active={current.active}
-              onActiveChange={(path) =>
-                setStack((s) => {
-                  const top = s[s.length - 1];
-                  if (top?.kind !== 'code' || top.active === path) return s;
-                  return [
-                    ...s.slice(0, -1),
-                    { ...top, active: path, label: path.split('/').pop() ?? path },
-                  ];
-                })
-              }
+              onActiveChange={reportActiveFile}
               onPendingChanged={(saved) => {
                 void refresh();
                 if (saved) report({ chord: '⌘S', title: 'Save', detail: `${saved} saved as a pending change.` });

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   fetchExamples,
+  isAbortError,
   fetchRepositories,
   openExample,
   openRepository,
@@ -39,11 +40,21 @@ export function ProjectPicker({
 
   useEffect(() => {
     const controller = new AbortController();
-    void fetchRepositories(controller.signal).then((result) => {
-      if ('error' in result) setReposError(result.error);
-      else setRepos(result.repositories);
-    });
-    void fetchExamples(controller.signal).then(setExamples).catch(() => setExamples([]));
+    void fetchRepositories(controller.signal)
+      .then((result) => {
+        if ('error' in result) setReposError(result.error);
+        else setRepos(result.repositories);
+      })
+      // An aborted load is a cancelled one, not a failed one.
+      .catch((error: unknown) => {
+        if (!isAbortError(error)) setReposError((error as Error).message);
+      });
+
+    void fetchExamples(controller.signal)
+      .then(setExamples)
+      .catch((error: unknown) => {
+        if (!isAbortError(error)) setExamples([]);
+      });
     return () => controller.abort();
   }, []);
 

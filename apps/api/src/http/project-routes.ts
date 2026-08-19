@@ -24,7 +24,7 @@ import {
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
-import { GitHubApp, GitHubError } from '../github/app.js';
+import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
 import {
   BranchMovedError,
@@ -114,15 +114,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         // as an opaque 500 with nothing actionable in it. GitHub already said what
         // was wrong; pass it on.
         if (error instanceof GitHubError) {
+          const described = describeGitHubError(error);
           throw new SourceError(
-            error.status === 404 ? 404 : 502,
-            'github_unreachable',
+            described.status,
+            described.code,
             error.status === 404
               ? `${project.repoOwner}/${project.repoName} has no branch "${project.defaultBranch}", or the installation cannot see it.`
-              // GitHub says why — secondary rate limiting, a permission the app was
-              // not granted, an abuse trigger. Reporting only the status turns all of
-              // those into the same unactionable message.
-              : `GitHub refused the request (${error.status}): ${error.message.slice(-220)}`,
+              : described.message,
           );
         }
         throw error;
@@ -427,6 +425,11 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       if (error instanceof NothingToCommitError) {
         return reply.code(409).send({ error: 'nothing_to_commit' });
       }
+      if (error instanceof GitHubError) {
+        const described = describeGitHubError(error);
+        request.log.warn({ err: error }, 'commit failed at GitHub');
+        return reply.code(described.status).send({ error: described.code, message: described.message });
+      }
       throw error;
     }
   });
@@ -479,10 +482,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       };
     } catch (error) {
       if (error instanceof GitHubError) {
-        return reply.code(502).send({
-          error: 'github_unreachable',
-          message: `GitHub refused the request (${error.status}).`,
-        });
+        const described = describeGitHubError(error);
+        return reply.code(described.status).send({ error: described.code, message: described.message });
       }
       throw error;
     }

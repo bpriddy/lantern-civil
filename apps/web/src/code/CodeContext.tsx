@@ -41,7 +41,14 @@ export function CodeContext({
   const [openPath, setOpenPath] = useState<string | undefined>(active ?? files[0]);
   const [tabs, setTabs] = useState<Map<string, OpenFile>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  /** Paths already fetched, tracked outside state so loading cannot restart itself. */
+  const loaded = useRef<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    loaded.current = new Set();
+    setTabs(new Map());
+  }, [projectId]);
 
   // Told to the shell rather than kept here: the breadcrumb names where you are, and
   // switching tabs is moving.
@@ -70,8 +77,19 @@ export function CodeContext({
     setOpenPath(active ?? files[0]);
   }, [files, openPath, active]);
 
+  /**
+   * Loads a file's contents once.
+   *
+   * `tabs` must not be a dependency here. Loading calls setTabs, which changes its
+   * identity, which re-runs this effect, which aborts the fetch that was about to
+   * populate it — an endless abort-and-retry that shows as an editor stuck on
+   * "Opening…" and a view flickering between two files. Reading it through a ref asks
+   * the same question without subscribing to the answer.
+   */
   useEffect(() => {
-    if (!openPath || tabs.has(openPath)) return;
+    if (!openPath || loaded.current.has(openPath)) return;
+    loaded.current.add(openPath);
+
     const controller = new AbortController();
     void fetchFile(projectId, openPath, controller.signal)
       .then((file: FileContents) => {
@@ -85,10 +103,12 @@ export function CodeContext({
         );
       })
       .catch((e: unknown) => {
+        // A cancelled load is retryable, so it must not stay marked as loaded.
+        loaded.current.delete(openPath);
         if (!controller.signal.aborted) setError((e as Error).message);
       });
     return () => controller.abort();
-  }, [projectId, openPath, tabs]);
+  }, [projectId, openPath]);
 
   const save = useCallback(async () => {
     const { projectId: id, openPath: path, tabs: open } = state.current;

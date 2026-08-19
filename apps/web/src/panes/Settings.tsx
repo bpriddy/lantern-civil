@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { isAbortError } from '../project.js';
 import {
   GITHUB_RESULTS,
   connectGitHub,
@@ -20,7 +21,9 @@ export function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
     const controller = new AbortController();
     void fetchConnections(controller.signal)
       .then(setConnections)
-      .catch(() => setConnections([]));
+      .catch((error: unknown) => {
+        if (!isAbortError(error)) setConnections([]);
+      });
     return () => controller.abort();
   }, []);
 
