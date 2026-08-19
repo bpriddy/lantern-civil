@@ -9,6 +9,7 @@ const CodeContext = lazy(() =>
   import('./code/CodeContext.js').then((m) => ({ default: m.CodeContext })),
 );
 import { CommitBar } from './panes/CommitBar.js';
+import { Home } from './panes/Home.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
@@ -108,6 +109,12 @@ function Workspace({ me }: { me: Me }) {
   const [activeId, setActiveId] = useState<string | undefined>(
     () => localStorage.getItem(ACTIVE_PROJECT_KEY) ?? undefined,
   );
+  /**
+   * Civil used to open whichever project was remembered, so a new account arrived
+   * inside an example it never chose and an existing one had no way back out. Home
+   * is where you land; the remembered project is only a shortcut back to it.
+   */
+  const [atHome, setAtHome] = useState(true);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -154,11 +161,12 @@ function Workspace({ me }: { me: Me }) {
       try {
         const list = await fetchProjects(controller.signal);
         setProjects(list);
-        // The remembered project may have been removed since; fall back rather than
-        // showing an error for a choice the user does not remember making.
-        const chosen = list.find((p) => p.id === activeId) ?? list[0];
-        if (!chosen) return setLoad({ status: 'empty' });
-        setActiveId(chosen.id);
+        // The remembered project may have been removed since; forget it rather than
+        // holding a shortcut to something that no longer exists.
+        if (activeId && !list.some((p) => p.id === activeId)) {
+          setActiveId(undefined);
+          localStorage.removeItem(ACTIVE_PROJECT_KEY);
+        }
       } catch (error) {
         if (!controller.signal.aborted) setLoad({ status: 'error', message: (error as Error).message });
       }
@@ -186,6 +194,16 @@ function Workspace({ me }: { me: Me }) {
       });
     return () => controller.abort();
   }, [activeId]);
+
+  const enterProject = useCallback((id: string) => {
+    setActiveId(id);
+    setAtHome(false);
+  }, []);
+
+  const goHome = useCallback(() => {
+    setAtHome(true);
+    setPickerOpen(false);
+  }, []);
 
   const descend = useCallback((altitude: Altitude) => {
     setSelectedId(null);
@@ -227,10 +245,28 @@ function Workspace({ me }: { me: Me }) {
           ? 'A flow cycle blocks Run until it is broken'
           : 'Runtime arrives with M4';
 
+  if (atHome) {
+    return (
+      <>
+        <Home
+          me={me}
+          projects={projects}
+          onOpen={enterProject}
+          onChanged={reloadProjects}
+          onOpenSettings={() => { setAtHome(false); setSettingsOpen(true); }}
+        />
+        {settingsOpen ? null : null}
+      </>
+    );
+  }
+
   return (
     <div className="shell">
       <header className="top">
-        <span className="brand">Civil</span>
+        {/* The way back out. */}
+        <button type="button" className="brand brand-home" onClick={goHome} title="All projects">
+          Civil
+        </button>
         <span className="project-switch-wrap">
           <button
             type="button"
@@ -244,7 +280,7 @@ function Workspace({ me }: { me: Me }) {
             <ProjectPicker
               projects={projects}
               activeId={activeId}
-              onSelect={setActiveId}
+              onSelect={enterProject}
               onChanged={() => void reloadProjects().then((list) => {
                 // Removing the open project leaves nothing selected; fall to the next.
                 if (activeId && !list.some((p) => p.id === activeId)) setActiveId(list[0]?.id);
