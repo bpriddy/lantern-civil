@@ -6,15 +6,9 @@ import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
 /**
  * Monaco is bundled rather than loaded from a CDN.
  *
- * @monaco-editor/react loads Monaco from jsdelivr by default. Bundling it instead
- * removes a third party from the critical path of the editor: it keeps working when
- * someone else's CDN has a bad day, the version is pinned to the lockfile rather than
- * to whatever a URL resolves to today, and it works offline.
- *
- * To be accurate about what this is NOT: the CDN never sees your code. Monaco runs
- * entirely client-side and the CDN only serves script assets, so file contents and
- * paths never leave the browser either way. This is an availability and supply-chain
- * argument, not a confidentiality one.
+ * @monaco-editor/react loads it from jsdelivr by default. Bundling keeps a third
+ * party out of the editor's critical path, pins the version to the lockfile rather
+ * than to whatever a URL resolves to today, and works offline.
  *
  * The cost is roughly 860KB gzipped, which is why it is also lazy-loaded — see the
  * dynamic import in App.tsx.
