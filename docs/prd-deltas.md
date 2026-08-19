@@ -177,3 +177,66 @@ one of these must be true:
 
 Recorded here rather than left implicit, because M4's exit criterion is about a graph
 running end to end and would otherwise sail past this without anyone deciding.
+
+---
+
+## 11. No local file storage — **owner's rule, resolves a contradiction in §7 and §12**
+
+Two rules in the PRD cannot both hold as written:
+
+- §12: *"Never store repo contents as truth — any cache must be reconstructible by
+  re-cloning."*
+- §7: *"save writes to the working tree as a pending change… Nothing auto-commits."*
+
+An uncommitted edit is not reconstructible by re-cloning. It exists in exactly one
+place. So the PRD requires durable pending state and forbids storing it in the same
+breath.
+
+There is also a physical problem §12 does not account for: Cloud Run's filesystem is
+in-memory, counts against the container's memory limit, and is destroyed whenever an
+instance is recycled — which happens on every deploy and at Google's discretion. A
+working tree on disk is not durable in the first place.
+
+### The rule
+
+**Nothing on the container filesystem may be the only copy of anything.** Everything
+on disk must be reconstructible from Postgres, GCS, or GitHub.
+
+This is §12's rule generalised rather than replaced. The carve-out it needs is small
+and precise: pending edits are not repo contents, because they are not in the repo
+yet. They are Civil's own state, in the same category as `runs` and `run_events`.
+
+### What was considered and rejected
+
+**Mounting a GCS bucket as a working tree.** Google's own documentation says Cloud
+Storage FUSE is "unsuitable for applications requiring file locking, such as git or
+other version control systems": no concurrency control, and rename cannot be atomic
+because gcsfuse cannot meet the POSIX guarantee. Git's entire consistency model is
+lock-write-rename-delete.
+
+The owner asked whether single-user use dissolves this. Partly: file locking becomes
+irrelevant with one writer. Two problems remain. Rename atomicity is about crash
+safety, not concurrency, and Cloud Run kills containers as a matter of routine — the
+usual result is a stale `index.lock` that wedges the repo until removed by hand.
+Performance does not improve at all: git stats every file, and over FUSE each stat is
+a network call.
+
+**A local clone as a disposable cache, with the overlay as the durable record.** This
+works and preserves three-way merge for §14 M3's conflict handling. It was rejected
+because its one advantage — real `git merge` — only matters when someone else pushes
+to the repo, and this is explicitly a single-user tool. The single-user framing does
+not rescue the filesystem; it removes the only reason to want one.
+
+### Consequences
+
+- `working_trees` (migration 001) models a clone path and becomes obsolete. It is
+  replaced by `pending_changes` in the M2 migration, not amended.
+- §14 M3's "pull with conflict handling" is per-file rather than a three-way merge.
+  `base_sha` per pending row detects divergence precisely; resolution is keep-yours or
+  take-theirs. Adequate for one person, and the point to revisit if that changes —
+  with Filestore, which is genuinely POSIX, not FUSE.
+- M4's runner may materialise files to execute Python. That is ephemeral scratch
+  derived from a pinned commit, and the rule permits it: the test is whether losing
+  the container would lose anything.
+
+**PRD §7 and §12 should be updated to state this directly.**

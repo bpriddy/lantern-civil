@@ -18,6 +18,14 @@ examples/          doc-pipeline — the hand-written app M1 must render.
 docs/              prd-deltas.md records every place implementation diverged.
 ```
 
+## Rules
+
+`CLAUDE.md` holds the invariants that are expensive to undo. The one that shapes the
+architecture most: **nothing on the container filesystem may be the only copy of
+anything.** Civil does not clone repositories or keep a working tree. Committed
+content is read from GitHub, pending edits live in Postgres, and large blobs go to
+GCS. See `docs/prd-deltas.md` §11 for why, including what was tried and rejected.
+
 The language split follows PRD §11.1: the runtime is a dependency of the *user's*
 project, so it lives where their code lives. Civil's own server is TypeScript.
 
