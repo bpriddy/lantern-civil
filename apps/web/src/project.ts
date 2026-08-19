@@ -265,3 +265,13 @@ export async function applyOps(
   if (!response.ok) throw new Error(await describeFailure(response, 'could not apply'));
   return (await response.json()) as { summary: string };
 }
+
+
+/** Adds Civil to a repository that does not have it yet. Writes pending changes. */
+export async function initializeProject(
+  projectId: string,
+): Promise<{ files: string[]; summary: string }> {
+  const response = await apiFetch(`/api/projects/${projectId}/initialize`, { method: 'POST' });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not add Civil'));
+  return (await response.json()) as { files: string[]; summary: string };
+}

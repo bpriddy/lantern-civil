@@ -21,6 +21,7 @@ import {
   openExampleProject,
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
+import { scaffoldFiles } from '../project/scaffold.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -405,6 +406,58 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       }
       throw error;
     }
+  });
+
+  /**
+   * Adds Civil to a repository that does not have it yet.
+   *
+   * Written as pending changes rather than committed, so the scaffold is reviewed and
+   * committed like any other edit (PRD 7: nothing auto-commits).
+   */
+  app.post('/api/projects/:id/initialize', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
+
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const overlay = new OverlaySource(base, pending);
+
+    // Refuse rather than overwrite. A repository that already has a civil.yaml is a
+    // Civil project, and replacing it would discard whatever it says.
+    if (overlay.exists('civil.yaml')) {
+      return reply.code(409).send({
+        error: 'already_initialized',
+        message: 'This repository already has a civil.yaml.',
+      });
+    }
+
+    const written: string[] = [];
+    for (const file of scaffoldFiles(project.name)) {
+      // Never clobber a file that is already there — a repository may well have its
+      // own CIVIL.md or app.yaml for unrelated reasons.
+      if (overlay.exists(file.path)) continue;
+      await savePending(pool, {
+        ownerId: request.identity.id,
+        projectId: project.id,
+        branch: project.defaultBranch,
+        path: file.path,
+        content: file.content,
+        existsAtHead: false,
+      });
+      written.push(file.path);
+    }
+
+    return { files: written, summary: `Added ${written.join(', ')} as pending changes.` };
   });
 
   /**

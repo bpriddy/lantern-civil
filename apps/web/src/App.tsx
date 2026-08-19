@@ -28,6 +28,7 @@ import {
 import {
   applyOps,
   commitProject,
+  initializeProject,
   fetchBundle,
   fetchExamples,
   fetchProjects,
@@ -122,6 +123,7 @@ function Workspace({ me }: { me: Me }) {
   const [atHome, setAtHome] = useState(true);
   const [keyHelpOpen, setKeyHelpOpen] = useState(false);
   const [addNodeOpen, setAddNodeOpen] = useState(false);
+  const [initializing, setInitializing] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -201,6 +203,16 @@ function Workspace({ me }: { me: Me }) {
       });
     return () => controller.abort();
   }, [activeId]);
+
+  /**
+   * Opening a file from the tree is the same code takeover a code node descends into
+   * — one file rather than a node's set. Without it, a file no node points at, like
+   * CIVIL.md, could not be reached at all.
+   */
+  const openFile = useCallback((path: string) => {
+    setSelectedId(null);
+    setStack((current) => [...current, { kind: 'code', label: path.split('/').pop() ?? path, files: [path] }]);
+  }, []);
 
   const enterProject = useCallback((id: string) => {
     setActiveId(id);
@@ -310,11 +322,16 @@ function Workspace({ me }: { me: Me }) {
 
   // PRD 4: Run has no meaning on the composition canvas. PRD 6.4: a flow cycle blocks
   // Run without failing the save. Both are expressed here rather than hidden.
-  const runDisabled = current.kind === 'composition' || runBlockedCount > 0 || fatalCount > 0;
+  // PRD 4: nothing executes at the composition altitude. Nor is there anything to run
+  // while looking at a file — Run belongs to a graph, and enabling it anywhere else
+  // offers something that cannot happen.
+  const runDisabled = current.kind !== 'graph' || runBlockedCount > 0 || fatalCount > 0;
   const runTitle =
     current.kind === 'composition'
       ? 'Run has no meaning on the composition canvas'
-      : fatalCount > 0
+      : current.kind === 'code'
+        ? 'Run belongs to a graph, not to a file'
+        : fatalCount > 0
         ? `${fatalCount} validation error${fatalCount === 1 ? '' : 's'}`
         : runBlockedCount > 0
           ? 'A flow cycle blocks Run until it is broken'
@@ -347,6 +364,23 @@ function Workspace({ me }: { me: Me }) {
     },
     [activeId, load, stack, refresh, report],
   );
+
+  const initialize = useCallback(async () => {
+    if (!activeId) return;
+    setInitializing(true);
+    try {
+      const { files, summary } = await initializeProject(activeId);
+      await refresh();
+      report({ title: 'Add Civil', detail: summary });
+      // Land in CIVIL.md: the scaffold's whole point is that you describe the project,
+      // and an empty canvas does not invite that.
+      if (files.includes('CIVIL.md')) openFile('CIVIL.md');
+    } catch (error) {
+      report({ title: 'Add Civil', detail: (error as Error).message, refused: true });
+    } finally {
+      setInitializing(false);
+    }
+  }, [activeId, refresh, report, openFile]);
 
   if (atHome) {
     return (
@@ -454,7 +488,12 @@ function Workspace({ me }: { me: Me }) {
       </header>
 
       <aside className="pane tree">
-        <ProjectTree bundle={bundle} />
+        <ProjectTree
+          bundle={bundle}
+          onOpenFile={openFile}
+          onInitialize={() => void initialize()}
+          initializing={initializing}
+        />
       </aside>
 
       <main className="centre">
