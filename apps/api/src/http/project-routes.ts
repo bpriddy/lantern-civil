@@ -3,6 +3,14 @@ import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Config } from '../config.js';
 import { loadBundle } from '../project/bundle.js';
+import { OverlaySource } from '../project/overlay.js';
+import {
+  ContentTooLargeError,
+  deletePending,
+  listPending,
+  revertPending,
+  savePending,
+} from '../project/pending.js';
 import { getProject, listProjects } from '../project/repository.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
 
@@ -50,9 +58,16 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       });
     }
 
+    // Uncommitted work is applied as a source, so the validator and both canvases
+    // see edited manifests without knowing pending edits exist.
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const overlay = new OverlaySource(source, pending);
+
     return {
       project: { id: project.id, name: project.name, defaultBranch: project.defaultBranch },
-      ...loadBundle(source),
+      ...loadBundle(overlay),
+      // PRD 7: the commit indicator shows a count, and the tree badges what changed.
+      pending: pending.map((c) => ({ path: c.path, kind: c.kind, updatedAt: c.updatedAt })),
     };
   });
 
@@ -69,11 +84,98 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       return reply.code(404).send({ error: 'not_found' });
     }
 
-    // LocalSource does the containment check; this only decides the status code.
-    const content = new LocalSource(project.localPath).read(filePath);
+    // Read through the overlay: opening a file you have edited must show the edit,
+    // not the committed version.
+    const base = new LocalSource(project.localPath);
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const overlay = new OverlaySource(base, pending);
+
+    const content = overlay.read(filePath);
     if (content === undefined) return reply.code(404).send({ error: 'file_not_found' });
 
-    return { path: filePath, content, language: languageFor(filePath) };
+    return {
+      path: filePath,
+      content,
+      language: languageFor(filePath),
+      pending: pending.find((c) => c.path === filePath)?.kind ?? null,
+    };
+  });
+
+  app.get('/api/projects/:id/pending', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    return {
+      branch: project.defaultBranch,
+      changes: await listPending(pool, request.identity.id, project.id, project.defaultBranch),
+    };
+  });
+
+  /**
+   * PRD 7: save writes a pending change. Nothing auto-commits — edits accumulate and
+   * the commit indicator counts them.
+   */
+  app.put('/api/projects/:id/file', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { path?: unknown; content?: unknown };
+    if (typeof body?.path !== 'string' || typeof body?.content !== 'string') {
+      return reply.code(400).send({ error: 'path_and_content_required' });
+    }
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project || project.sourceKind !== 'local' || !project.localPath) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    // The base source decides add versus modify, and rejects paths outside the
+    // project before anything is written.
+    const base = new LocalSource(project.localPath);
+
+    try {
+      const change = await savePending(pool, {
+        ownerId: request.identity.id,
+        projectId: project.id,
+        branch: project.defaultBranch,
+        path: body.path,
+        content: body.content,
+        existsAtHead: base.exists(body.path),
+      });
+      return { path: change.path, kind: change.kind, updatedAt: change.updatedAt };
+    } catch (error) {
+      if (error instanceof ContentTooLargeError) {
+        return reply.code(413).send({ error: 'content_too_large', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /** Discards a pending edit; the file reverts to whatever HEAD says. */
+  app.delete('/api/projects/:id/pending', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const filePath = (request.query as Record<string, unknown>)['path'];
+    if (typeof filePath !== 'string') return reply.code(400).send({ error: 'path_required' });
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    const reverted = await revertPending(
+      pool, request.identity.id, project.id, project.defaultBranch, filePath,
+    );
+    return reply.code(reverted ? 204 : 404).send();
+  });
+
+  /** Marks a committed file for deletion. Distinct from discarding an edit. */
+  app.post('/api/projects/:id/file/delete', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { path?: unknown };
+    if (typeof body?.path !== 'string') return reply.code(400).send({ error: 'path_required' });
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    await deletePending(pool, request.identity.id, project.id, project.defaultBranch, body.path);
+    return reply.code(204).send();
   });
 }
 
