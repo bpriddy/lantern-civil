@@ -54,3 +54,9 @@ variable "image" {
   type        = string
   default     = "us-docker.pkg.dev/cloudrun/container/hello"
 }
+
+variable "github_client_id" {
+  description = "GitHub App client id. Public — it appears in the authorization URL — so it is a variable rather than a secret."
+  type        = string
+  default     = ""
+}

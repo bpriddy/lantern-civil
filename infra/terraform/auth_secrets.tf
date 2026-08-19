@@ -48,6 +48,18 @@ resource "google_secret_manager_secret" "github_app_key" {
   }
 }
 
+# Distinct from the private key. The key mints installation tokens (machine to
+# GitHub); this secret is only used to exchange an authorization code for a user
+# token during "Connect GitHub", which is how a Civil account is linked to a GitHub
+# installation. The user token is discarded immediately afterwards — see
+# apps/api/src/http/github-routes.ts.
+resource "google_secret_manager_secret" "github_client_secret" {
+  secret_id = "civil-github-client-secret"
+  replication {
+    auto {}
+  }
+}
+
 resource "google_secret_manager_secret" "github_app_id" {
   secret_id = "civil-github-app-id"
   replication {
@@ -63,6 +75,7 @@ locals {
     session_secret       = google_secret_manager_secret.session_secret.id
     github_app_key       = google_secret_manager_secret.github_app_key.id
     github_app_id        = google_secret_manager_secret.github_app_id.id
+    github_client_secret = google_secret_manager_secret.github_client_secret.id
   }
 }
 

@@ -7,6 +7,7 @@ import type pg from 'pg';
 import type { Config } from '../config.js';
 import { checkConnection } from '../db/pool.js';
 import { registerAuthRoutes } from './auth-routes.js';
+import { registerGitHubRoutes } from './github-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { UnauthenticatedError, createIdentityReader, type Identity } from './identity.js';
 
@@ -35,7 +36,13 @@ export interface ServerDeps {
  *
  * /auth/ is likewise public — it is how a session is obtained in the first place.
  */
-export const isGuarded = (url: string): boolean => url.split('?')[0]!.startsWith('/api/');
+export const isGuarded = (url: string): boolean => {
+  const path = url.split('?')[0]!;
+  // Linking GitHub is different from signing in: it attaches an installation to an
+  // existing Civil account, so it requires a session rather than creating one.
+  // Leaving it public would let an unauthenticated caller drive the link.
+  return path.startsWith('/api/') || path.startsWith('/auth/github/');
+};
 
 export async function createServer(deps: ServerDeps) {
   const { config, logger, pool } = deps;
@@ -108,17 +115,7 @@ export async function createServer(deps: ServerDeps) {
   }));
 
   registerProjectRoutes(app, { config, pool });
-
-  // Placeholder for the settings surface the owner asked for: GitHub is linked here
-  // rather than at sign-in, so one connection serves every project a user owns.
-  app.get('/api/connections', async (request) => {
-    const { rows } = await pool.query<{ provider: string; externalLogin: string | null }>(
-      `SELECT provider, external_login AS "externalLogin"
-         FROM user_connections WHERE user_id = $1`,
-      [request.identity.id],
-    );
-    return { connections: rows };
-  });
+  registerGitHubRoutes(app, { config, pool });
 
   // IAP fronted one service, and so does this: the SPA is served from the same origin
   // as the API. Registered after the auth hook, so static assets are behind it too.

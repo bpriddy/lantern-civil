@@ -9,6 +9,8 @@ export interface Me {
 export interface Connection {
   provider: 'github';
   externalLogin: string | null;
+  externalId: string | null;
+  installationId: string | null;
 }
 
 export type SessionState =
@@ -55,6 +57,26 @@ export async function signOut(): Promise<void> {
   await fetch('/auth/logout', { method: 'POST' });
   window.location.assign('/');
 }
+
+/** A full navigation: the GitHub authorization has to happen in the address bar. */
+export function connectGitHub(): void {
+  window.location.assign('/auth/github/start');
+}
+
+export async function disconnectGitHub(): Promise<void> {
+  await fetch('/api/connections/github', { method: 'DELETE' });
+}
+
+/** Outcomes of the GitHub link, reported the same way sign-in reports its own. */
+export const GITHUB_RESULTS: Record<string, string> = {
+  connected: 'GitHub connected.',
+  no_installation: 'Authorized, but the Civil app is not installed on any account yet.',
+  declined: 'GitHub authorization was cancelled.',
+  invalid_callback: 'GitHub returned an unexpected response. Try again.',
+  expired: 'That attempt timed out. Try again.',
+  invalid_state: 'That attempt could not be verified. Try again.',
+  failed: 'Could not link GitHub. Check the server logs.',
+};
 
 /** Sign-in failures come back as a query parameter, since the callback is a redirect. */
 export const SIGN_IN_ERRORS: Record<string, string> = {

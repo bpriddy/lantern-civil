@@ -130,6 +130,12 @@ test('the guard covers the data and nothing else', async () => {
   // Public: how a session is obtained, and how Cloud Run probes the container.
   assert.equal(isGuarded('/auth/google/start'), false);
   assert.equal(isGuarded('/auth/google/callback?code=x&state=y'), false);
+
+  // Guarded: linking GitHub attaches an installation to an EXISTING account, so it
+  // needs a session rather than creating one. Public here would let an
+  // unauthenticated caller drive the link.
+  assert.equal(isGuarded('/auth/github/start'), true);
+  assert.equal(isGuarded('/auth/github/callback?code=x&state=y'), true);
   assert.equal(isGuarded('/healthz'), false);
   assert.equal(isGuarded('/readyz'), false);
 

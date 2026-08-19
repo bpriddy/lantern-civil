@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { fetchConnections, signOut, type Connection, type Me } from '../identity.js';
+import {
+  GITHUB_RESULTS,
+  connectGitHub,
+  disconnectGitHub,
+  fetchConnections,
+  signOut,
+  type Connection,
+  type Me,
+} from '../identity.js';
 
 /**
  * The owner asked for GitHub to be a settings step rather than part of signing in.
@@ -17,6 +25,8 @@ export function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
   }, []);
 
   const github = connections?.find((c) => c.provider === 'github');
+  const result = new URLSearchParams(window.location.search).get('github');
+  const resultMessage = result ? (GITHUB_RESULTS[result] ?? null) : null;
 
   return (
     <>
@@ -35,19 +45,30 @@ export function Settings({ me, onClose }: { me: Me; onClose: () => void }) {
         </dl>
 
         <h3 className="section">Connections</h3>
+        {resultMessage ? <p className="muted">{resultMessage}</p> : null}
         {connections === null ? (
           <p className="muted">Loading…</p>
         ) : github ? (
-          <p className="muted">
-            GitHub connected{github.externalLogin ? ` as ${github.externalLogin}` : ''}.
-          </p>
+          <>
+            <dl className="kv">
+              <dt>github</dt>
+              <dd>{github.externalLogin ?? 'linked'}</dd>
+              <dt>installation</dt>
+              {/* No installation means authorized but the app is not installed
+                  anywhere, which is a different problem from not being connected. */}
+              <dd>{github.installationId ?? 'none — install the app'}</dd>
+            </dl>
+            <button type="button" className="connect" onClick={() => void disconnectGitHub().then(() => window.location.reload())}>
+              Disconnect
+            </button>
+          </>
         ) : (
           <>
             <p className="muted">
-              Not connected. Civil needs GitHub to clone the repositories your projects
-              are projections of.
+              Not connected. Civil reads the repositories your projects are projections
+              of, and commits back to them.
             </p>
-            <button type="button" className="connect" disabled title="Arrives with the App installation">
+            <button type="button" className="connect" onClick={connectGitHub}>
               Connect GitHub
             </button>
           </>

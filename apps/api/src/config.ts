@@ -26,6 +26,12 @@ const zEnv = z.object({
   /** Signs the session cookie. Rotating it invalidates every existing login. */
   SESSION_SECRET: z.string().min(32).optional(),
 
+  /** PRD 12's GitHub App. The key mints installation tokens; the client pair links accounts. */
+  GITHUB_APP_ID: z.string().min(1).optional(),
+  GITHUB_APP_KEY: z.string().min(1).optional(),
+  GITHUB_CLIENT_ID: z.string().min(1).optional(),
+  GITHUB_CLIENT_SECRET: z.string().min(1).optional(),
+
   /**
    * Skips OAuth entirely and treats every request as this user. PRD 2 asks for one
    * command to run locally, and a laptop has no OAuth redirect. Refused in
@@ -49,6 +55,9 @@ export type Config = Readonly<{
   publicUrl: string | undefined;
   google: { clientId: string; clientSecret: string } | undefined;
   sessionSecret: string | undefined;
+  github:
+    | { appId: string; privateKey: string; clientId: string; clientSecret: string }
+    | undefined;
   devIdentity: string | undefined;
   webRoot: string | undefined;
   payloadBucket: string | undefined;
@@ -77,6 +86,15 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }
         : undefined,
     sessionSecret: e.SESSION_SECRET,
+    github:
+      e.GITHUB_APP_ID && e.GITHUB_APP_KEY && e.GITHUB_CLIENT_ID && e.GITHUB_CLIENT_SECRET
+        ? {
+            appId: e.GITHUB_APP_ID,
+            privateKey: e.GITHUB_APP_KEY,
+            clientId: e.GITHUB_CLIENT_ID,
+            clientSecret: e.GITHUB_CLIENT_SECRET,
+          }
+        : undefined,
     devIdentity: e.CIVIL_DEV_IDENTITY,
     webRoot: e.CIVIL_WEB_ROOT,
     payloadBucket: e.CIVIL_PAYLOAD_BUCKET,
@@ -86,10 +104,18 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
   return config;
 }
 
+function origin(config: Config): string {
+  return config.publicUrl ?? `http://127.0.0.1:${config.port}`;
+}
+
 /** The OAuth redirect Google must be told about, and which it will match exactly. */
 export function redirectUri(config: Config): string {
-  const base = config.publicUrl ?? `http://127.0.0.1:${config.port}`;
-  return new URL('/auth/google/callback', base).toString();
+  return new URL('/auth/google/callback', origin(config)).toString();
+}
+
+/** The callback registered on the GitHub App. */
+export function githubRedirectUri(config: Config): string {
+  return new URL('/auth/github/callback', origin(config)).toString();
 }
 
 /**

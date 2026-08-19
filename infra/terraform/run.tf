@@ -127,6 +127,41 @@ resource "google_cloud_run_v2_service" "civil" {
       }
 
       env {
+        name = "GITHUB_APP_ID"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.github_app_id.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name = "GITHUB_APP_KEY"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.github_app_key.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
+        name  = "GITHUB_CLIENT_ID"
+        value = var.github_client_id
+      }
+
+      env {
+        name = "GITHUB_CLIENT_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.github_client_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+
+      env {
         name = "SESSION_SECRET"
         value_source {
           secret_key_ref {
