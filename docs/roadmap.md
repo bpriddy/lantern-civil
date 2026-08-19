@@ -93,18 +93,29 @@ already supports per-repository installation, so this is a settings screen that 
 out to the App's installation page, plus honouring `repository_selection` when listing
 what a project may point at.
 
-### Three-way merge on pull
+### Richer conflict resolution
 
-**Trigger: a second person pushing to the same repository.**
+**Trigger: the first time re-parenting produces a result the author did not want.**
 
-The no-local-file-storage rule (`prd-deltas.md` §11) means no working tree, so no
-`git merge`. §14 M3's "pull with conflict handling" is per-file instead: `base_sha` on
-each pending row detects divergence precisely, and resolution is keep-yours or
-take-theirs.
+The owner's rule is that the Civil UI is canon. When the branch has moved, a commit is
+re-parented onto the new HEAD and the pending changes re-applied: files Civil touched
+take Civil's version, files it did not keep whatever landed. Nothing is destroyed and
+history stays linear, which is force-push's outcome without force-push's cost.
 
-Adequate for one person who occasionally pushed from a laptop. If a second person
-appears, the answer is Filestore — genuinely POSIX, real git — not Cloud Storage FUSE,
-which Google documents as unsuitable for version control. Filestore starts around
+What it does not do is ask. If someone changed the same file Civil is about to write,
+their version is replaced without a prompt. For one person who occasionally pushes
+from a laptop that is the right default and the failure is recoverable — the replaced
+commit is still in the reflog and in the history.
+
+The richer version is per-file: `base_blob_sha` on each pending row already detects
+exactly which files diverged, so the UI could offer keep-yours or take-theirs per file
+rather than deciding for the whole commit. That is a UI, not a mechanism — the
+detection is already there.
+
+A true three-way merge needs a working tree, which the no-local-file-storage rule
+(`prd-deltas.md` §11) rules out. If a second person ever edits the same repository,
+the answer is Filestore — genuinely POSIX, real git — not Cloud Storage FUSE, which
+Google documents as unsuitable for version control. Filestore starts around
 $200/month, which is why it is not the answer today.
 
 ### Publishing the OAuth consent screen

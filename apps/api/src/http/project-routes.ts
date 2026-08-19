@@ -6,6 +6,7 @@ import { loadBundle } from '../project/bundle.js';
 import { OverlaySource } from '../project/overlay.js';
 import {
   ContentTooLargeError,
+  clearPending,
   deletePending,
   listPending,
   revertPending,
@@ -21,6 +22,11 @@ import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
 import { GitHubApp } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
+import {
+  BranchMovedError,
+  NothingToCommitError,
+  commitPendingChanges,
+} from '../github/commit.js';
 import { getGitHubConnection } from '../project/connections.js';
 import type { ProjectRow } from '../project/repository.js';
 
@@ -272,6 +278,85 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     } catch (error) {
       if (error instanceof ContentTooLargeError) {
         return reply.code(413).send({ error: 'content_too_large', message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * PRD 7: commits are explicit. Edits accumulate and nothing auto-commits, so this
+   * is the only thing that writes to a repository.
+   */
+  app.post('/api/projects/:id/commit', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { message?: unknown };
+    const message = typeof body?.message === 'string' ? body.message.trim() : '';
+    if (!message) return reply.code(400).send({ error: 'message_required' });
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    // An example ships inside Civil and has no repository to commit to. Saying so is
+    // better than a confusing failure deeper in the GitHub client.
+    if (project.sourceKind !== 'github' || !project.repoOwner || !project.repoName) {
+      return reply.code(409).send({
+        error: 'not_committable',
+        message:
+          project.sourceKind === 'example'
+            ? 'Examples have no repository. Open one of your own to commit.'
+            : 'This project has no GitHub repository.',
+      });
+    }
+
+    if (!githubApp) return reply.code(503).send({ error: 'github_not_configured' });
+    const connection = await getGitHubConnection(pool, request.identity.id);
+    if (!connection?.installationId) return reply.code(409).send({ error: 'github_not_connected' });
+
+    const changes = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    if (changes.length === 0) return reply.code(409).send({ error: 'nothing_to_commit' });
+
+    try {
+      const result = await commitPendingChanges(githubApp, {
+        installationId: connection.installationId,
+        owner: project.repoOwner,
+        repo: project.repoName,
+        branch: project.defaultBranch,
+        message,
+        changes,
+        // The owner's rule: the Civil UI is canon. A branch that moved is re-parented
+        // rather than refused, which keeps Civil's version of the files it touched
+        // without discarding anything that landed in between.
+        onBranchMoved: 'reparent',
+      });
+
+      // Only after the ref moved. Clearing first would lose the edits if the commit
+      // failed, and these rows are the only copy.
+      await clearPending(pool, request.identity.id, project.id, project.defaultBranch);
+
+      request.log.info(
+        { projectId: project.id, commit: result.commitSha, files: changes.length },
+        'committed',
+      );
+      return {
+        commit: result.commitSha,
+        url: result.url,
+        files: changes.length,
+        // Surfaced rather than silent: the author should know their commit landed on
+        // top of work that arrived while they were editing.
+        reparentedOnto: result.reparentedOnto ?? null,
+      };
+    } catch (error) {
+      if (error instanceof BranchMovedError) {
+        // The pending rows are deliberately left alone: the work still exists and the
+        // author decides what to do with it.
+        return reply.code(409).send({
+          error: 'branch_moved',
+          message: error.message,
+          currentSha: error.currentSha,
+        });
+      }
+      if (error instanceof NothingToCommitError) {
+        return reply.code(409).send({ error: 'nothing_to_commit' });
       }
       throw error;
     }
