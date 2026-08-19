@@ -543,10 +543,17 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
   /**
    * PRD 7.1: the client never constructs YAML. It posts ops, the server applies them
-   * to the document, validates, and returns what changed.
+   * to the document, and returns what changed.
    *
    * This is also the seam the command registry and the future agent both use — there
    * is one way to mutate a manifest, and it is this.
+   *
+   * Note what this route does *not* do: it does not validate the result. An op is
+   * refused only when it cannot be applied to the text at all. A structurally legal
+   * edit that produces an invalid project is saved, and the diagnostics appear when
+   * the bundle is next built — which is PRD 6.4's rule that a cycle "marks it red,
+   * blocks Run, doesn't fail the save". The client refreshes the bundle after every
+   * op, so the red arrives in the same beat, but it arrives from there and not here.
    */
   app.post('/api/projects/:id/ops', async (request, reply) => {
     const { id } = request.params as { id: string };

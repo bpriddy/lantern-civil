@@ -164,37 +164,54 @@ added" into "anyone at all", and should not happen before that gate is resolved.
 
 The op layer exists and is the seam PRD §7.1 describes: the client posts ops, the
 server splices them into the source, and the same route serves the keyboard today and
-an agent later. What is missing is most of the vocabulary.
+an agent later. `docs/ops.md` is that path end to end.
 
-- **The rest of the ops.** `removeNode`, `updateNode`, `renameNode`, and the three
-  edge ops. `renameNode` is the interesting one — PRD §7.1 gives it
-  `updateReferences`, so it has to rewrite edge endpoints and layout keys atomically
-  or leave the manifest referring to a node that no longer exists.
-- **Dragging.** Nodes are fixed in place. Dragging should emit `setLayout`, which
-  already works — this is wiring React Flow's drag to the op, plus deciding when to
-  send it (on drop, not per frame).
+### Done
+
+- **`addNode`**, **`setLayout`**, **`addEdge`**, **`removeEdge`**, all splice-based,
+  all with a byte-identical no-op round-trip.
+- **Dragging.** Nodes move and emit `setLayout` on drop — on drop rather than per
+  frame, so a drag is one pending change and not two hundred.
+- **Edges.** Drawn by dragging between ports, deleted by selecting and pressing
+  Delete. Kind is inferred from the endpoints per PRD §7 and sent explicitly in the
+  op. A refused connection says why.
+
+**One caveat, honestly recorded:** the connect gesture is verified only up to the
+handler. React Flow's connection tracking uses pointer capture and does not respond
+to synthesised pointer events, so browser automation could not draw an edge. The
+rules are unit-tested, the op is tested, the wiring is typechecked — but nobody has
+yet drawn an edge with a real mouse and watched it land in `app.yaml`. **That is the
+first thing to do next session, and it is a two-minute check.**
+
+### Not done
+
+- **`removeNode`**, with `cascadeEdges`. Removing a node without its edges leaves the
+  manifest referring to something that is not there.
+- **`updateNode`** — the inspector reads but cannot write, because there is no op for
+  a field edit.
+- **`renameNode`.** PRD §7.1 gives it `updateReferences`: edge endpoints and the
+  `layout` key must be rewritten atomically or not at all.
 - **A diff preview.** PRD §7 says the commit indicator "shows a count and a diff
-  preview". It shows the count. Committing without seeing what you are committing is
-  the gap most likely to cause a bad commit.
-- **Undo.** PRD §7 lists `Cmd+Z`. Every op would need an inverse, or the previous
-  source kept per step — the second is simpler and, given manifests are small, likely
-  correct.
+  preview". It shows the count. This is also `CLAUDE.md`'s fifth agent-first
+  constraint — *nothing is applied unpreviewably* — so it is not only a UI nicety;
+  it is the thing that makes an agent's "here is what I would do" possible at all.
+  Every pending row already holds the full new content and its `base_blob_sha`, so
+  the data is there and this is a rendering job.
+- **Undo.** PRD §7 lists `Cmd+Z`. Either every op gets an inverse or the previous
+  source is kept per step. The second is simpler and, given manifests are small,
+  almost certainly right.
 
-None of these is blocked on anything. They are the reason M3 is not done.
+Nothing here is blocked. These are the reason M3 is not done.
 
-## Near-term, not deferred
+## Shipped since this file was written
 
-### GitHub App
+Both entries that used to sit under "near-term" are done, kept here because the
+reasoning still explains why the code looks the way it does.
 
-The next piece of work, and the reason the deployed instance shows "No project open".
-
-PRD §12 specifies a GitHub App with short-lived tokens minted server-side, never sent
-to the browser. Until it exists, a project can only point at a local directory, which
-`CLAUDE.md` marks as a development affordance that must not become a deployment
-mechanism. Creating the App is an account action only the owner can take.
-
-### `pending_changes`, replacing `working_trees`
-
-Migration 004. `working_trees` models a `clone_path` that will never exist under the
-no-local-file-storage rule; it is replaced rather than amended. This is what makes
-"start on one device, continue on another, without committing" true.
+- **The GitHub App.** Short-lived tokens minted server-side, never sent to the
+  browser (PRD §12). Reads go through the Git Data API; commits are blobs → tree →
+  commit → update-ref. No clone, ever.
+- **`pending_changes`, replacing `working_trees`.** Migration 004. `working_trees`
+  modelled a `clone_path` that cannot exist under no-local-file-storage, so it was
+  replaced rather than amended. This is what makes "start on one device, continue on
+  another, without committing" true.

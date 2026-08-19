@@ -15,12 +15,16 @@ runtime/           civil-runtime, a Python package. Executes graphs.
                    A dependency of every Civil project, not a code generator.
 infra/terraform/   Cloud Run, Cloud SQL, IAP, Secret Manager.
 examples/          doc-pipeline — the hand-written app M1 must render.
-docs/              prd-deltas.md records every place implementation diverged.
+docs/              ops.md is the mutation path; prd-deltas.md records every
+                   place implementation diverged; handoff.md picks the work up cold.
 ```
 
 ## Rules
 
-`CLAUDE.md` holds the invariants that are expensive to undo. The one that shapes the
+`CLAUDE.md` holds the invariants that are expensive to undo, and
+[`docs/ops.md`](docs/ops.md) is the one route every change to a project travels —
+worth reading before adding a mutation, because bypassing it is the expensive
+mistake. The one that shapes the
 architecture most: **nothing on the container filesystem may be the only copy of
 anything.** Civil does not clone repositories or keep a working tree. Committed
 content is read from GitHub, pending edits live in Postgres, and large blobs go to
