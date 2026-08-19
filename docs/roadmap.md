@@ -160,6 +160,28 @@ added" into "anyone at all", and should not happen before that gate is resolved.
 
 ---
 
+## Finishing M3
+
+The op layer exists and is the seam PRD §7.1 describes: the client posts ops, the
+server splices them into the source, and the same route serves the keyboard today and
+an agent later. What is missing is most of the vocabulary.
+
+- **The rest of the ops.** `removeNode`, `updateNode`, `renameNode`, and the three
+  edge ops. `renameNode` is the interesting one — PRD §7.1 gives it
+  `updateReferences`, so it has to rewrite edge endpoints and layout keys atomically
+  or leave the manifest referring to a node that no longer exists.
+- **Dragging.** Nodes are fixed in place. Dragging should emit `setLayout`, which
+  already works — this is wiring React Flow's drag to the op, plus deciding when to
+  send it (on drop, not per frame).
+- **A diff preview.** PRD §7 says the commit indicator "shows a count and a diff
+  preview". It shows the count. Committing without seeing what you are committing is
+  the gap most likely to cause a bad commit.
+- **Undo.** PRD §7 lists `Cmd+Z`. Every op would need an inverse, or the previous
+  source kept per step — the second is simpler and, given manifests are small, likely
+  correct.
+
+None of these is blocked on anything. They are the reason M3 is not done.
+
 ## Near-term, not deferred
 
 ### GitHub App

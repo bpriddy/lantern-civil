@@ -66,11 +66,48 @@ which is exactly the class of bug you do not notice by clicking.
 
 ## Status
 
-**M0 complete.** Deployed to `lantern-civil`, IAP-protected, one command each way.
+**M0, M1 and M2 complete. M3 in progress.**
 
-Next is M1: clone a repo, parse both manifest kinds, render the composition canvas,
-and descend into a graph. `examples/doc-pipeline` is the app that has to render, and
-it already validates clean.
+Deployed at `https://civil-35752011174.us-central1.run.app`, signed in with Google,
+reading and writing real repositories through a GitHub App.
+
+What works end to end:
+
+- Home lists your projects, the repositories your installation can reach, and the
+  bundled examples.
+- A repository with no `civil.yaml` offers **Add Civil to this project**, which
+  scaffolds `civil.yaml`, `app.yaml` and `CIVIL.md` as pending changes.
+- Both canvases render, with descent between them and into code.
+- Contracts are read from Python source and shown as ports (PRD §7.2).
+- Monaco edits files; saves become pending changes in Postgres, so uncommitted work
+  survives a restart and follows you to another device.
+- Commit writes to GitHub with no clone, including into an empty repository.
+- `n` adds a node through the op layer. `?` lists every shortcut.
+
+### What is left in M3
+
+The op vocabulary is started, not finished. `addNode` and `setLayout` exist; the rest
+of PRD §7.1 does not:
+
+- `removeNode`, `updateNode`, `renameNode`
+- `addEdge`, `removeEdge`, `updateEdge`
+- Dragging a node on the canvas to emit `setLayout` (nodes are still fixed in place)
+- A diff preview before committing — PRD §7 promises the indicator shows one
+- Undo
+
+Also open, and deliberately not rushed: **what a command targets.** New nodes land at a
+fixed position because there is no answer yet, and the answer has to work for a
+keystroke and for an agent instruction alike. See `docs/roadmap.md`.
+
+### Tests
+
+```
+npm test
+```
+
+13 schema, 39 API, 24 Python. PRD §2 names two tests that matter and both exist: the
+manifest validator, and the byte-identical YAML round-trip. Everything else earns its
+place by guarding something that fails silently.
 
 Open decisions and every divergence from the PRD are in `docs/prd-deltas.md`. Two
 sections of the PRD need updating to match decisions taken here — §4/§6.2 on edge
