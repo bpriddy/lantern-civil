@@ -54,13 +54,34 @@ export class ManifestEditError extends Error {
 
 /** The sequence at `path`, with the source detail needed to append to it in style. */
 export interface SequenceTarget {
-  /** Offset just past the final item, where a new one is inserted. */
+  /** Start of the span a new item replaces or follows. */
   insertAt: number;
-  /** The exact leading text of an existing item, e.g. "\n    - ". */
+  /**
+   * End of that span. Equal to insertAt when appending after existing items; for an
+   * empty `[]` it covers the brackets, which the first item replaces entirely.
+   */
+  replaceTo: number;
+  /** The exact leading text of an item, e.g. "\n    - ". */
   itemPrefix: string;
   /** Whether existing items are single-line flow maps, which a new one should match. */
   flow: boolean;
   count: number;
+}
+
+/**
+ * How far this file indents a nested block, so a first item lands where the file's
+ * own convention says it should rather than where a default says.
+ */
+function detectIndentStep(source: string): number {
+  const lines = source.split('\n');
+  let previous = 0;
+  for (const line of lines) {
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const width = line.length - line.trimStart().length;
+    if (width > previous && !line.trimStart().startsWith('- ')) return width - previous;
+    previous = width;
+  }
+  return 2;
 }
 
 export function findSequence(manifest: ManifestDocument, path: readonly string[]): SequenceTarget {
@@ -74,12 +95,27 @@ export function findSequence(manifest: ManifestDocument, path: readonly string[]
   );
 
   if (items.length === 0) {
-    // An empty sequence is written `nodes: []` or as nothing at all, and there is no
-    // existing item to copy a style from. Refusing is better than inventing one and
-    // producing a file that does not look like its neighbours.
-    throw new ManifestEditError(
-      `${path.join('.')} is empty; adding to an empty sequence is not supported yet`,
-    );
+    // An empty sequence has no item to copy a style from — but the file still states
+    // its own indentation, and the key it hangs from states its column. A scaffolded
+    // project starts with `nodes: []`, so this is the first thing every new project
+    // does rather than an edge case.
+    const range = node.range;
+    if (!range) throw new ManifestEditError(`${path.join('.')} has no position in the source`);
+
+    const lineStart = manifest.source.lastIndexOf('\n', range[0] - 1) + 1;
+    const keyIndent = /^\s*/.exec(manifest.source.slice(lineStart, range[0]))?.[0] ?? '';
+    const step = ' '.repeat(detectIndentStep(manifest.source));
+
+    return {
+      insertAt: range[0],
+      // The `[]` is replaced, not appended to: a block item cannot live inside it.
+      replaceTo: range[1],
+      itemPrefix: `\n${keyIndent}${step}- `,
+      // Block style by default. Flow is a choice an author makes for terse items, and
+      // there is nothing here to suggest they made it.
+      flow: false,
+      count: 0,
+    };
   }
 
   const last = items[items.length - 1]!;
@@ -96,6 +132,7 @@ export function findSequence(manifest: ManifestDocument, path: readonly string[]
     // range[1] is the value's end; range[2] includes trailing comment and newline. The
     // value end is what a new item should follow.
     insertAt: last.range[1],
+    replaceTo: last.range[1],
     itemPrefix,
     flow: firstText.startsWith('{'),
     count: items.length,

@@ -22,16 +22,32 @@ interface OpenFile {
 
 export interface CodeContextProps {
   projectId: string;
-  /** Files belonging to the node that was descended into. */
+  /** Files belonging to the node that was descended into, or opened from the tree. */
   files: string[];
+  /** Which one to bring to the front. Set when the tree opens a file. */
+  active?: string | undefined;
+  /** Which file is in front, so the breadcrumb names what you are looking at. */
+  onActiveChange?: (path: string) => void;
   onPendingChanged: (savedPath?: string) => void;
 }
 
-export function CodeContext({ projectId, files, onPendingChanged }: CodeContextProps) {
-  const [openPath, setOpenPath] = useState<string | undefined>(files[0]);
+export function CodeContext({
+  projectId,
+  files,
+  active,
+  onActiveChange,
+  onPendingChanged,
+}: CodeContextProps) {
+  const [openPath, setOpenPath] = useState<string | undefined>(active ?? files[0]);
   const [tabs, setTabs] = useState<Map<string, OpenFile>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  // Told to the shell rather than kept here: the breadcrumb names where you are, and
+  // switching tabs is moving.
+  useEffect(() => {
+    if (openPath) onActiveChange?.(openPath);
+  }, [openPath, onActiveChange]);
 
   const current = openPath ? tabs.get(openPath) : undefined;
   const dirty = current ? current.draft !== current.saved : false;
@@ -40,13 +56,19 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
   const state = useRef({ projectId, openPath, tabs });
   state.current = { projectId, openPath, tabs };
 
+  // Follow the file the shell asked for. Opening one from the tree while this is
+  // already mounted has to bring it forward, or the tab appears and nothing changes.
+  useEffect(() => {
+    if (active && files.includes(active)) setOpenPath(active);
+  }, [active, files]);
+
   // The component is reused when the file set changes, so state can be left pointing
   // at a file that is no longer here — which showed as a list that had changed and an
   // editor that had not.
   useEffect(() => {
     if (openPath && files.includes(openPath)) return;
-    setOpenPath(files[0]);
-  }, [files, openPath]);
+    setOpenPath(active ?? files[0]);
+  }, [files, openPath, active]);
 
   useEffect(() => {
     if (!openPath || tabs.has(openPath)) return;
@@ -147,17 +169,33 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
 
       <div className="code-main">
         <div className="code-tabs">
-          {openTabs.map((path) => (
-            <button
-              key={path}
-              type="button"
-              className={`code-tab${path === openPath ? ' is-active' : ''}`}
-              onClick={() => setOpenPath(path)}
-            >
-              {tabs.get(path)!.draft !== tabs.get(path)!.saved ? <span className="code-dirty">●</span> : null}
-              {path.split('/').pop()}
-            </button>
-          ))}
+          {openTabs.map((path) => {
+            const entry = tabs.get(path)!;
+            const dirty = entry.draft !== entry.saved;
+            return (
+              <span key={path} className={`code-tab${path === openPath ? ' is-active' : ''}`}>
+                <button type="button" className="code-tab-pick" onClick={() => setOpenPath(path)}>
+                  {dirty ? <span className="code-dirty">●</span> : null}
+                  {path.split('/').pop()}
+                </button>
+                <button
+                  type="button"
+                  className="code-tab-close"
+                  title={dirty ? 'Close. Unsaved edits are lost.' : 'Close'}
+                  onClick={() => {
+                    setTabs((prev) => {
+                      const next = new Map(prev);
+                      next.delete(path);
+                      return next;
+                    });
+                    if (path === openPath) setOpenPath(openTabs.find((p) => p !== path));
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            );
+          })}
           <span className="code-tabs-spacer" />
           {error ? <span className="code-error">{error}</span> : null}
           <button type="button" className="code-save" onClick={() => void save()} disabled={!dirty || saving}>

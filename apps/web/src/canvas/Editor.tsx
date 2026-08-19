@@ -30,7 +30,9 @@ export type Altitude =
   | { kind: 'graph'; path: string; label: string }
   // PRD 5: a node is a canvas or it is code. A code level is a viewport takeover,
   // not another canvas, which is why it carries files rather than a manifest path.
-  | { kind: 'code'; label: string; files: string[] };
+  // `active` is which of them is in front — opening another file from the tree adds
+  // to the set rather than replacing it, the way tabs behave everywhere else.
+  | { kind: 'code'; label: string; files: string[]; active?: string };
 
 /** Descent time from PRD 7. Long enough to read as motion, short enough not to wait. */
 const DESCENT_MS = 250;

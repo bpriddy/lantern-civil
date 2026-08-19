@@ -42,6 +42,18 @@ export interface ApplyResult {
   summary: string;
 }
 
+/** The file's own indentation step, so a first entry lands in its column. */
+function indentStepOf(source: string): number {
+  let previous = 0;
+  for (const line of source.split('\n')) {
+    if (!line.trim() || line.trimStart().startsWith('#')) continue;
+    const width = line.length - line.trimStart().length;
+    if (width > previous && !line.trimStart().startsWith('- ')) return width - previous;
+    previous = width;
+  }
+  return 2;
+}
+
 /** How long a one-line item may get before block style reads better. */
 const FLOW_WIDTH = 110;
 
@@ -139,7 +151,7 @@ function addNode(manifest: ManifestDocument, op: AddNodeOp): ApplyResult {
 
   const splice: Splice = {
     start: target.insertAt,
-    end: target.insertAt,
+    end: target.replaceTo,
     text: `${target.itemPrefix}${body}`,
   };
 
@@ -175,9 +187,25 @@ function setLayout(manifest: ManifestDocument, op: SetLayoutOp): ApplyResult {
     };
   }
 
-  // No entry yet: append one in the style of the block's existing entries.
   const range = (nodes as { range: [number, number, number] }).range;
   const block = manifest.source.slice(range[0], range[1]);
+
+  // `layout: { nodes: {} }` is what a scaffolded project starts with, and an entry
+  // cannot be appended after `{}` — the empty mapping has to be replaced, exactly as
+  // an empty sequence does. Every new project's first node hits both.
+  if (block.trim() === '{}') {
+    const lineStart = manifest.source.lastIndexOf('\n', range[0] - 1) + 1;
+    const keyIndent = /^\s*/.exec(manifest.source.slice(lineStart, range[0]))?.[0] ?? '';
+    const step = ' '.repeat(indentStepOf(manifest.source));
+    return {
+      source: applySplices(manifest.source, [
+        { start: range[0], end: range[1], text: `\n${keyIndent}${step}${op.id}: ${text}` },
+      ]),
+      summary: `Placed “${op.id}”.`,
+    };
+  }
+
+  // Otherwise append in the style of the entries already there.
   const lastNewline = block.lastIndexOf('\n');
   const indent = lastNewline === -1 ? '    ' : /^\s*/.exec(block.slice(lastNewline + 1))?.[0] ?? '    ';
 

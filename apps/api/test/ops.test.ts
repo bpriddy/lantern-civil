@@ -174,3 +174,52 @@ test('a nested object value survives as an object', () => {
   const added = parsed.spec.nodes.find((n) => n.id === 'audit');
   assert.equal(added?.impl?.entrypoint, 'src/services/audit.py');
 });
+
+
+test('the first node in a scaffolded project lands correctly', () => {
+  // Exactly what "Add Civil to this project" writes. Every new project's first node
+  // goes through this path, so it is the common case rather than an edge one.
+  const scaffold = [
+    'apiVersion: civil/v1',
+    'kind: Composition',
+    'metadata:',
+    '  id: demo',
+    '',
+    '# The composition canvas.',
+    'spec:',
+    '  nodes: []',
+    '  edges: []',
+    '',
+    'layout:',
+    '  nodes: {}',
+    '',
+  ].join('\n');
+
+  const { source: after } = applyOps(scaffold, [
+    { op: 'addNode', node: { id: 'classify', type: 'service', impl: { graph: 'graphs/classify.graph.yaml' } } },
+    { op: 'setLayout', id: 'classify', x: 200, y: 120 },
+  ]);
+
+  const parsed = stillParses(after, 'first node into an empty sequence') as {
+    spec: { nodes: { id: string }[]; edges: unknown[] };
+    layout: { nodes: Record<string, unknown> };
+  };
+
+  assert.equal(parsed.spec.nodes.length, 1);
+  assert.equal(parsed.spec.nodes[0]!.id, 'classify');
+  // The empty brackets are replaced, not left behind beside the new item.
+  assert.ok(!after.includes('nodes: []'), `\`nodes: []\` survived:\n${after}`);
+  // Its neighbours are untouched.
+  assert.deepEqual(parsed.spec.edges, []);
+  assert.ok(after.includes('# The composition canvas.'), 'a comment was lost');
+  assert.deepEqual(parsed.layout.nodes, { classify: { x: 200, y: 120 } });
+});
+
+test('an empty sequence in a four-space file is indented to match', () => {
+  const source = ['spec:', '    nodes: []', ''].join('\n');
+  const { source: after } = applyOps(source, [
+    { op: 'addNode', node: { id: 'a', type: 'service' } },
+  ]);
+  stillParses(after, 'first node in a four-space file');
+  assert.ok(after.includes('\n        - id: a'), `wrong indent:\n${JSON.stringify(after)}`);
+});

@@ -212,12 +212,17 @@ function Workspace({ me }: { me: Me }) {
   const openFile = useCallback((path: string) => {
     setSelectedId(null);
     setStack((current) => {
-      const level = { kind: 'code' as const, label: path.split('/').pop() ?? path, files: [path] };
-      // Code contexts do not nest. Opening a file while already looking at one takes
-      // you there rather than deeper, so Escape still returns to the canvas you came
-      // from rather than to a stack of files you happened to visit.
+      const label = path.split('/').pop() ?? path;
       const top = current[current.length - 1];
-      return top?.kind === 'code' ? [...current.slice(0, -1), level] : [...current, level];
+
+      // Code contexts do not nest: opening a file while already looking at one adds a
+      // tab rather than pushing another level, so Escape still returns to the canvas
+      // you came from rather than walking back through files you happened to visit.
+      if (top?.kind === 'code') {
+        const files = top.files.includes(path) ? top.files : [...top.files, path];
+        return [...current.slice(0, -1), { ...top, label, files, active: path }];
+      }
+      return [...current, { kind: 'code' as const, label, files: [path], active: path }];
     });
   }, []);
 
@@ -524,6 +529,17 @@ function Workspace({ me }: { me: Me }) {
             <CodeContext
               projectId={load.bundle.project.id}
               files={current.files}
+              active={current.active}
+              onActiveChange={(path) =>
+                setStack((s) => {
+                  const top = s[s.length - 1];
+                  if (top?.kind !== 'code' || top.active === path) return s;
+                  return [
+                    ...s.slice(0, -1),
+                    { ...top, active: path, label: path.split('/').pop() ?? path },
+                  ];
+                })
+              }
               onPendingChanged={(saved) => {
                 void refresh();
                 if (saved) report({ chord: '⌘S', title: 'Save', detail: `${saved} saved as a pending change.` });
