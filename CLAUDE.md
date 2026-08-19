@@ -86,6 +86,32 @@ are not in git *yet* and are Civil's own state in the same sense as `runs`.
   Cloud SQL, even when the tables are empty.
 - Every query filters by `owner_id` in the WHERE clause, not in a handler.
 
+## Agent first
+
+Civil is built so an agent can drive it on the user's behalf, from natural language,
+without a rewrite. PRD §16 defers the copilot; this rule is what keeps that deferral
+cheap rather than expensive.
+
+Concretely, every module is built to these:
+
+1. **Every mutation is a structured op** (PRD §7.1). No UI-only shortcuts. The client
+   never constructs YAML; it posts ops and the server applies, re-serialises,
+   validates, and returns a diff.
+2. **Every action is a named command.** The keyboard dispatches into the command
+   registry, and an agent will dispatch into the same one. An action reachable only
+   by clicking a specific button is invisible to an agent.
+3. **Commands describe themselves.** A command carries a title and a plain-language
+   description of its effect, because that description is what an agent matches an
+   instruction against and what the user is shown after it runs.
+4. **Effects are reportable.** A command returns what it did in words. The toast shows
+   it now; an agent transcript will show the same string later.
+5. **Nothing is applied unpreviewably.** Anything an agent could do to a project must
+   be expressible as a diff before it is committed, because "show me what you would
+   do" is the difference between a usable copilot and a dangerous one.
+
+The test for a new surface: could an agent invoke this, know what it does, and show
+the user what changed — without new plumbing?
+
 ## Mutations
 
 Every change the UI can make is expressible as a structured op (PRD §7.1). No

@@ -24,7 +24,7 @@ export interface CodeContextProps {
   projectId: string;
   /** Files belonging to the node that was descended into. */
   files: string[];
-  onPendingChanged: () => void;
+  onPendingChanged: (savedPath?: string) => void;
 }
 
 export function CodeContext({ projectId, files, onPendingChanged }: CodeContextProps) {
@@ -76,7 +76,7 @@ export function CodeContext({ projectId, files, onPendingChanged }: CodeContextP
         if (entry) next.set(path, { ...entry, saved: entry.draft });
         return next;
       });
-      onPendingChanged();
+      onPendingChanged(path.split('/').pop());
     } catch (e) {
       setError((e as Error).message);
     } finally {

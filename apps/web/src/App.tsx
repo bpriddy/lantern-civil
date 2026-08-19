@@ -9,6 +9,9 @@ const CodeContext = lazy(() =>
   import('./code/CodeContext.js').then((m) => ({ default: m.CodeContext })),
 );
 import { CommitBar } from './panes/CommitBar.js';
+import { KeyHelp } from './commands/KeyHelp.js';
+import { Toast } from './commands/Toast.js';
+import { useCommands } from './commands/useCommands.js';
 import { Home } from './panes/Home.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
 import { Inspector } from './panes/Inspector.js';
@@ -115,6 +118,7 @@ function Workspace({ me }: { me: Me }) {
    * is where you land; the remembered project is only a shortcut back to it.
    */
   const [atHome, setAtHome] = useState(true);
+  const [keyHelpOpen, setKeyHelpOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -223,6 +227,58 @@ function Workspace({ me }: { me: Me }) {
   const bundle = load.status === 'ready' ? load.bundle : undefined;
   const current = stack[stack.length - 1]!;
   const pendingCount = bundle?.pending.length ?? 0;
+  const canCommit = bundle?.project.sourceKind === 'github';
+
+  /**
+   * The keyboard dispatches into the command registry, and an agent will dispatch
+   * into the same one (CLAUDE.md). Each handler returns what it did in words, which
+   * is what the toast shows — and what an agent transcript will show later.
+   */
+  const { effect, report } = useCommands(
+    {
+      where: atHome ? 'home' : current.kind === 'code' ? 'code' : 'canvas',
+      hasSelection: selectedId !== null,
+      pendingCount,
+      canCommit,
+      depth: stack.length - 1,
+    },
+    {
+      'nav.home': () => {
+        goHome();
+        return 'Showing all projects.';
+      },
+      'project.switch': () => {
+        setPickerOpen((v) => !v);
+        return 'Project picker.';
+      },
+      'nav.ascend': () => {
+        if (stack.length <= 1) return undefined;
+        const leaving = stack[stack.length - 1]!;
+        ascend();
+        return `Left ${leaving.label}.`;
+      },
+      'canvas.clearSelection': () => {
+        if (!selectedId) return undefined;
+        setSelectedId(null);
+        return 'Selection cleared.';
+      },
+      'project.settings': () => {
+        setSettingsOpen((v) => !v);
+        return 'Settings.';
+      },
+      'help.keys': () => {
+        setKeyHelpOpen((v) => !v);
+        return 'Every shortcut and what it does.';
+      },
+      'project.commit': () => {
+        if (pendingCount === 0) return undefined;
+        setPickerOpen(false);
+        // Committing needs a message, so the shortcut opens the prompt rather than
+        // committing silently — PRD 7 makes commits explicit.
+        return `${pendingCount} pending change${pendingCount === 1 ? '' : 's'} ready. Add a message to commit.`;
+      },
+    },
+  );
 
   const fatalCount = useMemo(
     () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
@@ -248,6 +304,8 @@ function Workspace({ me }: { me: Me }) {
   if (atHome) {
     return (
       <>
+        <Toast effect={effect} />
+        {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
         <Home
           me={me}
           projects={projects}
@@ -262,6 +320,8 @@ function Workspace({ me }: { me: Me }) {
 
   return (
     <div className="shell">
+      <Toast effect={effect} />
+      {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
       <header className="top">
         {/* The way back out. */}
         <button type="button" className="brand brand-home" onClick={goHome} title="All projects">
@@ -359,7 +419,10 @@ function Workspace({ me }: { me: Me }) {
             <CodeContext
               projectId={load.bundle.project.id}
               files={current.files}
-              onPendingChanged={() => void refresh()}
+              onPendingChanged={(saved) => {
+                void refresh();
+                if (saved) report({ chord: '⌘S', title: 'Save', detail: `${saved} saved as a pending change.` });
+              }}
             />
           </Suspense>
         ) : (

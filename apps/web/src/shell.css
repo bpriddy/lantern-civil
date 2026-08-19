@@ -898,3 +898,117 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 
 .brand-home { border: 0; background: none; padding: 0; cursor: pointer; }
 .brand-home:hover { color: var(--accent); }
+
+/* ---- command toast ------------------------------------------------------- */
+
+/* A keystroke is invisible by nature — something changed and nothing was clicked.
+   This closes that loop, then gets out of the way. */
+.toast {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 100;
+  width: 240px;
+  height: 240px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(6px);
+  text-align: center;
+  /* Never interactive: it appears over whatever you are doing and must not catch a
+     click meant for what is underneath. */
+  pointer-events: none;
+  opacity: 1;
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.toast.is-leaving { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
+.toast.is-refused { border-color: var(--border); }
+
+.toast-chord {
+  font-family: var(--mono);
+  font-size: 30px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.toast.is-refused .toast-chord { color: var(--text-faint); }
+
+.toast-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.toast-detail {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.toast.is-refused .toast-detail { color: var(--text-faint); }
+
+/* ---- keyboard help ------------------------------------------------------- */
+
+.keyhelp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: #0009;
+}
+
+.keyhelp {
+  width: 520px;
+  max-height: 70vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.keyhelp-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.keyhelp-body { overflow: auto; padding: 6px 0 10px; }
+
+.keyhelp-row {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 12px;
+  padding: 7px 14px;
+  align-items: baseline;
+}
+
+.keyhelp-chord {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 2px 6px;
+  text-align: center;
+  background: var(--bg-inset);
+}
+
+.keyhelp-title { font-size: 12px; color: var(--text); }
+.keyhelp-desc { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
