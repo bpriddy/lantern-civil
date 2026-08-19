@@ -1,4 +1,5 @@
 import { loadConfig } from './config.js';
+import { contractDiscoveryProblem, discoverContracts } from './project/contracts.js';
 import { createPool } from './db/pool.js';
 import { createLogger } from './logger.js';
 import { createServer } from './http/server.js';
@@ -26,7 +27,30 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   });
 }
 
+/**
+ * Contract discovery degrades quietly on purpose — without it the canvas still
+ * renders, nodes just show no ports (PRD 7.2). Quiet degradation with no signal is
+ * indistinguishable from a project that genuinely has no contracts, so it is checked
+ * once at boot and said out loud.
+ */
+async function reportContractDiscovery(): Promise<void> {
+  const probe = await discoverContracts([
+    { key: 'probe', source: 'def handler(x: str) -> int:\n    return 1\n' },
+  ]);
+
+  const problem = contractDiscoveryProblem();
+  if (problem || !probe.has('probe')) {
+    logger.warn(
+      { problem: problem ?? 'probe returned nothing' },
+      'contract discovery unavailable; node ports will not be shown',
+    );
+  } else {
+    logger.info('contract discovery ready');
+  }
+}
+
 try {
+  await reportContractDiscovery();
   await app.listen({ port: config.port, host: config.host });
   logger.info(
     {
