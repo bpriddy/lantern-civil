@@ -9,6 +9,7 @@ const CodeContext = lazy(() =>
   import('./code/CodeContext.js').then((m) => ({ default: m.CodeContext })),
 );
 import { CommitBar } from './panes/CommitBar.js';
+import { ProjectPicker } from './panes/ProjectPicker.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
 import { Settings } from './panes/Settings.js';
@@ -24,9 +25,8 @@ import {
   fetchBundle,
   fetchExamples,
   fetchProjects,
-  openExample,
-  type ExampleDefinition,
   type ProjectBundle,
+  type ProjectSummary,
 } from './project.js';
 
 export function App(): React.ReactElement {
@@ -88,59 +88,7 @@ type Load =
   | { status: 'ready'; bundle: ProjectBundle }
   | { status: 'error'; message: string };
 
-/**
- * PRD 14 M1 ends with an example rendering at both altitudes. Offering it here — as a
- * thing you click rather than a project that appears by magic — means development and
- * production behave identically, and the first thing a new account sees is a canvas
- * rather than an explanation of why there isn't one.
- */
-function EmptyState() {
-  const [examples, setExamples] = useState<ExampleDefinition[] | null>(null);
-  const [opening, setOpening] = useState<string | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetchExamples(controller.signal).then(setExamples).catch(() => setExamples([]));
-    return () => controller.abort();
-  }, []);
-
-  const open = async (slug: string) => {
-    setOpening(slug);
-    try {
-      await openExample(slug);
-      window.location.reload();
-    } catch {
-      setOpening(null);
-    }
-  };
-
-  return (
-    <div className="empty">
-      <h2>No project open</h2>
-      <p>Connect GitHub in settings to open one of your repositories.</p>
-
-      {examples && examples.length > 0 ? (
-        <>
-          <h3 className="section" style={{ marginTop: 28 }}>Or start from an example</h3>
-          {examples.map((example) => (
-            <div key={example.slug} className="example">
-              <div className="example-name">{example.name}</div>
-              <div className="example-description">{example.description}</div>
-              <button
-                type="button"
-                className="connect"
-                disabled={opening !== null}
-                onClick={() => void open(example.slug)}
-              >
-                {opening === example.slug ? 'Opening…' : 'Open'}
-              </button>
-            </div>
-          ))}
-        </>
-      ) : null}
-    </div>
-  );
-}
+const ACTIVE_PROJECT_KEY = 'civil.activeProject';
 
 function Workspace({ me }: { me: Me }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
@@ -156,25 +104,37 @@ function Workspace({ me }: { me: Me }) {
   const [committing, setCommitting] = useState(false);
   const [commitNote, setCommitNote] = useState<string | null>(null);
 
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [activeId, setActiveId] = useState<string | undefined>(
+    () => localStorage.getItem(ACTIVE_PROJECT_KEY) ?? undefined,
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const reloadProjects = useCallback(async () => {
+    const list = await fetchProjects();
+    setProjects(list);
+    return list;
+  }, []);
+
+
   /**
    * Re-reads the project after a save or a commit. The bundle is the only place the
    * canvas gets manifests from, so re-fetching it is what makes an edit to app.yaml
    * show up as a changed node rather than requiring a reload.
    */
   const refresh = useCallback(async () => {
-    if (load.status !== 'ready') return;
+    if (!activeId) return;
     try {
-      const bundle = await fetchBundle(load.bundle.project.id);
-      setLoad({ status: 'ready', bundle });
+      setLoad({ status: 'ready', bundle: await fetchBundle(activeId) });
     } catch { /* leave the previous bundle rendered */ }
-  }, [load]);
+  }, [activeId]);
 
   const commit = useCallback(async (message: string) => {
-    if (load.status !== 'ready') return;
+    if (!activeId) return;
     setCommitting(true);
     setCommitNote(null);
     try {
-      const result = await commitProject(load.bundle.project.id, message);
+      const result = await commitProject(activeId, message);
       setCommitNote(
         result.reparentedOnto
           ? `Committed ${result.files} file(s) on top of newer work.`
@@ -186,39 +146,46 @@ function Workspace({ me }: { me: Me }) {
     } finally {
       setCommitting(false);
     }
-  }, [load, refresh]);
+  }, [activeId, refresh]);
 
   useEffect(() => {
     const controller = new AbortController();
     void (async () => {
       try {
-        const projects = await fetchProjects(controller.signal);
-        const first = projects[0];
-        if (!first) return setLoad({ status: 'empty' });
-        const bundle = await fetchBundle(first.id, controller.signal);
-        setLoad({ status: 'ready', bundle });
-        setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
+        const list = await fetchProjects(controller.signal);
+        setProjects(list);
+        // The remembered project may have been removed since; fall back rather than
+        // showing an error for a choice the user does not remember making.
+        const chosen = list.find((p) => p.id === activeId) ?? list[0];
+        if (!chosen) return setLoad({ status: 'empty' });
+        setActiveId(chosen.id);
       } catch (error) {
-        if (!controller.signal.aborted) {
-          setLoad({ status: 'error', message: (error as Error).message });
-        }
+        if (!controller.signal.aborted) setLoad({ status: 'error', message: (error as Error).message });
       }
     })();
     return () => controller.abort();
+    // Runs once: later project changes go through setActiveId, which reloads below.
   }, []);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      // Monaco handles its own Escape (dismissing autocomplete, say), so only ascend
-      // when focus is outside the editor.
-      const inEditor = (event.target as HTMLElement | null)?.closest?.('.monaco-editor');
-      if (event.key === 'Escape' && !inEditor) {
-        setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+    if (!activeId) return;
+    localStorage.setItem(ACTIVE_PROJECT_KEY, activeId);
+
+    const controller = new AbortController();
+    setLoad({ status: 'loading' });
+    void fetchBundle(activeId, controller.signal)
+      .then((bundle) => {
+        setLoad({ status: 'ready', bundle });
+        setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
+        setSelectedId(null);
+      })
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setLoad({ status: 'error', message: (error as Error).message });
+        }
+      });
+    return () => controller.abort();
+  }, [activeId]);
 
   const descend = useCallback((altitude: Altitude) => {
     setSelectedId(null);
@@ -264,6 +231,28 @@ function Workspace({ me }: { me: Me }) {
     <div className="shell">
       <header className="top">
         <span className="brand">Civil</span>
+        <span className="project-switch-wrap">
+          <button
+            type="button"
+            className="project-switch"
+            onClick={() => setPickerOpen((v) => !v)}
+            title="Switch project, or open a repository"
+          >
+            {bundle?.project.name ?? 'No project'} <span className="project-switch-caret">▾</span>
+          </button>
+          {pickerOpen ? (
+            <ProjectPicker
+              projects={projects}
+              activeId={activeId}
+              onSelect={setActiveId}
+              onChanged={() => void reloadProjects().then((list) => {
+                // Removing the open project leaves nothing selected; fall to the next.
+                if (activeId && !list.some((p) => p.id === activeId)) setActiveId(list[0]?.id);
+              })}
+              onClose={() => setPickerOpen(false)}
+            />
+          ) : null}
+        </span>
         <nav className="breadcrumb" aria-label="Location">
           {stack.map((level, index) => (
             <span key={`${level.kind}-${index}`}>
@@ -320,7 +309,13 @@ function Workspace({ me }: { me: Me }) {
             <p>{load.message}</p>
           </div>
         ) : load.status === 'empty' ? (
-          <EmptyState />
+          <div className="empty">
+            <h2>No project open</h2>
+            <p>Open one of your repositories, or start from an example.</p>
+            <button type="button" className="connect" onClick={() => setPickerOpen(true)}>
+              Choose a project
+            </button>
+          </div>
         ) : current.kind === 'code' ? (
           // PRD 7: a viewport takeover, not a panel. The canvas is still on the stack
           // underneath, so Escape returns you to exactly where you left it.

@@ -73,6 +73,25 @@ export async function createServer(deps: ServerDeps) {
 
   const identityReader = createIdentityReader(config, pool);
 
+  /**
+   * API responses are never cacheable.
+   *
+   * Without this, a 404 or 410 is cacheable by default under HTTP semantics, so a
+   * transient failure — a project mid-creation, a source briefly unreadable — gets
+   * stored by the browser and the application stays broken after the cause is fixed.
+   * That failure is especially cruel because reloading does not clear it and the
+   * server looks healthy from every other angle.
+   *
+   * The SPA shell and its assets are untouched: they are fingerprinted and should
+   * cache.
+   */
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (request.url.startsWith('/api/')) {
+      reply.header('cache-control', 'no-store');
+    }
+    return payload;
+  });
+
   app.addHook('onRequest', async (request, reply) => {
     if (!isGuarded(request.url)) return;
 

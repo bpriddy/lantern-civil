@@ -170,6 +170,23 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     return reply.code(201).send({ project });
   });
 
+  /**
+   * Removing a project removes Civil's view of it, never the repository. Pending
+   * changes go with it — they are Civil's own state and have nowhere else to live
+   * once the project does not exist.
+   */
+  app.delete('/api/projects/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    await pool.query('DELETE FROM projects WHERE id = $1 AND owner_id = $2', [
+      project.id,
+      request.identity.id,
+    ]);
+    return reply.code(204).send();
+  });
+
   app.get('/api/projects/:id/bundle', async (request, reply) => {
     const { id } = request.params as { id: string };
 

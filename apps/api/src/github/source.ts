@@ -103,6 +103,11 @@ export class GitHubSource implements ProjectSource {
   }
 
   exists(path: string): boolean {
+    // The repository root. A git tree has no entry for it, but the source having
+    // loaded at all proves it is there — and callers ask, because that is how a
+    // project checks its source is still readable.
+    if (path === '' || path === '.' || path === '/') return true;
+
     if (this.paths.has(path)) return true;
     // Directories are implied by their contents; git trees have no empty directories.
     const prefix = path.endsWith('/') ? path : `${path}/`;

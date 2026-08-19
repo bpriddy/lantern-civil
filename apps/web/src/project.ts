@@ -5,11 +5,35 @@ import type {
   Graph,
 } from '@civil/schema';
 
+/**
+ * Every API call, with caching off.
+ *
+ * The server sends `cache-control: no-store`, but that only governs responses it
+ * actually gets to send. A 404 or 410 already sitting in the browser cache keeps
+ * being served without the request ever reaching the server, so a transient failure
+ * survives a reload and the application looks permanently broken while the server is
+ * healthy. Asking for fresh data on the client is what recovers from that.
+ */
+export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, cache: 'no-store' });
+}
+
 export interface ProjectSummary {
   id: string;
   name: string;
-  sourceKind: 'github' | 'local';
+  sourceKind: 'github' | 'local' | 'example';
   defaultBranch: string;
+  repoOwner: string | null;
+  repoName: string | null;
+  exampleSlug: string | null;
+}
+
+export interface RepositorySummary {
+  fullName: string;
+  owner: string;
+  name: string;
+  defaultBranch: string;
+  private: boolean;
 }
 
 export interface AgentEntry {
@@ -69,13 +93,13 @@ export interface ProjectBundle {
 }
 
 export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummary[]> {
-  const response = await fetch('/api/projects', { signal: signal ?? null });
+  const response = await apiFetch('/api/projects', { signal: signal ?? null });
   if (!response.ok) throw new Error(`projects: ${response.status}`);
   return ((await response.json()) as { projects: ProjectSummary[] }).projects;
 }
 
 export async function fetchBundle(id: string, signal?: AbortSignal): Promise<ProjectBundle> {
-  const response = await fetch(`/api/projects/${id}/bundle`, { signal: signal ?? null });
+  const response = await apiFetch(`/api/projects/${id}/bundle`, { signal: signal ?? null });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { message?: string };
     throw new Error(body.message ?? `bundle: ${response.status}`);
@@ -103,13 +127,13 @@ export interface ExampleDefinition {
 
 /** Quickstarts bundled with Civil. Not repositories — see CLAUDE.md. */
 export async function fetchExamples(signal?: AbortSignal): Promise<ExampleDefinition[]> {
-  const response = await fetch('/api/examples', { signal: signal ?? null });
+  const response = await apiFetch('/api/examples', { signal: signal ?? null });
   if (!response.ok) return [];
   return ((await response.json()) as { examples: ExampleDefinition[] }).examples;
 }
 
 export async function openExample(slug: string): Promise<ProjectSummary> {
-  const response = await fetch(`/api/examples/${slug}/open`, { method: 'POST' });
+  const response = await apiFetch(`/api/examples/${slug}/open`, { method: 'POST' });
   if (!response.ok) throw new Error(`could not open example: ${response.status}`);
   return ((await response.json()) as { project: ProjectSummary }).project;
 }
@@ -127,7 +151,7 @@ export async function fetchFile(
   path: string,
   signal?: AbortSignal,
 ): Promise<FileContents> {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`,
     { signal: signal ?? null },
   );
@@ -153,7 +177,7 @@ async function describeFailure(response: Response, prefix: string): Promise<stri
 
 /** PRD 7: save writes a pending change. Nothing auto-commits. */
 export async function saveFile(projectId: string, path: string, content: string): Promise<void> {
-  const response = await fetch(`/api/projects/${projectId}/file`, {
+  const response = await apiFetch(`/api/projects/${projectId}/file`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path, content }),
@@ -162,7 +186,7 @@ export async function saveFile(projectId: string, path: string, content: string)
 }
 
 export async function revertFile(projectId: string, path: string): Promise<void> {
-  await fetch(`/api/projects/${projectId}/pending?path=${encodeURIComponent(path)}`, {
+  await apiFetch(`/api/projects/${projectId}/pending?path=${encodeURIComponent(path)}`, {
     method: 'DELETE',
   });
 }
@@ -175,7 +199,7 @@ export interface CommitResult {
 }
 
 export async function commitProject(projectId: string, message: string): Promise<CommitResult> {
-  const response = await fetch(`/api/projects/${projectId}/commit`, {
+  const response = await apiFetch(`/api/projects/${projectId}/commit`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ message }),
@@ -183,4 +207,38 @@ export async function commitProject(projectId: string, message: string): Promise
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error((body as { message?: string }).message ?? `commit failed (${response.status})`);
   return body as CommitResult;
+}
+
+
+/** Repositories the connected installation can reach — GitHub decides, not Civil. */
+export async function fetchRepositories(
+  signal?: AbortSignal,
+): Promise<{ total: number; repositories: RepositorySummary[] } | { error: string }> {
+  const response = await apiFetch('/api/github/repositories', { signal: signal ?? null });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return { error: (body as { message?: string; error?: string }).message
+      ?? (body as { error?: string }).error
+      ?? `could not list repositories (${response.status})` };
+  }
+  return body as { total: number; repositories: RepositorySummary[] };
+}
+
+export async function openRepository(
+  repo: RepositorySummary,
+): Promise<ProjectSummary> {
+  const response = await apiFetch('/api/projects', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ repoOwner: repo.owner, repoName: repo.name, name: repo.name }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error((body as { message?: string }).message ?? `could not open ${repo.fullName}`);
+  }
+  return (body as { project: ProjectSummary }).project;
+}
+
+export async function removeProject(projectId: string): Promise<void> {
+  await apiFetch(`/api/projects/${projectId}`, { method: 'DELETE' });
 }

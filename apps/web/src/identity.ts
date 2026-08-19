@@ -1,3 +1,5 @@
+import { apiFetch } from './project.js';
+
 export interface Me {
   id: string;
   email: string;
@@ -25,7 +27,7 @@ export type SessionState =
  */
 export async function fetchMe(signal?: AbortSignal): Promise<SessionState> {
   try {
-    const response = await fetch('/api/me', {
+    const response = await apiFetch('/api/me', {
       signal: signal ?? null,
       headers: { accept: 'application/json' },
     });
@@ -39,7 +41,7 @@ export async function fetchMe(signal?: AbortSignal): Promise<SessionState> {
 }
 
 export async function fetchConnections(signal?: AbortSignal): Promise<Connection[]> {
-  const response = await fetch('/api/connections', {
+  const response = await apiFetch('/api/connections', {
     signal: signal ?? null,
     headers: { accept: 'application/json' },
   });
@@ -54,7 +56,7 @@ export function signIn(): void {
 }
 
 export async function signOut(): Promise<void> {
-  await fetch('/auth/logout', { method: 'POST' });
+  await apiFetch('/auth/logout', { method: 'POST' });
   window.location.assign('/');
 }
 
@@ -64,7 +66,7 @@ export function connectGitHub(): void {
 }
 
 export async function disconnectGitHub(): Promise<void> {
-  await fetch('/api/connections/github', { method: 'DELETE' });
+  await apiFetch('/api/connections/github', { method: 'DELETE' });
 }
 
 /** Outcomes of the GitHub link, reported the same way sign-in reports its own. */

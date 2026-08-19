@@ -685,3 +685,101 @@ body {
 
 .node-port-type { color: var(--text-faint); font-size: 9px; }
 .node-port-untyped { color: var(--warn); font-size: 9px; font-style: italic; }
+
+/* ---- project switcher and picker ---------------------------------------- */
+
+.project-switch-wrap { position: relative; }
+
+.project-switch {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.project-switch:hover { color: var(--text); }
+.project-switch-caret { color: var(--text-faint); font-size: 9px; }
+
+.picker {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 30;
+  width: 380px;
+  max-height: 70vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 12px 32px #0008;
+  overflow: hidden;
+}
+
+.picker-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-filter {
+  flex: 1;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.picker-filter:focus { outline: none; border-color: var(--accent-dim); }
+
+.picker-body { overflow: auto; padding-bottom: 6px; }
+
+.picker-section {
+  padding: 8px 10px 4px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.picker-row { display: flex; align-items: stretch; }
+.picker-row.is-active { background: var(--bg-inset); }
+
+.picker-pick {
+  flex: 1;
+  display: block;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 5px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.picker-pick:hover:not(:disabled) { background: var(--bg-inset); }
+.picker-pick:disabled { cursor: default; opacity: 0.45; }
+
+.picker-name { display: block; font-size: 12px; color: var(--text); }
+.picker-meta { display: block; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+.picker-remove {
+  border: 0;
+  background: none;
+  padding: 0 10px;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.picker-remove:hover { color: var(--danger); }
+.picker-note { padding: 4px 10px 8px; }
