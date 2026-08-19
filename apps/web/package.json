@@ -11,7 +11,9 @@
   },
   "dependencies": {
     "@civil/schema": "*",
+    "@monaco-editor/react": "^4.7.0",
     "@xyflow/react": "^12.11.3",
+    "monaco-editor": "^0.52.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

@@ -20,9 +20,17 @@ import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js'
  * calls that handler" and one meaning "this output feeds that input" look identical
  * and mean unrelated things, so they never share a surface.
  */
-export type Altitude =
+/** The altitudes the canvas itself can draw. A code level is a takeover, not a canvas. */
+export type CanvasAltitude =
   | { kind: 'composition'; label: string }
   | { kind: 'graph'; path: string; label: string };
+
+export type Altitude =
+  | { kind: 'composition'; label: string }
+  | { kind: 'graph'; path: string; label: string }
+  // PRD 5: a node is a canvas or it is code. A code level is a viewport takeover,
+  // not another canvas, which is why it carries files rather than a manifest path.
+  | { kind: 'code'; label: string; files: string[] };
 
 /** Descent time from PRD 7. Long enough to read as motion, short enough not to wait. */
 const DESCENT_MS = 250;
@@ -49,7 +57,11 @@ export function Editor(props: EditorProps) {
 
 function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: EditorProps) {
   const flow = useReactFlow();
-  const current = stack[stack.length - 1]!;
+  // A code level is rendered by the takeover, not here; the deepest canvas level is
+  // what stays behind it.
+  const current =
+    [...stack].reverse().find((level): level is CanvasAltitude => level.kind !== 'code') ??
+    ({ kind: 'composition', label: 'app' } as CanvasAltitude);
 
   /**
    * PRD 7: ascent returns to "the parent's exact prior viewport". Captured on the way
@@ -94,17 +106,15 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   const handleDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       const data = node.data as NodeData;
-      // Code descent opens Monaco (PRD 5), which is M2. Until it exists, a code node
-      // says what it would open rather than pretending to open it.
-      if (data.descent?.into !== 'canvas') return;
-
       const target = descentTarget(data);
       if (!target) return;
 
       viewports.current.set(depth, flow.getViewport());
 
       // Zoom toward the node first. The child then fits from that zoom level, which
-      // is what makes the boundary feel like a descent rather than a page load.
+      // is what makes the boundary feel like a descent rather than a page load. A
+      // code takeover gets the same zoom, so entering code reads as going in rather
+      // than as a modal appearing over the canvas.
       void flow.setCenter(node.position.x + 100, node.position.y + 40, {
         zoom: DESCENT_ZOOM,
         duration: DESCENT_MS,
@@ -151,17 +161,24 @@ function Surface({ bundle, stack, selectedId, onDescend, onAscend, onSelect }: E
   );
 }
 
-/** Where a double-click lands, or undefined if the interior is not a canvas. */
+/** Where a double-click lands: another canvas, a code takeover, or nowhere. */
 function descentTarget(data: NodeData): Altitude | undefined {
   const manifest = data.manifest;
+  const descent = data.descent;
+  if (!descent) return undefined;
+
+  if (descent.into === 'code') {
+    // Nothing to take over the viewport for.
+    if (descent.files.length === 0) return undefined;
+    const label = 'name' in manifest && manifest.name ? manifest.name : manifest.id;
+    return { kind: 'code', label, files: descent.files };
+  }
 
   if (manifest.type === 'subgraph') {
     return { kind: 'graph', path: manifest.ref, label: manifest.id };
   }
-
   if (manifest.type === 'service' && 'graph' in manifest.impl) {
     return { kind: 'graph', path: manifest.impl.graph, label: manifest.id };
   }
-
   return undefined;
 }

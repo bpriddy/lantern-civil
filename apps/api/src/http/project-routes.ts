@@ -185,7 +185,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const overlay = new OverlaySource(source, pending);
 
     return {
-      project: { id: project.id, name: project.name, defaultBranch: project.defaultBranch },
+      project: {
+        id: project.id,
+        name: project.name,
+        defaultBranch: project.defaultBranch,
+        // The client needs this to know whether committing is even possible.
+        sourceKind: project.sourceKind,
+      },
       ...loadBundle(overlay),
       // PRD 7: the commit indicator shows a count, and the tree badges what changed.
       pending: pending.map((c) => ({ path: c.path, kind: c.kind, updatedAt: c.updatedAt })),

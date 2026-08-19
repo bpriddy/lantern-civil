@@ -21,7 +21,7 @@ export type Descent =
   // `note` is carried rather than inferred from the entrypoint: "capability target"
   // is only meaningful for a code node inside a graph, and deriving it made a
   // frontend describe itself as one.
-  | { into: 'code'; files: number; note: string }
+  | { into: 'code'; files: string[]; note: string }
   | undefined;
 
 export interface NodeData extends Record<string, unknown> {
@@ -95,7 +95,7 @@ function Face({
         <div className="node-code-meta">
           {descent.note}
           {descent.note ? ' · ' : ''}
-          {descent.files} {descent.files === 1 ? 'file' : 'files'}
+          {descent.files.length} {descent.files.length === 1 ? 'file' : 'files'}
         </div>
       ) : null}
       {data.diagnostics.length > 0 ? (

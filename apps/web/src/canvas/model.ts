@@ -55,8 +55,7 @@ const globToRe = (pattern: string) =>
 
 function codeDescent(files: string[], include: string[], note: string): Descent {
   const matchers = include.map(globToRe);
-  const count = files.filter((f) => matchers.some((re) => re.test(f))).length;
-  return { into: 'code', files: count, note };
+  return { into: 'code', files: files.filter((f) => matchers.some((re) => re.test(f))), note };
 }
 
 // --- composition -----------------------------------------------------------

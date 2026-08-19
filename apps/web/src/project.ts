@@ -23,14 +23,27 @@ export interface AgentEntry {
  * parent renders so descent is "a continuous transform, not a page load" — having
  * every graph already in memory is what makes that true rather than aspirational.
  */
+export interface PendingChange {
+  path: string;
+  kind: 'add' | 'modify' | 'delete' | 'rename';
+  updatedAt: string;
+}
+
 export interface ProjectBundle {
-  project: { id: string; name: string; defaultBranch: string };
+  project: {
+    id: string;
+    name: string;
+    defaultBranch: string;
+    /** An example has no repository, so it has nowhere to commit to. */
+    sourceKind: 'github' | 'local' | 'example';
+  };
   compositionPath: string;
   composition: Composition | undefined;
   graphs: Record<string, Graph>;
   agents: Record<string, AgentEntry>;
   diagnostics: Diagnostic[];
   files: string[];
+  pending: PendingChange[];
 }
 
 export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummary[]> {
@@ -77,4 +90,62 @@ export async function openExample(slug: string): Promise<ProjectSummary> {
   const response = await fetch(`/api/examples/${slug}/open`, { method: 'POST' });
   if (!response.ok) throw new Error(`could not open example: ${response.status}`);
   return ((await response.json()) as { project: ProjectSummary }).project;
+}
+
+
+export interface FileContents {
+  path: string;
+  content: string;
+  language: string;
+  pending: 'add' | 'modify' | 'delete' | 'rename' | null;
+}
+
+export async function fetchFile(
+  projectId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<FileContents> {
+  const response = await fetch(
+    `/api/projects/${projectId}/file?path=${encodeURIComponent(path)}`,
+    { signal: signal ?? null },
+  );
+  if (!response.ok) throw new Error(`could not open ${path} (${response.status})`);
+  return (await response.json()) as FileContents;
+}
+
+/** PRD 7: save writes a pending change. Nothing auto-commits. */
+export async function saveFile(projectId: string, path: string, content: string): Promise<void> {
+  const response = await fetch(`/api/projects/${projectId}/file`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path, content }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { message?: string };
+    throw new Error(body.message ?? `could not save ${path} (${response.status})`);
+  }
+}
+
+export async function revertFile(projectId: string, path: string): Promise<void> {
+  await fetch(`/api/projects/${projectId}/pending?path=${encodeURIComponent(path)}`, {
+    method: 'DELETE',
+  });
+}
+
+export interface CommitResult {
+  commit: string;
+  url: string;
+  files: number;
+  reparentedOnto: string | null;
+}
+
+export async function commitProject(projectId: string, message: string): Promise<CommitResult> {
+  const response = await fetch(`/api/projects/${projectId}/commit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error((body as { message?: string }).message ?? `commit failed (${response.status})`);
+  return body as CommitResult;
 }

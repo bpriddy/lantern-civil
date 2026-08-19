@@ -133,5 +133,8 @@ function findNode(
   if (altitude.kind === 'composition') {
     return bundle.composition?.spec.nodes.find((n) => n.id === selectedId);
   }
+  // A code takeover has no node selection of its own; the inspector shows the
+  // diagnostics list until you ascend.
+  if (altitude.kind === 'code') return undefined;
   return bundle.graphs[altitude.path]?.spec.nodes.find((n) => n.id === selectedId);
 }

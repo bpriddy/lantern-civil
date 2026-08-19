@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { Editor, type Altitude } from './canvas/Editor.js';
+/**
+ * Monaco is about a megabyte gzipped — more than the rest of Civil combined. Loading
+ * it eagerly would make every canvas session pay for an editor it may never open, so
+ * it arrives on the first descent into code and is cached from then on.
+ */
+const CodeContext = lazy(() =>
+  import('./code/CodeContext.js').then((m) => ({ default: m.CodeContext })),
+);
+import { CommitBar } from './panes/CommitBar.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
 import { Settings } from './panes/Settings.js';
@@ -11,6 +20,7 @@ import {
   type SessionState,
 } from './identity.js';
 import {
+  commitProject,
   fetchBundle,
   fetchExamples,
   fetchProjects,
@@ -143,6 +153,40 @@ function Workspace({ me }: { me: Me }) {
    */
   const [stack, setStack] = useState<Altitude[]>([{ kind: 'composition', label: 'app' }]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [committing, setCommitting] = useState(false);
+  const [commitNote, setCommitNote] = useState<string | null>(null);
+
+  /**
+   * Re-reads the project after a save or a commit. The bundle is the only place the
+   * canvas gets manifests from, so re-fetching it is what makes an edit to app.yaml
+   * show up as a changed node rather than requiring a reload.
+   */
+  const refresh = useCallback(async () => {
+    if (load.status !== 'ready') return;
+    try {
+      const bundle = await fetchBundle(load.bundle.project.id);
+      setLoad({ status: 'ready', bundle });
+    } catch { /* leave the previous bundle rendered */ }
+  }, [load]);
+
+  const commit = useCallback(async (message: string) => {
+    if (load.status !== 'ready') return;
+    setCommitting(true);
+    setCommitNote(null);
+    try {
+      const result = await commitProject(load.bundle.project.id, message);
+      setCommitNote(
+        result.reparentedOnto
+          ? `Committed ${result.files} file(s) on top of newer work.`
+          : `Committed ${result.files} file(s).`,
+      );
+      await refresh();
+    } catch (error) {
+      setCommitNote((error as Error).message);
+    } finally {
+      setCommitting(false);
+    }
+  }, [load, refresh]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -163,6 +207,19 @@ function Workspace({ me }: { me: Me }) {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // Monaco handles its own Escape (dismissing autocomplete, say), so only ascend
+      // when focus is outside the editor.
+      const inEditor = (event.target as HTMLElement | null)?.closest?.('.monaco-editor');
+      if (event.key === 'Escape' && !inEditor) {
+        setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const descend = useCallback((altitude: Altitude) => {
     setSelectedId(null);
     setStack((s) => [...s, altitude]);
@@ -180,6 +237,7 @@ function Workspace({ me }: { me: Me }) {
 
   const bundle = load.status === 'ready' ? load.bundle : undefined;
   const current = stack[stack.length - 1]!;
+  const pendingCount = bundle?.pending.length ?? 0;
 
   const fatalCount = useMemo(
     () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
@@ -231,10 +289,18 @@ function Workspace({ me }: { me: Me }) {
           <span className="dot" />
           {bundle?.project.defaultBranch ?? 'main'}
         </span>
-        <span className="chip" title="Edits accumulate as pending changes (PRD 7)">
-          <span className="dot" />
-          no pending changes
-        </span>
+        {/* PRD 7: commits are explicit, and the indicator shows a count. */}
+        <CommitBar
+          count={pendingCount}
+          committing={committing}
+          note={commitNote}
+          // Asserted, not assumed. `!== 'example'` fails open when the field is
+          // missing — an older server, a shape change — and offers to commit
+          // something with no repository behind it.
+          committable={bundle?.project.sourceKind === 'github'}
+          onCommit={commit}
+          onDismissNote={() => setCommitNote(null)}
+        />
         <button className="run" type="button" disabled={runDisabled} title={runTitle}>
           Run
         </button>
@@ -255,6 +321,16 @@ function Workspace({ me }: { me: Me }) {
           </div>
         ) : load.status === 'empty' ? (
           <EmptyState />
+        ) : current.kind === 'code' ? (
+          // PRD 7: a viewport takeover, not a panel. The canvas is still on the stack
+          // underneath, so Escape returns you to exactly where you left it.
+          <Suspense fallback={<div className="code-empty">Loading editor…</div>}>
+            <CodeContext
+              projectId={load.bundle.project.id}
+              files={current.files}
+              onPendingChanged={() => void refresh()}
+            />
+          </Suspense>
         ) : (
           <Editor
             bundle={load.bundle}
