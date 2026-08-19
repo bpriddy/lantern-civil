@@ -275,6 +275,17 @@ function Workspace({ me }: { me: Me }) {
       },
       'node.add': () => {
         if (current.kind === 'code') return undefined;
+        // A repository with no manifests has nothing to add a node to. Saying that is
+        // more useful than letting the op fail with "app.yaml could not be read",
+        // which is true and tells you nothing about what to do next.
+        if (load.status === 'ready' && !load.bundle.composition) {
+          report({
+            title: 'Add node',
+            detail: `${load.bundle.compositionPath} does not exist yet — this repository is not a Civil project.`,
+            refused: true,
+          });
+          return undefined;
+        }
         setAddNodeOpen(true);
         return 'Choose a node type.';
       },
