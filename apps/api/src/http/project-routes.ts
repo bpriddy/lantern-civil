@@ -103,7 +103,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
             'github_unreachable',
             error.status === 404
               ? `${project.repoOwner}/${project.repoName} has no branch "${project.defaultBranch}", or the installation cannot see it.`
-              : `GitHub could not be reached (${error.status}).`,
+              // GitHub says why — secondary rate limiting, a permission the app was
+              // not granted, an abuse trigger. Reporting only the status turns all of
+              // those into the same unactionable message.
+              : `GitHub refused the request (${error.status}): ${error.message.slice(-220)}`,
           );
         }
         throw error;

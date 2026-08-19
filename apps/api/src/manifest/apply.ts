@@ -4,6 +4,7 @@ import {
   applySplices,
   findSequence,
   readManifest,
+  trimEnd,
   type ManifestDocument,
   type Splice,
 } from './document.js';
@@ -193,25 +194,32 @@ function setLayout(manifest: ManifestDocument, op: SetLayoutOp): ApplyResult {
   // `layout: { nodes: {} }` is what a scaffolded project starts with, and an entry
   // cannot be appended after `{}` — the empty mapping has to be replaced, exactly as
   // an empty sequence does. Every new project's first node hits both.
+  const lineStart = manifest.source.lastIndexOf('\n', range[0] - 1) + 1;
+  const keyIndent = /^\s*/.exec(manifest.source.slice(lineStart, range[0]))?.[0] ?? '';
+
   if (block.trim() === '{}') {
-    const lineStart = manifest.source.lastIndexOf('\n', range[0] - 1) + 1;
-    const keyIndent = /^\s*/.exec(manifest.source.slice(lineStart, range[0]))?.[0] ?? '';
     const step = ' '.repeat(indentStepOf(manifest.source));
+    let start = range[0];
+    while (start > lineStart && manifest.source[start - 1] === ' ') start -= 1;
     return {
       source: applySplices(manifest.source, [
-        { start: range[0], end: range[1], text: `\n${keyIndent}${step}${op.id}: ${text}` },
+        { start, end: range[1], text: `\n${keyIndent}${step}${op.id}: ${text}` },
       ]),
       summary: `Placed “${op.id}”.`,
     };
   }
 
-  // Otherwise append in the style of the entries already there.
-  const lastNewline = block.lastIndexOf('\n');
-  const indent = lastNewline === -1 ? '    ' : /^\s*/.exec(block.slice(lastNewline + 1))?.[0] ?? '    ';
+  // Append in the column the existing entries use. The indent is read from the last
+  // line that has content: a mapping's range can end past a trailing newline, and
+  // measuring the empty remainder put the new entry at column zero, outside the block
+  // it belongs to.
+  const insertAt = trimEnd(manifest.source, range[1]);
+  const entryLineStart = manifest.source.lastIndexOf('\n', insertAt - 1) + 1;
+  const indent = /^\s*/.exec(manifest.source.slice(entryLineStart))?.[0] ?? `${keyIndent}  `;
 
   return {
     source: applySplices(manifest.source, [
-      { start: range[1], end: range[1], text: `\n${indent}${op.id}: ${text}` },
+      { start: insertAt, end: insertAt, text: `\n${indent}${op.id}: ${text}` },
     ]),
     summary: `Placed “${op.id}”.`,
   };

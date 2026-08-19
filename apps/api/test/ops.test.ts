@@ -223,3 +223,50 @@ test('an empty sequence in a four-space file is indented to match', () => {
   stillParses(after, 'first node in a four-space file');
   assert.ok(after.includes('\n        - id: a'), `wrong indent:\n${JSON.stringify(after)}`);
 });
+
+
+test('a scaffolded project survives more than one node', () => {
+  // The first node replaces an empty sequence; the second appends to what the first
+  // left behind. Testing only the first hid a corruption that appeared on the second.
+  const scaffold = [
+    'apiVersion: civil/v1',
+    'kind: Composition',
+    'metadata:',
+    '  id: demo',
+    '',
+    '# The composition canvas.',
+    'spec:',
+    '  nodes: []',
+    '  edges: []',
+    '',
+    'layout:',
+    '  nodes: {}',
+    '',
+  ].join('\n');
+
+  const first = applyOps(scaffold, [
+    { op: 'addNode', node: { id: 'classify', type: 'service', impl: { entrypoint: 'a.py' } } },
+    { op: 'setLayout', id: 'classify', x: 200, y: 120 },
+  ]).source;
+  stillParses(first, 'first node');
+
+  const second = applyOps(first, [
+    { op: 'addNode', node: { id: 'public-api', type: 'client', client: 'api', exposes: ['classify'] } },
+    { op: 'setLayout', id: 'public-api', x: 40, y: 120 },
+  ]).source;
+
+  const parsed = stillParses(second, 'second node') as {
+    spec: { nodes: { id: string }[]; edges: unknown[] };
+    layout: { nodes: Record<string, { x: number; y: number }> };
+  };
+
+  assert.deepEqual(parsed.spec.nodes.map((n) => n.id), ['classify', 'public-api']);
+  // `edges: []` must remain its own key rather than being swallowed by the new item.
+  assert.deepEqual(parsed.spec.edges, []);
+  assert.deepEqual(parsed.layout.nodes, {
+    classify: { x: 200, y: 120 },
+    'public-api': { x: 40, y: 120 },
+  });
+  // And no stray key escaped to the top level.
+  assert.deepEqual(Object.keys(parsed).sort(), ['apiVersion', 'kind', 'layout', 'metadata', 'spec']);
+});

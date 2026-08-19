@@ -32,6 +32,39 @@ const PREFETCH = /\.(ya?ml|json|md)$/i;
 /** Guards against a pathological repo turning one project load into thousands of calls. */
 const MAX_PREFETCH_FILES = 300;
 
+/**
+ * Loaded trees, keyed by commit.
+ *
+ * Without this every bundle load re-fetches the tree and every manifest blob, so
+ * clicking around a project is dozens of API calls a minute and GitHub eventually
+ * answers 403 with a note about scraping. A commit is immutable and content-addressed,
+ * so a tree read at a given sha can never become stale — the only call that must stay
+ * fresh is resolving the branch to its current sha, which is one request.
+ *
+ * In memory, and therefore lost when the container recycles. That is correct under
+ * CLAUDE.md: it is a cache, reconstructible by asking GitHub again, and nothing here
+ * is the only copy of anything.
+ */
+interface CachedTree {
+  entries: TreeEntry[];
+  truncated: boolean;
+  contents: Map<string, string>;
+}
+
+const treeCache = new Map<string, CachedTree>();
+
+/** Bounded so a long-lived instance browsing many repositories cannot grow forever. */
+const MAX_CACHED_TREES = 24;
+
+function remember(key: string, value: CachedTree): void {
+  // Oldest out first. Insertion order is Map's iteration order.
+  if (treeCache.size >= MAX_CACHED_TREES) {
+    const oldest = treeCache.keys().next().value;
+    if (oldest !== undefined) treeCache.delete(oldest);
+  }
+  treeCache.set(key, value);
+}
+
 export class GitHubSource implements ProjectSource {
   readonly commitSha: string;
   readonly truncated: boolean;
@@ -65,6 +98,17 @@ export class GitHubSource implements ProjectSource {
     );
     const commitSha = head.object.sha;
 
+    const cacheKey = `${owner}/${repo}@${commitSha}`;
+    const cached = treeCache.get(cacheKey);
+    if (cached) {
+      return new GitHubSource({
+        commitSha,
+        truncated: cached.truncated,
+        entries: cached.entries,
+        contents: cached.contents,
+      });
+    }
+
     const tree = await app.asInstallation<{ tree: TreeEntry[]; truncated: boolean }>(
       installationId,
       `/repos/${owner}/${repo}/git/trees/${commitSha}?recursive=1`,
@@ -89,11 +133,14 @@ export class GitHubSource implements ProjectSource {
       }),
     );
 
+    const contents = new Map(fetched);
+    remember(cacheKey, { entries: blobs, truncated: tree.truncated, contents });
+
     return new GitHubSource({
       commitSha,
       truncated: tree.truncated,
       entries: blobs,
-      contents: new Map(fetched),
+      contents,
     });
   }
 

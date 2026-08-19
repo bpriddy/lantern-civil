@@ -45,6 +45,13 @@ export function applySplices(source: string, splices: readonly Splice[]): string
   return out;
 }
 
+/** The offset of the last non-whitespace character at or before `end`. */
+export function trimEnd(source: string, end: number): number {
+  let at = Math.min(end, source.length);
+  while (at > 0 && /\s/.test(source[at - 1]!)) at -= 1;
+  return at;
+}
+
 export class ManifestEditError extends Error {
   constructor(message: string) {
     super(message);
@@ -106,8 +113,13 @@ export function findSequence(manifest: ManifestDocument, path: readonly string[]
     const keyIndent = /^\s*/.exec(manifest.source.slice(lineStart, range[0]))?.[0] ?? '';
     const step = ' '.repeat(detectIndentStep(manifest.source));
 
+    // Swallow the space after the colon along with the brackets, so the result is
+    // `nodes:` rather than `nodes: ` with a stray trailing space.
+    let start = range[0];
+    while (start > lineStart && manifest.source[start - 1] === ' ') start -= 1;
+
     return {
-      insertAt: range[0],
+      insertAt: start,
       // The `[]` is replaced, not appended to: a block item cannot live inside it.
       replaceTo: range[1],
       itemPrefix: `\n${keyIndent}${step}- `,
@@ -128,11 +140,15 @@ export function findSequence(manifest: ManifestDocument, path: readonly string[]
 
   const firstText = manifest.source.slice(first.range[0], first.range[1]).trim();
 
+  // For a flow item range[1] is its closing brace, but for a block item it runs on
+  // into the whitespace that follows — so inserting there swallows the newline before
+  // the next key, and `edges: []` ends up appended to the previous node. Backing up
+  // over trailing whitespace finds where the item's own text actually stops.
+  const insertAt = trimEnd(manifest.source, last.range[1]);
+
   return {
-    // range[1] is the value's end; range[2] includes trailing comment and newline. The
-    // value end is what a new item should follow.
-    insertAt: last.range[1],
-    replaceTo: last.range[1],
+    insertAt,
+    replaceTo: insertAt,
     itemPrefix,
     flow: firstText.startsWith('{'),
     count: items.length,
