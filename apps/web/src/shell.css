@@ -1012,3 +1012,30 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 
 .keyhelp-title { font-size: 12px; color: var(--text); }
 .keyhelp-desc { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+
+/* ---- add node ------------------------------------------------------------ */
+
+.addnode {
+  width: 420px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.addnode-body { padding: 6px 0 8px; }
+
+.addnode-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  padding: 7px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.addnode-row.is-active { background: var(--bg-inset); }
+.addnode-label { display: block; font-size: 12px; color: var(--text); }
+.addnode-hint { display: block; font-size: 11px; color: var(--text-faint); line-height: 1.5; }

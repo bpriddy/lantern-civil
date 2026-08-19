@@ -52,6 +52,34 @@ decision rather than a surprise.
 
 ---
 
+## Open questions
+
+### What a command targets
+
+**Deliberately unresolved. Deciding it badly is worse than leaving it open.**
+
+Commands act on something, and right now that something is implicit and inconsistent.
+`nav.descend` uses canvas selection. `file.save` uses the open Monaco tab. `node.add`
+places a node at a hardcoded position because there is no answer to "where did the
+user mean" — the first added node lands off-screen, which is the symptom.
+
+Focus and blur is probably the mechanism, but it has to satisfy three things at once
+and they pull apart:
+
+- **The canvas** has a selection that survives clicking elsewhere in the shell.
+- **Monaco** owns its own focus and must not have it stolen.
+- **An agent** has no focus at all. "Add a node to the classify graph" names its
+  target in the instruction, so a target model that only exists as DOM focus is one an
+  agent cannot participate in.
+
+That last one is why this is worth pausing on rather than reaching for `document.
+activeElement`. Under CLAUDE.md's agent-first rule, the target belongs in the command
+context — something a keystroke fills from focus and an agent fills from an
+instruction — rather than being read off the DOM at the moment a handler runs.
+
+Until it is decided, new nodes are placed at a fixed position and commands read from
+the canvas selection.
+
 ## Deferred features
 
 ### Mobile

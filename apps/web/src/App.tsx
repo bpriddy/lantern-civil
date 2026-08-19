@@ -13,6 +13,7 @@ import { KeyHelp } from './commands/KeyHelp.js';
 import { Toast } from './commands/Toast.js';
 import { useCommands } from './commands/useCommands.js';
 import { Home } from './panes/Home.js';
+import { AddNode } from './panes/AddNode.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
@@ -25,6 +26,7 @@ import {
   type SessionState,
 } from './identity.js';
 import {
+  applyOps,
   commitProject,
   fetchBundle,
   fetchExamples,
@@ -119,6 +121,7 @@ function Workspace({ me }: { me: Me }) {
    */
   const [atHome, setAtHome] = useState(true);
   const [keyHelpOpen, setKeyHelpOpen] = useState(false);
+  const [addNodeOpen, setAddNodeOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -270,6 +273,11 @@ function Workspace({ me }: { me: Me }) {
         setKeyHelpOpen((v) => !v);
         return 'Every shortcut and what it does.';
       },
+      'node.add': () => {
+        if (current.kind === 'code') return undefined;
+        setAddNodeOpen(true);
+        return 'Choose a node type.';
+      },
       'project.commit': () => {
         if (pendingCount === 0) return undefined;
         setPickerOpen(false);
@@ -301,6 +309,34 @@ function Workspace({ me }: { me: Me }) {
           ? 'A flow cycle blocks Run until it is broken'
           : 'Runtime arrives with M4';
 
+  /**
+   * PRD 7.1: the client posts ops and the server applies them. The same call is what
+   * an agent will make, which is why the placement and the id are decided here rather
+   * than inside a component that only the keyboard can reach.
+   */
+  const addNode = useCallback(
+    async (node: Record<string, unknown>) => {
+      if (!activeId || load.status !== 'ready') return;
+      const level = stack[stack.length - 1]!;
+      const manifestPath =
+        level.kind === 'graph' ? level.path : load.bundle.compositionPath;
+
+      try {
+        const { summary } = await applyOps(activeId, manifestPath, [
+          { op: 'addNode', node },
+          // Somewhere visible rather than at the origin. Where exactly is the open
+          // question about what a command targets — see docs/roadmap.md.
+          { op: 'setLayout', id: String(node['id']), x: 120, y: 420 },
+        ]);
+        await refresh();
+        report({ title: 'Add node', detail: summary });
+      } catch (error) {
+        report({ title: 'Add node', detail: (error as Error).message, refused: true });
+      }
+    },
+    [activeId, load, stack, refresh, report],
+  );
+
   if (atHome) {
     return (
       <>
@@ -322,6 +358,18 @@ function Workspace({ me }: { me: Me }) {
     <div className="shell">
       <Toast effect={effect} />
       {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
+      {addNodeOpen && bundle ? (
+        <AddNode
+          altitude={current.kind === 'graph' ? 'graph' : 'composition'}
+          existingIds={
+            current.kind === 'graph'
+              ? (bundle.graphs[current.path]?.spec.nodes ?? []).map((n) => n.id)
+              : (bundle.composition?.spec.nodes ?? []).map((n) => n.id)
+          }
+          onAdd={(node) => void addNode(node)}
+          onClose={() => setAddNodeOpen(false)}
+        />
+      ) : null}
       <header className="top">
         {/* The way back out. */}
         <button type="button" className="brand brand-home" onClick={goHome} title="All projects">

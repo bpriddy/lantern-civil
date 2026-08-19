@@ -242,3 +242,26 @@ export async function openRepository(
 export async function removeProject(projectId: string): Promise<void> {
   await apiFetch(`/api/projects/${projectId}`, { method: 'DELETE' });
 }
+
+
+export type ManifestOp =
+  | { op: 'addNode'; node: Record<string, unknown> }
+  | { op: 'setLayout'; id: string; x: number; y: number };
+
+/**
+ * PRD 7.1: the client never constructs YAML. It posts ops and the server applies
+ * them — which is also why an agent needs no separate write path.
+ */
+export async function applyOps(
+  projectId: string,
+  manifestPath: string,
+  ops: ManifestOp[],
+): Promise<{ summary: string }> {
+  const response = await apiFetch(`/api/projects/${projectId}/ops`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: manifestPath, ops }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not apply'));
+  return (await response.json()) as { summary: string };
+}

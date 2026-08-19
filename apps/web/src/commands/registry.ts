@@ -18,6 +18,7 @@ export type CommandId =
   | 'project.switch'
   | 'project.settings'
   | 'canvas.fit'
+  | 'node.add'
   | 'canvas.clearSelection'
   | 'file.save'
   | 'project.commit'
@@ -128,6 +129,15 @@ export const COMMANDS: readonly Command[] = [
     description: 'Deselect the current node.',
     keys: ['escape'],
     enabled: (c) => c.where === 'canvas' && c.hasSelection,
+  },
+  {
+    id: 'node.add',
+    title: 'Add node',
+    description:
+      'Add a node to the current canvas. The vocabulary is closed — client, service ' +
+      'or process at the top level; agent, io, subgraph or code inside a graph.',
+    keys: ['n'],
+    enabled: (c) => c.where === 'canvas',
   },
   {
     id: 'file.save',

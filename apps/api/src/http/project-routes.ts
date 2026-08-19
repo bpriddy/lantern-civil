@@ -2,6 +2,8 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import type { Config } from '../config.js';
+import { applyOps, type ManifestOp } from '../manifest/apply.js';
+import { ManifestEditError } from '../manifest/document.js';
 import { loadBundle } from '../project/bundle.js';
 import { OverlaySource } from '../project/overlay.js';
 import {
@@ -403,6 +405,65 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       }
       throw error;
     }
+  });
+
+  /**
+   * PRD 7.1: the client never constructs YAML. It posts ops, the server applies them
+   * to the document, validates, and returns what changed.
+   *
+   * This is also the seam the command registry and the future agent both use — there
+   * is one way to mutate a manifest, and it is this.
+   */
+  app.post('/api/projects/:id/ops', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { path?: unknown; ops?: unknown };
+    if (typeof body?.path !== 'string' || !Array.isArray(body?.ops) || body.ops.length === 0) {
+      return reply.code(400).send({ error: 'path_and_ops_required' });
+    }
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
+
+    // Ops apply on top of pending work, not on top of HEAD: editing twice before
+    // committing must build on the first edit rather than discard it.
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const overlay = new OverlaySource(base, pending);
+
+    const current = overlay.read(body.path);
+    if (current === undefined) {
+      return reply.code(404).send({ error: 'manifest_not_found', message: `${body.path} could not be read.` });
+    }
+
+    let applied;
+    try {
+      applied = applyOps(current, body.ops as ManifestOp[]);
+    } catch (error) {
+      if (error instanceof ManifestEditError) {
+        return reply.code(422).send({ error: 'op_refused', message: error.message });
+      }
+      throw error;
+    }
+
+    const change = await savePending(pool, {
+      ownerId: request.identity.id,
+      projectId: project.id,
+      branch: project.defaultBranch,
+      path: body.path,
+      content: applied.source,
+      existsAtHead: base.exists(body.path),
+    });
+
+    return { path: change.path, kind: change.kind, summary: applied.summary };
   });
 
   /** Discards a pending edit; the file reverts to whatever HEAD says. */
