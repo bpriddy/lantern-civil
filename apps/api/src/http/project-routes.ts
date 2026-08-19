@@ -19,6 +19,7 @@ import {
   getProject,
   listProjects,
   openExampleProject,
+  setHeadSha,
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
@@ -86,12 +87,27 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         throw new SourceError(409, 'github_not_connected', 'Connect GitHub in settings first.');
       }
       try {
+        // Resolve the branch only when Civil does not yet know which commit it is
+        // editing against. After that the sha is pinned and every read is a cache
+        // hit — see the sync route for how it advances.
+        let sha = project.headSha;
+        if (!sha) {
+          sha = await GitHubSource.resolveHead(
+            githubApp,
+            connection.installationId,
+            project.repoOwner,
+            project.repoName,
+            project.defaultBranch,
+          );
+          await setHeadSha(pool, ownerId, project.id, sha);
+        }
+
         base = await GitHubSource.load(
           githubApp,
           connection.installationId,
           project.repoOwner,
           project.repoName,
-          project.defaultBranch,
+          sha,
         );
       } catch (error) {
         // Without this, a rate limit, a deleted branch, or a network blip surfaces
@@ -382,6 +398,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // failed, and these rows are the only copy.
       await clearPending(pool, request.identity.id, project.id, project.defaultBranch);
 
+      // Civil is now editing against what it just wrote. Without this the next read
+      // would serve the tree from before the commit.
+      await setHeadSha(pool, request.identity.id, project.id, result.commitSha);
+
       request.log.info(
         { projectId: project.id, commit: result.commitSha, files: changes.length },
         'committed',
@@ -406,6 +426,63 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       }
       if (error instanceof NothingToCommitError) {
         return reply.code(409).send({ error: 'nothing_to_commit' });
+      }
+      throw error;
+    }
+  });
+
+  /**
+   * Picks up whatever has been pushed since.
+   *
+   * Civil edits against a pinned commit, so it does not notice external pushes on its
+   * own — deliberately. Constantly re-checking is what made browsing a project cost a
+   * GitHub call per interaction, and a repository the user is not sharing does not
+   * move on its own. Advancing is therefore something you ask for.
+   *
+   * Pending changes are left alone. They are edits to files, not to a commit, and
+   * their base_blob_sha is what detects whether the file underneath them moved.
+   */
+  app.post('/api/projects/:id/sync', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    if (project.sourceKind !== 'github' || !project.repoOwner || !project.repoName) {
+      return reply.code(409).send({
+        error: 'not_syncable',
+        message: 'Only a repository-backed project has anything to sync with.',
+      });
+    }
+    if (!githubApp) return reply.code(503).send({ error: 'github_not_configured' });
+
+    const connection = await getGitHubConnection(pool, request.identity.id);
+    if (!connection?.installationId) return reply.code(409).send({ error: 'github_not_connected' });
+
+    try {
+      const latest = await GitHubSource.resolveHead(
+        githubApp,
+        connection.installationId,
+        project.repoOwner,
+        project.repoName,
+        project.defaultBranch,
+      );
+
+      const moved = latest !== project.headSha;
+      if (moved) await setHeadSha(pool, request.identity.id, project.id, latest);
+
+      return {
+        headSha: latest,
+        moved,
+        summary: moved
+          ? `Updated to ${latest.slice(0, 8)}.`
+          : `Already at ${latest.slice(0, 8)}.`,
+      };
+    } catch (error) {
+      if (error instanceof GitHubError) {
+        return reply.code(502).send({
+          error: 'github_unreachable',
+          message: `GitHub refused the request (${error.status}).`,
+        });
       }
       throw error;
     }

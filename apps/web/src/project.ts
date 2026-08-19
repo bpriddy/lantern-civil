@@ -21,6 +21,7 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
 export interface ProjectSummary {
   id: string;
   name: string;
+  headSha?: string | null;
   sourceKind: 'github' | 'local' | 'example';
   defaultBranch: string;
   repoOwner: string | null;
@@ -274,4 +275,17 @@ export async function initializeProject(
   const response = await apiFetch(`/api/projects/${projectId}/initialize`, { method: 'POST' });
   if (!response.ok) throw new Error(await describeFailure(response, 'could not add Civil'));
   return (await response.json()) as { files: string[]; summary: string };
+}
+
+
+/**
+ * Picks up whatever has been pushed since. Civil edits against a pinned commit, so
+ * advancing is something you ask for rather than something it does behind you.
+ */
+export async function syncProject(
+  projectId: string,
+): Promise<{ headSha: string; moved: boolean; summary: string }> {
+  const response = await apiFetch(`/api/projects/${projectId}/sync`, { method: 'POST' });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not sync'));
+  return (await response.json()) as { headSha: string; moved: boolean; summary: string };
 }

@@ -1111,3 +1111,10 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 .tree-mark { display: inline-block; width: 9px; color: var(--warn); }
 .tree-file.is-add .tree-mark { color: var(--ok); }
 .tree-file.is-delete .tree-mark { color: var(--danger); }
+
+/* ---- sync ---------------------------------------------------------------- */
+
+.chip-branch { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
+.chip-branch:disabled { cursor: default; }
+.chip-sync { color: var(--text-faint); margin-left: 2px; }
+.chip-branch:hover:not(:disabled) .chip-sync { color: var(--accent); }

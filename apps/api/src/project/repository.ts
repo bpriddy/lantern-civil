@@ -16,6 +16,8 @@ export interface ProjectRow {
   repoOwner: string | null;
   repoName: string | null;
   defaultBranch: string;
+  /** The commit Civil is editing against. Null until first opened. */
+  headSha: string | null;
 }
 
 const COLUMNS = `id,
@@ -25,7 +27,8 @@ const COLUMNS = `id,
                  example_slug   AS "exampleSlug",
                  repo_owner     AS "repoOwner",
                  repo_name      AS "repoName",
-                 default_branch AS "defaultBranch"`;
+                 default_branch AS "defaultBranch",
+                 head_sha       AS "headSha"`;
 
 export async function listProjects(pool: pg.Pool, ownerId: string): Promise<ProjectRow[]> {
   const { rows } = await pool.query<ProjectRow>(
@@ -104,4 +107,17 @@ export async function openExampleProject(
     [ownerId, name, slug],
   );
   return rows[0]!;
+}
+
+/** Records which commit a project is being edited against. */
+export async function setHeadSha(
+  pool: pg.Pool,
+  ownerId: string,
+  projectId: string,
+  headSha: string,
+): Promise<void> {
+  await pool.query(
+    'UPDATE projects SET head_sha = $1, updated_at = now() WHERE id = $2 AND owner_id = $3',
+    [headSha, projectId, ownerId],
+  );
 }

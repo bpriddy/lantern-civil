@@ -22,6 +22,7 @@ export type CommandId =
   | 'canvas.clearSelection'
   | 'file.save'
   | 'project.commit'
+  | 'project.sync'
   | 'help.keys';
 
 export interface CommandContext {
@@ -152,6 +153,15 @@ export const COMMANDS: readonly Command[] = [
     description: 'Commit every pending change to the repository.',
     keys: ['mod+enter'],
     enabled: (c) => c.pendingCount > 0 && c.canCommit,
+  },
+  {
+    id: 'project.sync',
+    title: 'Sync',
+    description:
+      'Pick up commits pushed to the repository since this project was opened. Civil ' +
+      'edits against a fixed commit, so it does not follow the branch on its own.',
+    keys: ['mod+r'],
+    enabled: (c) => c.where !== 'home' && c.canCommit,
   },
   {
     id: 'project.settings',

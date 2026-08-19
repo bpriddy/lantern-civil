@@ -32,6 +32,7 @@ import {
   fetchBundle,
   fetchExamples,
   fetchProjects,
+  syncProject,
   type ProjectBundle,
   type ProjectSummary,
 } from './project.js';
@@ -289,6 +290,11 @@ function Workspace({ me }: { me: Me }) {
         setSelectedId(null);
         return 'Selection cleared.';
       },
+      'project.sync': () => {
+        if (!canCommit) return undefined;
+        void doSync();
+        return 'Checking the repository…';
+      },
       'project.settings': () => {
         setSettingsOpen((v) => !v);
         return 'Settings.';
@@ -394,6 +400,17 @@ function Workspace({ me }: { me: Me }) {
     }
   }, [activeId, refresh, report, openFile]);
 
+  const doSync = useCallback(async () => {
+    if (!activeId) return;
+    try {
+      const { summary, moved } = await syncProject(activeId);
+      if (moved) await refresh();
+      report({ title: 'Sync', detail: summary });
+    } catch (error) {
+      report({ title: 'Sync', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, refresh, report]);
+
   if (atHome) {
     return (
       <>
@@ -475,10 +492,23 @@ function Workspace({ me }: { me: Me }) {
             {fatalCount} error{fatalCount === 1 ? '' : 's'}
           </span>
         ) : null}
-        <span className="chip" title="Current branch">
+        {/* The branch, and the way to pick up what has been pushed to it. Civil
+            edits against a pinned commit, so this is deliberate rather than automatic. */}
+        <button
+          type="button"
+          className="chip chip-branch"
+          onClick={() => void doSync()}
+          disabled={!canCommit}
+          title={
+            canCommit
+              ? 'Sync: pick up commits pushed since this project was opened'
+              : 'Only a repository-backed project has anything to sync with'
+          }
+        >
           <span className="dot" />
           {bundle?.project.defaultBranch ?? 'main'}
-        </span>
+          {canCommit ? <span className="chip-sync">⟳</span> : null}
+        </button>
         {/* PRD 7: commits are explicit, and the indicator shows a count. */}
         <CommitBar
           count={pendingCount}

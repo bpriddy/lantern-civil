@@ -85,18 +85,36 @@ export class GitHubSource implements ProjectSource {
     this.contents = init.contents;
   }
 
+  /** Resolves a branch to the commit it currently points at. One call. */
+  static async resolveHead(
+    app: GitHubApp,
+    installationId: string,
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<string> {
+    const head = await app.asInstallation<{ object: { sha: string } }>(
+      installationId,
+      `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`,
+    );
+    return head.object.sha;
+  }
+
+  /**
+   * Opens a repository at a known commit.
+   *
+   * Taking a sha rather than a branch is what makes this free after the first read:
+   * a commit is immutable, so its tree and blobs can be cached indefinitely and every
+   * later request costs nothing. Asking where the branch points is a separate,
+   * deliberate act — see resolveHead and the sync route.
+   */
   static async load(
     app: GitHubApp,
     installationId: string,
     owner: string,
     repo: string,
-    ref: string,
+    commitSha: string,
   ): Promise<GitHubSource> {
-    const head = await app.asInstallation<{ object: { sha: string } }>(
-      installationId,
-      `/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(ref)}`,
-    );
-    const commitSha = head.object.sha;
 
     const cacheKey = `${owner}/${repo}@${commitSha}`;
     const cached = treeCache.get(cacheKey);
