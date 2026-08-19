@@ -41,6 +41,18 @@ not "did anything touch the disk" but "would losing this container lose anything
 could proceed without the GitHub App. It is a development affordance and must never
 become a deployment mechanism.
 
+## One project, one repository
+
+A Civil project is a repository, whole, with `civil.yaml` at its root. Civil does not
+open a subdirectory of a repository as a project.
+
+This keeps "what does `app.yaml` mean" answerable without a second notion of root, and
+it keeps a project's identity and a repository's identity the same thing — which the
+commit path, the branch model, and `pending_changes` all assume.
+
+`examples/doc-pipeline` in this repository is a **test fixture**, not an openable
+project. Opening it in Civil would mean giving it its own repository.
+
 ## The repo is the truth
 
 PRD §6.1. Everything the canvas shows is a projection of files in git. Anything Civil

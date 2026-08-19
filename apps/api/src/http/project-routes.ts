@@ -11,12 +11,27 @@ import {
   revertPending,
   savePending,
 } from '../project/pending.js';
-import { getProject, listProjects } from '../project/repository.js';
+import { createGitHubProject, getProject, listProjects } from '../project/repository.js';
 import { LocalSource, type ProjectSource } from '../project/source.js';
+import { GitHubApp } from '../github/app.js';
+import { GitHubSource } from '../github/source.js';
+import { getGitHubConnection } from '../project/connections.js';
+import type { ProjectRow } from '../project/repository.js';
 
 interface ProjectDeps {
   config: Config;
   pool: pg.Pool;
+}
+
+/** A source that cannot be opened, carrying the status the client should see. */
+class SourceError extends Error {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
 }
 
 /**
@@ -25,11 +40,88 @@ interface ProjectDeps {
  * and a cache is precisely a thing Civil would know that git doesn't.
  */
 export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): void {
-  const { pool } = deps;
+  const { config, pool } = deps;
+
+  const githubApp = config.github
+    ? new GitHubApp({ appId: config.github.appId, privateKey: config.github.privateKey })
+    : undefined;
+
+  /**
+   * Resolves a project to the files it is a projection of.
+   *
+   * A project is a repository, whole. Civil does not open a subdirectory, which keeps
+   * "what does app.yaml mean" answerable without a second notion of root — see
+   * docs/prd-deltas.md.
+   */
+  async function openSource(ownerId: string, project: ProjectRow): Promise<ProjectSource> {
+    let base: ProjectSource;
+
+    if (project.sourceKind === 'local' && project.localPath) {
+      base = new LocalSource(project.localPath);
+    } else if (project.sourceKind === 'github' && project.repoOwner && project.repoName) {
+      if (!githubApp) throw new SourceError(503, 'github_not_configured', 'GitHub is not configured on this server.');
+      const connection = await getGitHubConnection(pool, ownerId);
+      if (!connection?.installationId) {
+        throw new SourceError(409, 'github_not_connected', 'Connect GitHub in settings first.');
+      }
+      base = await GitHubSource.load(
+        githubApp,
+        connection.installationId,
+        project.repoOwner,
+        project.repoName,
+        project.defaultBranch,
+      );
+    } else {
+      throw new SourceError(500, 'source_unresolvable', 'This project does not name a readable source.');
+    }
+
+    return base;
+  }
 
   app.get('/api/projects', async (request) => ({
     projects: await listProjects(pool, request.identity.id),
   }));
+
+  /** Opens a repository as a project. One project per repository. */
+  app.post('/api/projects', async (request, reply) => {
+    const body = request.body as {
+      repoOwner?: unknown; repoName?: unknown; name?: unknown; branch?: unknown;
+    };
+    if (typeof body?.repoOwner !== 'string' || typeof body?.repoName !== 'string') {
+      return reply.code(400).send({ error: 'repo_required' });
+    }
+    if (!githubApp) return reply.code(503).send({ error: 'github_not_configured' });
+
+    const connection = await getGitHubConnection(pool, request.identity.id);
+    if (!connection?.installationId) {
+      return reply.code(409).send({ error: 'github_not_connected' });
+    }
+
+    // Confirm with GitHub that this installation reaches the repository, rather than
+    // trusting what the client asked for.
+    let repo: { default_branch: string };
+    try {
+      repo = await githubApp.asInstallation(
+        connection.installationId,
+        `/repos/${body.repoOwner}/${body.repoName}`,
+      );
+    } catch {
+      return reply.code(404).send({
+        error: 'repo_unreachable',
+        message: 'That repository is not reachable by your GitHub installation.',
+      });
+    }
+
+    const project = await createGitHubProject(pool, request.identity.id, {
+      name: typeof body.name === 'string' && body.name.trim() ? body.name.trim() : body.repoName,
+      repoOwner: body.repoOwner,
+      repoName: body.repoName,
+      defaultBranch: typeof body.branch === 'string' && body.branch ? body.branch : repo.default_branch,
+      installationId: connection.installationId,
+    });
+
+    return reply.code(201).send({ project });
+  });
 
   app.get('/api/projects/:id/bundle', async (request, reply) => {
     const { id } = request.params as { id: string };
@@ -40,21 +132,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     if (!project) return reply.code(404).send({ error: 'not_found' });
 
     let source: ProjectSource;
-    if (project.sourceKind === 'local' && project.localPath) {
-      source = new LocalSource(project.localPath);
-    } else {
-      // PRD 12's GitHub App is not wired yet; say so plainly rather than returning an
-      // empty canvas that looks like a project with no nodes.
-      return reply.code(501).send({
-        error: 'source_unsupported',
-        message: 'GitHub-backed projects arrive with the App installation.',
-      });
+    try {
+      source = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
     }
 
     if (!source.exists('.')) {
       return reply.code(410).send({
         error: 'source_missing',
-        message: `The project directory ${project.localPath} is no longer readable.`,
+        message: 'The project source is no longer readable.',
       });
     }
 
@@ -80,13 +170,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     }
 
     const project = await getProject(pool, request.identity.id, id);
-    if (!project || project.sourceKind !== 'local' || !project.localPath) {
-      return reply.code(404).send({ error: 'not_found' });
-    }
+    if (!project) return reply.code(404).send({ error: 'not_found' });
 
-    // Read through the overlay: opening a file you have edited must show the edit,
-    // not the committed version.
-    const base = new LocalSource(project.localPath);
+    // Read through the same resolution the canvas uses, so opening a file you have
+    // edited shows the edit rather than the committed version.
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
     const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     const overlay = new OverlaySource(base, pending);
 
@@ -124,13 +220,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     }
 
     const project = await getProject(pool, request.identity.id, id);
-    if (!project || project.sourceKind !== 'local' || !project.localPath) {
-      return reply.code(404).send({ error: 'not_found' });
-    }
+    if (!project) return reply.code(404).send({ error: 'not_found' });
 
-    // The base source decides add versus modify, and rejects paths outside the
-    // project before anything is written.
-    const base = new LocalSource(project.localPath);
+    // The source decides add versus modify: a file absent at HEAD is an add, and
+    // getting that wrong tells the committer to expect a blob that was never there.
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
 
     try {
       const change = await savePending(pool, {

@@ -65,3 +65,23 @@ export async function createLocalProject(
   );
   return rows[0]!;
 }
+
+export async function createGitHubProject(
+  pool: pg.Pool,
+  ownerId: string,
+  input: { name: string; repoOwner: string; repoName: string; defaultBranch: string; installationId: string },
+): Promise<ProjectRow> {
+  const { rows } = await pool.query<ProjectRow>(
+    `INSERT INTO projects
+       (owner_id, name, source_kind, repo_owner, repo_name, default_branch, installation_id)
+     VALUES ($1, $2, 'github', $3, $4, $5, $6)
+     ON CONFLICT (owner_id, repo_owner, repo_name) WHERE source_kind = 'github'
+       DO UPDATE SET name = EXCLUDED.name,
+                     default_branch = EXCLUDED.default_branch,
+                     installation_id = EXCLUDED.installation_id,
+                     updated_at = now()
+     RETURNING ${COLUMNS}`,
+    [ownerId, input.name, input.repoOwner, input.repoName, input.defaultBranch, input.installationId],
+  );
+  return rows[0]!;
+}

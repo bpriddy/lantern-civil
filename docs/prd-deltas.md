@@ -240,3 +240,28 @@ not rescue the filesystem; it removes the only reason to want one.
   the container would lose anything.
 
 **PRD §7 and §12 should be updated to state this directly.**
+
+
+---
+
+## 12. One project per repository — **owner's decision**
+
+PRD §6.1 shows a project at the root of its tree but never says whether a repository
+may hold more than one. `examples/doc-pipeline` inside this repository is a valid
+Civil project living in a subdirectory, which made the question concrete.
+
+A `root_path` column and a `SubpathSource` wrapper were built and tested, then
+removed. **The owner's rule is one project per repository.**
+
+It is the more opinionated answer and the one that costs less to hold: a project's
+identity and a repository's identity stay the same thing, which the commit path, the
+branch model, and `pending_changes` all already assume. Supporting subdirectories
+would have introduced a second notion of "root" that every path-handling surface has
+to agree about, and the first place it disagreed would be silent.
+
+The migration was never committed and never ran against Cloud SQL, so it was removed
+rather than reversed with a forward migration — `CLAUDE.md`'s rule against rewriting
+applied migrations did not apply.
+
+**Consequence:** `examples/doc-pipeline` stays as a test fixture. Opening it in Civil
+means giving it its own repository.
