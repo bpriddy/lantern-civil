@@ -11,6 +11,9 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:8080', changeOrigin: false },
       '/healthz': { target: 'http://127.0.0.1:8080', changeOrigin: false },
+      // /auth is a browser navigation, not a fetch, so it has to proxy too — the
+      // GitHub link starts from the SPA on 5173 but must be handled by the API.
+      '/auth': { target: 'http://127.0.0.1:8080', changeOrigin: false },
     },
   },
   build: {
