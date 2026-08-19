@@ -80,6 +80,33 @@ Two very different scopes, worth not conflating:
 Prerequisite either way: the run event log (M4), because before that there is nothing
 a phone could usefully show.
 
+### Repository selection UX
+
+**Deferred at the owner's request. Trigger: whenever the blast radius starts to matter.**
+
+The GitHub App is installed with `repository_selection: all` — 62 repositories, with
+`contents: write` on every one. Convenient to set up, and it means a bug in Civil's
+commit path can write to any repo on the account, not just the one open in the editor.
+
+That is blast radius rather than access control, and it is cheap to narrow: GitHub
+already supports per-repository installation, so this is a settings screen that links
+out to the App's installation page, plus honouring `repository_selection` when listing
+what a project may point at.
+
+### Civil projects in a subdirectory
+
+**Undecided. Blocks using the example as a real GitHub-backed project.**
+
+PRD §6.1 puts `civil.yaml` at the root of a project, and the implementation assumes a
+project *is* a repository. `examples/doc-pipeline` inside `bpriddy/lantern-civil` is a
+valid Civil project living in a subdirectory, and today there is no way to point at it
+— loading the repo root correctly reports that `app.yaml` cannot be read.
+
+Two options: a `root_path` on the project that every source prefixes, or the rule that
+a repository holds exactly one Civil project at its root. The first is a column and a
+prefix; the second is simpler but means the example has to move to its own repository
+before it can be opened through GitHub.
+
 ### Three-way merge on pull
 
 **Trigger: a second person pushing to the same repository.**
