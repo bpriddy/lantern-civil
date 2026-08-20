@@ -273,3 +273,51 @@ code, and reconstructible by rebuilding the image, exactly like the SPA bundle;
 nothing on that disk is the only copy of anything. Pending edits against an example
 still live in Postgres like any other project, so a quickstart is explorable rather
 than read-only — only committing has nowhere to go.
+
+
+---
+
+## 13. Boundaries split from clients — **owner's decision, revises §4's vocabulary**
+
+The PRD's composition altitude had three node types, and its "client" bundled two
+different things: the surfaces the platform generates (api, mcp) and the
+applications people author that consume them (web). The owner split them:
+
+- **`boundary`** — a generated surface over the services it exposes. Sub-types
+  `api` and `mcp`. Carries `exposes` and `invocation` (§8.1's override lives here
+  now, since the boundary is the surface being configured).
+- **`client`** — a consumer: authored code in a directory. Sub-types `web` and
+  `mobile` ("etc." reserved — the vocabulary stays closed, adding a platform is a
+  commit to Civil). Carries `path` and optional `dev`.
+
+Traffic is `client → boundary → service`, checked in both the validator and the
+connect gesture. Nothing routes *to* a client; a client cannot skip the boundary;
+a boundary exposes services, not other boundaries. `frontend` as a spelling is
+gone — the example manifests now say `client: web`.
+
+Two knock-on effects worth recording: the composition node union is a real
+discriminated union again (all four types have distinct `type` values), so delta
+§8's fewest-issues unwrapping matters less; and process triggers stay
+schedule-only at the owner's direction, reaffirming §15 rather than extending it.
+
+**§4, §6.2, §9.2–9.4 of the PRD should be updated to match.**
+
+## 14. A code context is born role-less — **owner's design, refines §5 and §7.2**
+
+A new code node used to arrive pointing at files that did not exist — instantly
+red, and prescriptively function-shaped. The owner's rule: creation must not
+choose between §5's two roles (capability target vs flow participant), because
+the role is derived from wiring, not declared. Utility modules, class
+architectures, harnesses — all legitimate interiors.
+
+So creation scaffolds one docstring-only `__init__.py` and sets only `include`.
+The typed identity handler (one input, one output — §7.2's i and o, in source
+where contracts live) appears at exactly two moments: creating a function-backed
+service, whose contract IS a function; and wiring a flow edge into a code node
+with no entrypoint, at which point being a step is a fact and App.connectEdge
+makes it true in the same gesture. Never over an existing file.
+
+Every node kind that references files now scaffolds them as pending changes on
+creation (agent.yaml + prompt.md, graph files, web/index.html), so no node
+arrives broken. The Add-node dialog is two-step — type, then sub-type — because
+a sub-type is a real decision and defaulting it would decide silently.

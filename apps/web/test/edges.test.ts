@@ -22,19 +22,20 @@ const node = (id: string, type: string, extra: Record<string, unknown> = {}) =>
 // --- composition (PRD 4) ---------------------------------------------------
 
 const composition = [
-  node('web', 'client', { client: 'frontend', path: 'web' }),
-  node('api', 'client', { client: 'api', exposes: [] }),
+  node('web', 'client', { client: 'web', path: 'web' }),
+  node('api', 'boundary', { boundary: 'api', exposes: [] }),
+  node('tools', 'boundary', { boundary: 'mcp', exposes: [] }),
   node('classify', 'service', { impl: { entrypoint: 'a.py' } }),
   node('store', 'service', { impl: { entrypoint: 'b.py' } }),
   node('nightly', 'process', { trigger: { kind: 'schedule', cron: '0 3 * * *' } }),
 ];
 
-test('a client routing to a service is routes-to', () => {
-  assert.equal(proposeCompositionEdge(composition, { source: 'api', target: 'classify' }).kind, 'routes-to');
+test('a client routing to a boundary is routes-to', () => {
+  assert.equal(proposeCompositionEdge(composition, { source: 'web', target: 'api' }).kind, 'routes-to');
 });
 
-test('a frontend routing to a boundary is routes-to', () => {
-  assert.equal(proposeCompositionEdge(composition, { source: 'web', target: 'api' }).kind, 'routes-to');
+test('a boundary routing to a service is routes-to', () => {
+  assert.equal(proposeCompositionEdge(composition, { source: 'api', target: 'classify' }).kind, 'routes-to');
 });
 
 test('one service depending on another is depends-on', () => {
@@ -45,10 +46,20 @@ test('a process depending on a service is depends-on', () => {
   assert.equal(proposeCompositionEdge(composition, { source: 'nightly', target: 'classify' }).kind, 'depends-on');
 });
 
-test('a service may not point at a client', () => {
-  const { kind, refusal } = proposeCompositionEdge(composition, { source: 'classify', target: 'api' });
+test('nothing points at a client, whatever the source', () => {
+  const { kind, refusal } = proposeCompositionEdge(composition, { source: 'classify', target: 'web' });
   assert.equal(kind, '');
-  assert.match(refusal!, /never edge targets/);
+  assert.match(refusal!, /nothing routes to it/);
+});
+
+test('a client may not skip the boundary', () => {
+  const { refusal } = proposeCompositionEdge(composition, { source: 'web', target: 'classify' });
+  assert.match(refusal!, /through a boundary, not directly/);
+});
+
+test('a boundary exposes services, not other boundaries', () => {
+  const { refusal } = proposeCompositionEdge(composition, { source: 'api', target: 'tools' });
+  assert.match(refusal!, /not other boundaries/);
 });
 
 test('nothing routes to a process, because it has a trigger', () => {
@@ -56,9 +67,9 @@ test('nothing routes to a process, because it has a trigger', () => {
   assert.match(refusal!, /trigger, not a caller/);
 });
 
-test('only a service can be depended on', () => {
+test('depending on a process is refused too', () => {
   const { refusal } = proposeCompositionEdge(composition, { source: 'classify', target: 'nightly' });
-  assert.match(refusal!, /Only a service can be depended on/);
+  assert.match(refusal!, /trigger, not a caller/);
 });
 
 // --- dataflow (PRD 5) ------------------------------------------------------

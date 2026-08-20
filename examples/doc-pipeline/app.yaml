@@ -7,18 +7,18 @@ spec:
   nodes:
     - id: web
       type: client
-      client: frontend
+      client: web
       path: web
       dev: "npm run dev"
 
     - id: public-api
-      type: client
-      client: api
+      type: boundary
+      boundary: api
       exposes: [classify, save-record]
 
     - id: agent-tools
-      type: client
-      client: mcp
+      type: boundary
+      boundary: mcp
       exposes: [classify]
 
     - id: classify

@@ -46,8 +46,8 @@ metadata:
   id: ${id}
   name: ${projectName}
 
-# The composition canvas. Three node types live here — clients, services and
-# processes — and edges mean depends-on or routes-to, never dataflow.
+# The composition canvas. Four node types live here — clients, boundaries,
+# services and processes — and edges mean depends-on or routes-to, never dataflow.
 spec:
   nodes: []
   edges: []

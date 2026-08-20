@@ -24,7 +24,11 @@ export interface EdgeProposal {
 const byId = <T extends { id: string }>(nodes: readonly T[]) =>
   new Map(nodes.map((n) => [n.id, n]));
 
-/** PRD 4: routes-to originates at a client; depends-on terminates at a service. */
+/**
+ * Traffic is client → boundary → service (the owner's revision of PRD 4); a
+ * dependency terminates at a service. Everything else is refused in words at the
+ * moment of the gesture.
+ */
 export function proposeCompositionEdge(
   nodes: readonly CompositionNode[],
   connection: Connection,
@@ -34,15 +38,21 @@ export function proposeCompositionEdge(
   const to = index.get(connection.target);
   if (!from || !to) return { kind: '', refusal: 'One end of that connection is not a node.' };
 
-  if (from.type === 'service' && to.type === 'client') {
-    return { kind: '', refusal: 'Traffic flows client → service. Clients are never edge targets of services.' };
+  if (to.type === 'client') {
+    return { kind: '', refusal: 'A client consumes; nothing routes to it.' };
+  }
+  if (to.type === 'process') {
+    return { kind: '', refusal: 'A process has a trigger, not a caller.' };
   }
   if (from.type === 'client') {
-    if (to.type === 'process') {
-      return { kind: '', refusal: 'A process has a trigger, not a caller.' };
-    }
-    return { kind: 'routes-to' };
+    if (to.type === 'boundary') return { kind: 'routes-to' };
+    return { kind: '', refusal: 'A client reaches services through a boundary, not directly.' };
   }
+  if (from.type === 'boundary') {
+    if (to.type === 'service') return { kind: 'routes-to' };
+    return { kind: '', refusal: 'A boundary exposes services, not other boundaries.' };
+  }
+  // service or process → …
   if (to.type !== 'service') {
     return { kind: '', refusal: 'Only a service can be depended on.' };
   }

@@ -166,24 +166,23 @@ function NodeDetail({
   const fields: React.ReactNode[] = [];
   switch (node.type) {
     case 'client':
-      if (node.client === 'frontend') {
-        fields.push(
-          <Field key="path" label="path" value={node.path} onCommit={required('path')} />,
-          <Field key="dev" label="dev" value={node.dev ?? ''} placeholder="dev command" onCommit={optional('dev')} />,
-        );
-      } else {
-        // PRD 4: wiring clients explicitly means the canvas shows what is reachable
-        // from outside. A service with no client attached is not exposed.
-        fields.push(
-          <Field
-            key="exposes"
-            label="exposes"
-            value={node.exposes.join(', ')}
-            placeholder="service ids, comma-separated"
-            onCommit={(v) => onPatch({ exposes: parseList(v) })}
-          />,
-        );
-      }
+      fields.push(
+        <Field key="path" label="path" value={node.path} onCommit={required('path')} />,
+        <Field key="dev" label="dev" value={node.dev ?? ''} placeholder="dev command" onCommit={optional('dev')} />,
+      );
+      break;
+    case 'boundary':
+      // Wiring boundaries explicitly means the canvas shows what is reachable
+      // from outside. A service with no boundary in front of it is not exposed.
+      fields.push(
+        <Field
+          key="exposes"
+          label="exposes"
+          value={node.exposes.join(', ')}
+          placeholder="service ids, comma-separated"
+          onCommit={(v) => onPatch({ exposes: parseList(v) })}
+        />,
+      );
       break;
     case 'service': {
       const kind = 'graph' in node.impl ? 'graph' : 'entrypoint';
@@ -286,7 +285,13 @@ function NodeDetail({
         {/* The id commits a rename, which rewrites every reference to it (PRD 7.1). */}
         <Field label="id" value={node.id} onCommit={onRename} />
         <dt>type</dt>
-        <dd>{node.type === 'client' ? `client · ${node.client}` : node.type}</dd>
+        <dd>
+          {node.type === 'client'
+            ? `client · ${node.client}`
+            : node.type === 'boundary'
+              ? `boundary · ${node.boundary}`
+              : node.type}
+        </dd>
         {fields}
       </dl>
 

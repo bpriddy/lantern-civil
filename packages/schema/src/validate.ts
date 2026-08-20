@@ -278,38 +278,39 @@ export function validateComposition(
       return;
     }
 
-    if (node.client === 'frontend') {
+    if (node.type === 'client') {
+      // A client is authored code in a directory; the directory must be real.
       if (!files.exists(node.path)) {
         s.push({
           jsonPointer: ptr('spec', 'nodes', i, 'path'),
           code: 'unresolved-ref',
-          message: `frontend client "${node.id}" points at "${node.path}", which does not exist`,
+          message: `${node.client} client "${node.id}" points at "${node.path}", which does not exist`,
           nodeId: node.id,
         });
       }
       return;
     }
 
-    // PRD 6.4: `exposes` must name services.
+    // Boundary. PRD 6.4: `exposes` must name services.
     node.exposes.forEach((target, j) => {
       if (serviceIds.has(target)) return;
       s.push({
         jsonPointer: ptr('spec', 'nodes', i, 'exposes', j),
         code: 'exposes-non-service',
         message: byId.has(target)
-          ? `client "${node.id}" exposes "${target}", which is a ${byId.get(target)!.type}, not a service`
-          : `client "${node.id}" exposes "${target}", which is not a node in this composition`,
+          ? `boundary "${node.id}" exposes "${target}", which is a ${byId.get(target)!.type}, not a service`
+          : `boundary "${node.id}" exposes "${target}", which is not a node in this composition`,
         nodeId: node.id,
       });
     });
 
-    // Invocation overrides may only name services this client actually exposes.
+    // Invocation overrides may only name services this boundary actually exposes.
     for (const target of Object.keys(node.invocation ?? {})) {
       if (node.exposes.includes(target)) continue;
       s.push({
         jsonPointer: ptr('spec', 'nodes', i, 'invocation', target),
         code: 'exposes-non-service',
-        message: `client "${node.id}" sets an invocation default for "${target}", which it does not expose`,
+        message: `boundary "${node.id}" sets an invocation default for "${target}", which it does not expose`,
         nodeId: node.id,
       });
     }
@@ -330,15 +331,15 @@ export function validateComposition(
     const to = byId.get(edge.to.node);
     if (!from || !to) return;
 
-    // PRD 6.4: client nodes may not be edge targets of services. Traffic flows
-    // client → service, so the reverse would put a generated boundary downstream
-    // of the thing it exposes. Reported specifically because it is the mistake
-    // most likely to be made by dragging an edge backwards.
-    if (from.type === 'service' && to.type === 'client') {
+    // The owner's revision of PRD 4 (docs/prd-deltas.md): traffic is
+    // client -> boundary -> service. A client is a consumer, so nothing routes TO
+    // one — reported specifically because dragging an edge backwards is the
+    // likeliest way to produce it.
+    if (to.type === 'client') {
       s.push({
         jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
         code: 'client-is-edge-target',
-        message: `edge "${edge.id}" points from service "${from.id}" to client "${to.id}"; clients are never edge targets of services`,
+        message: `edge "${edge.id}" points at client "${to.id}"; a client consumes, nothing routes to it`,
         edgeId: edge.id,
       });
       return;
@@ -347,14 +348,6 @@ export function validateComposition(
     // PRD 4's two relations have different legal endpoints. Carrying `kind`
     // explicitly is what makes these checkable at all.
     if (edge.kind === 'routes-to') {
-      if (from.type !== 'client') {
-        s.push({
-          jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
-          code: 'edge-kind-bad-source',
-          message: `routes-to edge "${edge.id}" starts at ${from.type} "${from.id}"; traffic originates at a client`,
-          edgeId: edge.id,
-        });
-      }
       if (to.type === 'process') {
         s.push({
           jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
@@ -362,15 +355,30 @@ export function validateComposition(
           message: `routes-to edge "${edge.id}" ends at process "${to.id}"; a process has a trigger, not a caller`,
           edgeId: edge.id,
         });
+        return;
+      }
+      const legal =
+        (from.type === 'client' && to.type === 'boundary') ||
+        (from.type === 'boundary' && to.type === 'service');
+      if (!legal) {
+        s.push({
+          jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
+          code: 'edge-kind-bad-source',
+          message:
+            from.type === 'client' && to.type === 'service'
+              ? `routes-to edge "${edge.id}": a client reaches services through a boundary, not directly`
+              : `routes-to edge "${edge.id}" runs ${from.type} → ${to.type}; traffic flows client → boundary → service`,
+          edgeId: edge.id,
+        });
       }
       return;
     }
 
-    if (from.type === 'client') {
+    if (from.type === 'client' || from.type === 'boundary') {
       s.push({
         jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
         code: 'edge-kind-bad-source',
-        message: `depends-on edge "${edge.id}" starts at client "${from.id}"; a client routes to what it exposes rather than depending on it`,
+        message: `depends-on edge "${edge.id}" starts at ${from.type} "${from.id}"; a ${from.type} routes to what it reaches rather than depending on it`,
         edgeId: edge.id,
       });
     }

@@ -98,16 +98,15 @@ export function compositionToFlow(
         detail = `cron ${node.trigger.cron}`;
         break;
       case 'client':
-        if (node.client === 'frontend') {
-          // PRD 4: "an app you build. Descends into Monaco."
-          detail = node.path;
-          descent = codeDescent(context.files, [`${node.path}/**/*`], 'frontend');
-        } else {
-          // api and mcp are generated from io nodes, not authored, so there is no
-          // interior to enter. PRD 4: a service with no client attached is not
-          // exposed, and the picture should say so.
-          detail = node.exposes.length > 0 ? `exposes ${node.exposes.join(', ')}` : 'exposes nothing';
-        }
+        // A client is an app you author. Descends into Monaco.
+        detail = node.path;
+        descent = codeDescent(context.files, [`${node.path}/**/*`], 'client');
+        break;
+      case 'boundary':
+        // Boundaries are generated from what they expose, not authored, so there
+        // is no interior to enter. A service with no boundary in front of it is
+        // not reachable, and the picture should say so.
+        detail = node.exposes.length > 0 ? `exposes ${node.exposes.join(', ')}` : 'exposes nothing';
         break;
     }
 

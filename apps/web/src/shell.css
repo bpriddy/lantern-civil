@@ -399,7 +399,8 @@ body {
 .node-blocked { border-color: var(--warn); }
 
 /* Composition altitude accents. */
-.node-frontend .node-glyph,
+.node-web .node-glyph,
+.node-mobile .node-glyph,
 .node-api .node-glyph,
 .node-mcp .node-glyph { color: #7cc4ff; }
 .node-service .node-glyph { color: var(--ok); }

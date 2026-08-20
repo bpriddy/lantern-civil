@@ -148,17 +148,30 @@ function Face({
 
 const ClientNode = (props: NodeProps) => {
   const data = props.data as NodeData;
-  const flavour = (data.manifest as { client?: string }).client ?? 'client';
-  // PRD 4: api and mcp are generated boundaries, frontend is an app you build.
-  const glyph = flavour === 'frontend' ? '▤' : flavour === 'mcp' ? '⛁' : '⇄';
-  // A frontend originates traffic and is never a target. An api or mcp boundary is
-  // both: a frontend routes to it, and it routes on to the services it exposes.
+  const platform = (data.manifest as { client?: string }).client ?? 'web';
+  // A client is authored code that consumes the application. It originates
+  // traffic and is never a target, so it has no input port.
   return (
     <Face
-      kind={flavour}
-      glyph={glyph}
+      kind={platform}
+      glyph={platform === 'mobile' ? '▯' : '▤'}
       data={data}
-      ports={{ in: flavour !== 'frontend', out: true }}
+      ports={{ in: false, out: true }}
+    />
+  );
+};
+
+const BoundaryNode = (props: NodeProps) => {
+  const data = props.data as NodeData;
+  const surface = (data.manifest as { boundary?: string }).boundary ?? 'api';
+  // A boundary is generated over the services it exposes: clients route to it,
+  // it routes on — both ports.
+  return (
+    <Face
+      kind={surface}
+      glyph={surface === 'mcp' ? '⛁' : '⇄'}
+      data={data}
+      ports={{ in: true, out: true }}
     />
   );
 };
@@ -210,6 +223,7 @@ const SubgraphNode = (props: NodeProps) => {
 
 export const compositionNodeTypes = {
   client: ClientNode,
+  boundary: BoundaryNode,
   service: ServiceNode,
   process: ProcessNode,
 };

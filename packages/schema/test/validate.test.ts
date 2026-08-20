@@ -85,8 +85,8 @@ test('exposes and calls must name services, and say what they hit instead', () =
   const r = validateComposition(
     composition({
       nodes: [
-        { id: 'api', type: 'client', client: 'api', exposes: ['other-api', 'ghost'] },
-        { id: 'other-api', type: 'client', client: 'api', exposes: [] },
+        { id: 'api', type: 'boundary', boundary: 'api', exposes: ['other-api', 'ghost'] },
+        { id: 'other-api', type: 'boundary', boundary: 'api', exposes: [] },
         { id: 'cron', type: 'process', trigger: { kind: 'schedule', cron: '0 3 * * *' }, calls: ['api'] },
       ],
     }),
@@ -94,44 +94,48 @@ test('exposes and calls must name services, and say what they hit instead', () =
     emptyFiles,
   );
   assert.deepEqual(codes(r.diagnostics), ['calls-non-service', 'exposes-non-service', 'exposes-non-service']);
-  assert.match(r.diagnostics[0]!.message, /is a client, not a service/);
+  assert.match(r.diagnostics[0]!.message, /is a boundary, not a service/);
   assert.match(r.diagnostics[1]!.message, /not a node in this composition/);
 });
 
-test('a client may not be the edge target of a service', () => {
+test('a client may not be an edge target at all', () => {
+  // Dragging an edge backwards is the likeliest way to point at a consumer, so it
+  // gets its own diagnostic whatever the source type is.
   const r = validateComposition(
     composition({
       nodes: [
         { id: 'svc', type: 'service', impl: { entrypoint: 'src/s.py' } },
-        { id: 'api', type: 'client', client: 'api', exposes: ['svc'] },
+        { id: 'app', type: 'client', client: 'web', path: 'web' },
       ],
-      edges: [{ id: 'e1', kind: 'routes-to', from: { node: 'svc' }, to: { node: 'api' } }],
+      edges: [{ id: 'e1', kind: 'routes-to', from: { node: 'svc' }, to: { node: 'app' } }],
     }),
     'app.yaml',
-    MemoryFiles.from({ 'src/s.py': '' }),
+    MemoryFiles.from({ 'src/s.py': '', 'web/index.html': '' }),
   );
   assert.deepEqual(codes(r.diagnostics), ['client-is-edge-target']);
   assert.equal(r.diagnostics[0]!.edgeId, 'e1');
 });
 
 test('composition edge kinds have different legal endpoints', () => {
-  const files = MemoryFiles.from({ 'src/a.py': '', 'src/b.py': '' });
+  const files = MemoryFiles.from({ 'src/a.py': '', 'src/b.py': '', 'web/index.html': '' });
   const nodes = [
-    { id: 'api', type: 'client', client: 'api', exposes: ['a'] },
+    { id: 'app', type: 'client', client: 'web', path: 'web' },
+    { id: 'api', type: 'boundary', boundary: 'api', exposes: ['a'] },
     { id: 'a', type: 'service', impl: { entrypoint: 'src/a.py' } },
     { id: 'b', type: 'service', impl: { entrypoint: 'src/b.py' } },
     { id: 'cron', type: 'process', trigger: { kind: 'schedule', cron: '0 3 * * *' } },
   ];
 
-  // The shapes that should be accepted: a client routing to a service, and one
-  // service depending on another.
+  // The whole legal route: client -> boundary -> service, and dependencies
+  // terminating at services.
   const good = validateComposition(
     composition({
       nodes,
       edges: [
-        { id: 'ok1', kind: 'routes-to', from: { node: 'api' }, to: { node: 'a' } },
-        { id: 'ok2', kind: 'depends-on', from: { node: 'a' }, to: { node: 'b' } },
-        { id: 'ok3', kind: 'depends-on', from: { node: 'cron' }, to: { node: 'a' } },
+        { id: 'ok1', kind: 'routes-to', from: { node: 'app' }, to: { node: 'api' } },
+        { id: 'ok2', kind: 'routes-to', from: { node: 'api' }, to: { node: 'a' } },
+        { id: 'ok3', kind: 'depends-on', from: { node: 'a' }, to: { node: 'b' } },
+        { id: 'ok4', kind: 'depends-on', from: { node: 'cron' }, to: { node: 'a' } },
       ],
     }),
     'app.yaml',
@@ -143,24 +147,41 @@ test('composition edge kinds have different legal endpoints', () => {
     composition({
       nodes,
       edges: [
-        { id: 'x1', kind: 'routes-to', from: { node: 'a' }, to: { node: 'b' } },
-        { id: 'x2', kind: 'routes-to', from: { node: 'api' }, to: { node: 'cron' } },
-        { id: 'x3', kind: 'depends-on', from: { node: 'api' }, to: { node: 'a' } },
-        { id: 'x4', kind: 'depends-on', from: { node: 'a' }, to: { node: 'cron' } },
+        // A client skipping the boundary, straight to a service.
+        { id: 'x1', kind: 'routes-to', from: { node: 'app' }, to: { node: 'a' } },
+        // Traffic originating at a service.
+        { id: 'x2', kind: 'routes-to', from: { node: 'a' }, to: { node: 'b' } },
+        // Routing into a process.
+        { id: 'x3', kind: 'routes-to', from: { node: 'api' }, to: { node: 'cron' } },
+        // A boundary depending rather than routing.
+        { id: 'x4', kind: 'depends-on', from: { node: 'api' }, to: { node: 'a' } },
+        // Depending on something that is not a service.
+        { id: 'x5', kind: 'depends-on', from: { node: 'a' }, to: { node: 'cron' } },
       ],
     }),
     'app.yaml',
     files,
   );
+  // codes() sorts, so this is the multiset rather than the emission order.
   assert.deepEqual(codes(bad.diagnostics), [
+    'edge-kind-bad-source',
     'edge-kind-bad-source',
     'edge-kind-bad-source',
     'edge-kind-bad-target',
     'edge-kind-bad-target',
   ]);
+  // And each refusal names the actual rule it broke.
   assert.match(
-    bad.diagnostics.find((d) => d.edgeId === 'x2')!.message,
+    bad.diagnostics.find((d) => d.edgeId === 'x1')!.message,
+    /through a boundary, not directly/,
+  );
+  assert.match(
+    bad.diagnostics.find((d) => d.edgeId === 'x3')!.message,
     /a process has a trigger, not a caller/,
+  );
+  assert.match(
+    bad.diagnostics.find((d) => d.edgeId === 'x4')!.message,
+    /routes to what it reaches/,
   );
 });
 

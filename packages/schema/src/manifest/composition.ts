@@ -2,46 +2,49 @@ import { z } from 'zod';
 import { zApiVersion, zId, zLayout, zMetadata, zRelPath } from './common.js';
 
 /**
- * PRD 4 — the composition canvas. Three node types: client, service, process.
- * Edges here mean depends-on / routes-to and NEVER dataflow. Nothing executes at
- * this altitude; Run has no meaning here.
+ * PRD 4 — the composition canvas, as revised by the owner (docs/prd-deltas.md):
+ * four node types. Clients consume, boundaries expose, services behave, processes
+ * initiate. Edges here mean routes-to / depends-on and NEVER dataflow. Nothing
+ * executes at this altitude; Run has no meaning here.
+ *
+ * The split the PRD did not have: its "client" bundled the things that consume the
+ * application (web, mobile) with the generated surfaces they consume through (api,
+ * mcp). Those are different in every way that matters — a boundary exposes
+ * services and is generated; a client is authored code that lives in a directory —
+ * so they are two types, not three flavours of one.
  */
 
 /**
- * PRD 8.1: sync-vs-async is a surface default configured on the client node,
- * not a second implementation. Omitted means Civil infers it from whether an
- * agent appears on the flow path, transitively. Present means the author
- * overrode the inference for that service.
- *
- * The PRD states this belongs on the client node but does not fix the syntax;
- * this shape is ours. See docs/prd-deltas.md.
+ * PRD 8.1: sync-vs-async is a surface default configured where the surface is —
+ * the boundary node. Omitted means Civil infers it from whether an agent appears
+ * on the flow path, transitively. Present means the author overrode the inference.
  */
 export const zInvocation = z.record(zId, z.enum(['sync', 'async'])).optional();
 
-const zClientBase = { id: zId, type: z.literal('client') } as const;
+/**
+ * A generated surface over the services it exposes. `api` speaks HTTP; `mcp`
+ * exposes the same services as tools an agent may call (PRD 9.2, 9.3).
+ */
+export const zBoundaryNode = z.object({
+  id: zId,
+  type: z.literal('boundary'),
+  boundary: z.enum(['api', 'mcp']),
+  exposes: z.array(zId).default([]),
+  invocation: zInvocation,
+});
 
-export const zFrontendClient = z.object({
-  ...zClientBase,
-  client: z.literal('frontend'),
+/**
+ * A consumer of the application: authored code in a directory, reaching services
+ * only through a boundary. `web` is built and served (PRD 9.4); `mobile` is built
+ * and shipped. The vocabulary is closed — adding a platform is a commit to Civil.
+ */
+export const zClientNode = z.object({
+  id: zId,
+  type: z.literal('client'),
+  client: z.enum(['web', 'mobile']),
   path: zRelPath,
   dev: z.string().min(1).optional(),
 });
-
-export const zApiClient = z.object({
-  ...zClientBase,
-  client: z.literal('api'),
-  exposes: z.array(zId).default([]),
-  invocation: zInvocation,
-});
-
-export const zMcpClient = z.object({
-  ...zClientBase,
-  client: z.literal('mcp'),
-  exposes: z.array(zId).default([]),
-  invocation: zInvocation,
-});
-
-export const zClientNode = z.discriminatedUnion('client', [zFrontendClient, zApiClient, zMcpClient]);
 
 /**
  * PRD 4: a service implemented as a graph and one implemented as a function are
@@ -58,7 +61,7 @@ export const zServiceNode = z.object({
   impl: zServiceImpl,
 });
 
-/** PRD 15: schedule triggers only in v1. Queues and events later. */
+/** PRD 15, reaffirmed by the owner: schedule triggers only. */
 export const zTrigger = z.object({
   kind: z.literal('schedule'),
   cron: z.string().min(1),
@@ -71,28 +74,18 @@ export const zProcessNode = z.object({
   calls: z.array(zId).default([]),
 });
 
-/**
- * Not a discriminated union on `type`: all three client flavors share type "client",
- * and zod requires discriminator values to be distinct. Clients discriminate on
- * `client` among themselves; the outer union is plain. validate.ts compensates by
- * unwrapping union errors to the best-matching branch so diagnostics still land on
- * the offending field rather than listing every branch's complaints.
- */
-export const zCompositionNode = z.union([
-  zFrontendClient,
-  zApiClient,
-  zMcpClient,
+export const zCompositionNode = z.discriminatedUnion('type', [
+  zClientNode,
+  zBoundaryNode,
   zServiceNode,
   zProcessNode,
 ]);
 
 /**
- * PRD 4 names two relations at this altitude. They are carried explicitly rather
- * than inferred from endpoint types so the canvas can draw them differently and a
- * service-to-service dependency has somewhere to live. See docs/prd-deltas.md.
+ * Two relations, carried explicitly so they are checkable (docs/prd-deltas.md):
  *
- * `routes-to` — traffic flows this way. Originates at a client.
- * `depends-on` — this needs that to exist. Originates at a service or process.
+ * `routes-to` — traffic flows this way: client → boundary, boundary → service.
+ * `depends-on` — this needs that to exist: service or process → service.
  *
  * Neither is dataflow. Nothing executes at this altitude (PRD 4).
  */
@@ -121,5 +114,6 @@ export type CompositionNode = z.infer<typeof zCompositionNode>;
 export type CompositionEdge = z.infer<typeof zCompositionEdge>;
 export type CompositionEdgeKind = z.infer<typeof zCompositionEdgeKind>;
 export type ServiceNode = z.infer<typeof zServiceNode>;
+export type BoundaryNode = z.infer<typeof zBoundaryNode>;
 export type ClientNode = z.infer<typeof zClientNode>;
 export type ProcessNode = z.infer<typeof zProcessNode>;

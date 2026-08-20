@@ -559,8 +559,78 @@ function Workspace({ me }: { me: Me }) {
     }
   }, [activeId, refresh, report]);
 
+  /**
+   * Drawing an edge, with one added meaning: a flow edge is the moment a code
+   * context becomes a step (PRD 5), and a step must have a callable boundary. If an
+   * endpoint is a code node with no entrypoint, the gesture makes that true — a
+   * typed identity handler written beside the node's files, and the field set, in
+   * the same application. Never over anything that exists: if main.py is already
+   * there it was written by someone with intentions, and the inspector is where an
+   * entrypoint gets chosen deliberately.
+   */
+  const connectEdge = useCallback(
+    async (edge: Record<string, unknown>) => {
+      const ops: ManifestOp[] = [];
+
+      if (edge['kind'] === 'flow' && activeId && bundle && manifestPath) {
+        const graph = bundle.graphs[manifestPath];
+        const known = new Set([...bundle.files, ...bundle.pending.map((p) => p.path)]);
+
+        for (const end of ['from', 'to'] as const) {
+          const endpoint = (edge[end] as { node?: string } | undefined)?.node;
+          const node = graph?.spec.nodes.find((n) => n.id === endpoint);
+          if (!node || node.type !== 'code' || node.entrypoint) continue;
+
+          // The node's own directory: where its include already points, or a fresh
+          // one named after it when the include list is empty.
+          const glob = node.include[0];
+          const starAt = glob ? glob.search(/[*?[]/) : -1;
+          const dir = (starAt > 0 ? glob!.slice(0, starAt) : `src/${node.id.replace(/-/g, '_')}/`)
+            .replace(/\/+$/, '');
+          const path = `${dir}/main.py`;
+          if (known.has(path)) continue;
+
+          try {
+            const { codeStub } = await import('./panes/AddNode.js');
+            await saveFile(activeId, path, codeStub(node.id));
+          } catch (error) {
+            report({ title: 'Connect', detail: (error as Error).message, refused: true });
+            return;
+          }
+          const patch: Record<string, unknown> = { entrypoint: path };
+          if (node.include.length === 0) patch['include'] = [`${dir}/**/*.py`];
+          ops.push({ op: 'updateNode', id: node.id, patch });
+        }
+      }
+
+      ops.push({ op: 'addEdge', edge });
+      await runOps(ops, 'Connect', { quiet: true });
+    },
+    [activeId, bundle, manifestPath, runOps, report],
+  );
+
   const addNode = useCallback(
-    async (node: Record<string, unknown>) => {
+    async (node: Record<string, unknown>, scaffold: { path: string; content: string }[]) => {
+      // A node whose references point at nothing arrives broken — unresolved
+      // entrypoint, unresolved ref — so the files it needs are written first, as
+      // pending changes. For a code context that file is a typed identity function:
+      // the least prescriptive thing that still HAS an input and an output, since
+      // PRD 7.2 keeps i and o in the source rather than in configuration. Paths
+      // that already exist are left alone — a node may point at real code.
+      if (activeId) {
+        const existing = new Set([
+          ...(bundle?.files ?? []),
+          ...(bundle?.pending.map((p) => p.path) ?? []),
+        ]);
+        try {
+          for (const file of scaffold) {
+            if (!existing.has(file.path)) await saveFile(activeId, file.path, file.content);
+          }
+        } catch (error) {
+          report({ title: 'Add node', detail: (error as Error).message, refused: true });
+          return;
+        }
+      }
       await runOps(
         [
           { op: 'addNode', node },
@@ -571,7 +641,7 @@ function Workspace({ me }: { me: Me }) {
         'Add node',
       );
     },
-    [runOps],
+    [runOps, activeId, bundle, report],
   );
 
 
@@ -618,7 +688,7 @@ function Workspace({ me }: { me: Me }) {
               ? (bundle.graphs[current.path]?.spec.nodes ?? []).map((n) => n.id)
               : (bundle.composition?.spec.nodes ?? []).map((n) => n.id)
           }
-          onAdd={(node) => void addNode(node)}
+          onAdd={(node, scaffold) => void addNode(node, scaffold)}
           onClose={() => setAddNodeOpen(false)}
         />
       ) : null}
@@ -758,7 +828,7 @@ function Workspace({ me }: { me: Me }) {
             onAscend={ascend}
             onSelect={setSelectedId}
             onSelectEdge={setSelectedEdgeId}
-            onConnect={(edge) => void runOps([{ op: 'addEdge', edge }], 'Connect', { quiet: true })}
+            onConnect={(edge) => void connectEdge(edge)}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
           />

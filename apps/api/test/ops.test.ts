@@ -251,7 +251,7 @@ test('a scaffolded project survives more than one node', () => {
   stillParses(first, 'first node');
 
   const second = applyOps(first, [
-    { op: 'addNode', node: { id: 'public-api', type: 'client', client: 'api', exposes: ['classify'] } },
+    { op: 'addNode', node: { id: 'public-api', type: 'boundary', boundary: 'api', exposes: ['classify'] } },
     { op: 'setLayout', id: 'public-api', x: 40, y: 120 },
   ]).source;
 
@@ -543,8 +543,8 @@ test('renaming a node rewrites every reference in one application', () => {
     'spec:',
     '  nodes:',
     '    - id: public-api',
-    '      type: client',
-    '      client: api',
+    '      type: boundary',
+    '      boundary: api',
     '      exposes: [classify, save-record]',
     '      invocation:',
     '        classify: async',
