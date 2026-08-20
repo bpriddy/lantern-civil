@@ -19,18 +19,26 @@ export type CommandId =
   | 'project.settings'
   | 'canvas.fit'
   | 'node.add'
+  | 'canvas.delete'
+  | 'edit.undo'
   | 'canvas.clearSelection'
   | 'file.save'
+  | 'project.diff'
   | 'project.commit'
   | 'project.sync'
   | 'help.keys';
 
 export interface CommandContext {
-  /** Where the user is, so a command can refuse when it does not apply. */
-  where: 'home' | 'canvas' | 'code';
+  /** Where the user is, so a command can refuse when it does not apply. `diff` is
+   *  the review panel: a modal, so canvas commands must not fire underneath it —
+   *  mutating the project while its diff is on screen is how a commit message gets
+   *  written against a diff that is no longer true. */
+  where: 'home' | 'canvas' | 'code' | 'diff';
   hasSelection: boolean;
   pendingCount: number;
   canCommit: boolean;
+  /** Whether the op history has anything to walk back. */
+  canUndo: boolean;
   depth: number;
 }
 
@@ -84,6 +92,9 @@ export function matches(chord: string, event: KeyboardEvent): boolean {
   // Shift is implied by punctuation like `?`, so it is only checked when the binding
   // asks for it — otherwise "shift+/" would never match a keyboard that types ? that way.
   if (wantShift && !event.shiftKey) return false;
+  // But for plain letters and digits an unrequested Shift is a different chord:
+  // without this, Cmd+Shift+Z — redo everywhere else — ran undo.
+  if (!wantShift && event.shiftKey && /^[a-z0-9]$/.test(key)) return false;
 
   return event.key.toLowerCase() === key.toLowerCase();
 }
@@ -141,11 +152,38 @@ export const COMMANDS: readonly Command[] = [
     enabled: (c) => c.where === 'canvas',
   },
   {
+    id: 'canvas.delete',
+    title: 'Delete',
+    description:
+      'Remove the selected node or edge from the canvas. A removed node takes its ' +
+      'edges with it — a manifest is never left pointing at a node that is not there.',
+    keys: ['backspace', 'delete'],
+    enabled: (c) => c.where === 'canvas' && c.hasSelection,
+  },
+  {
+    id: 'edit.undo',
+    title: 'Undo',
+    description:
+      'Walk the last canvas edit back — the file returns to what it said before. ' +
+      'Inside a file, Monaco keeps its own undo.',
+    keys: ['mod+z'],
+    enabled: (c) => c.where === 'canvas' && c.canUndo,
+  },
+  {
     id: 'file.save',
     title: 'Save',
     description: 'Write the open file as a pending change. Nothing is committed.',
     keys: ['mod+s'],
     enabled: (c) => c.where === 'code',
+  },
+  {
+    id: 'project.diff',
+    title: 'Review changes',
+    description:
+      'Show every pending change as a diff against the repository, before anything ' +
+      'is committed.',
+    keys: ['mod+d'],
+    enabled: (c) => c.where !== 'home' && c.pendingCount > 0,
   },
   {
     id: 'project.commit',

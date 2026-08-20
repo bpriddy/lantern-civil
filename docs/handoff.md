@@ -31,23 +31,19 @@ handoff, because it will be believed.
 > 4. `docs/roadmap.md` — what is deferred, gated, or deliberately unresolved, each with
 >    the trigger that should bring it back.
 >
-> **Where we are:** M0–M2 are done. M3 (the editor: ops, canvas gestures, Monaco,
-> commit flow) is most of the way there — `addNode`, `setLayout`, `addEdge`, and
-> `removeEdge` all work, nodes drag, edges draw and delete. `docs/roadmap.md` §
-> "Finishing M3" lists exactly what remains and why each piece is not trivial.
+> **Where we are:** M0–M3 are done. The full PRD §7.1 op vocabulary works (add/
+> remove/update/rename node, add/remove/update edge, setLayout), the inspector is
+> editable and commits ops, the commit indicator opens a Monaco diff preview, undo
+> walks canvas edits back, and every gesture — including drag-to-connect — has been
+> verified in a browser. `docs/roadmap.md` § "M3 — done" lists the small things left
+> open on purpose (redo, an updateEdge gesture, invocation fields).
 >
-> **First task, before anything else:** open the app locally with `./scripts/dev.sh`,
-> open the doc-pipeline example, and drag a connection between two node ports with a
-> real mouse. The edge code is unit-tested and typechecked but the gesture itself was
-> never confirmed by hand — React Flow uses pointer capture and does not respond to
-> synthesised events, so browser automation could not verify it. Expect a toast
-> reading "Connected X → Y", the pending count to increment, and a new edge in
-> `app.yaml`. If it works, say so and move on to `removeNode`. If it does not, that
-> is the bug to fix.
->
-> **Then:** finish M3 in the order given in `docs/roadmap.md` — `removeNode` with
-> `cascadeEdges`, `updateNode`, `renameNode` with `updateReferences`, the diff
-> preview, undo.
+> **Next:** M4, the runtime — but read the sandbox gate in `docs/roadmap.md` FIRST.
+> Before the runner executes its first user-authored code node, execution must be
+> isolated, or signup closed, or the exposure accepted explicitly by me. Do not let
+> M4's exit criterion sail past that decision. PRD §14: use M1–M3 for real before
+> starting M4 — so expect me to spend time authoring an app and to arrive with
+> editor bugs before we build the runner.
 >
 > **How I work:**
 >

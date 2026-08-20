@@ -198,9 +198,16 @@ export async function saveFile(projectId: string, path: string, content: string)
 }
 
 export async function revertFile(projectId: string, path: string): Promise<void> {
-  await apiFetch(`/api/projects/${projectId}/pending?path=${encodeURIComponent(path)}`, {
-    method: 'DELETE',
-  });
+  const response = await apiFetch(
+    `/api/projects/${projectId}/pending?path=${encodeURIComponent(path)}`,
+    { method: 'DELETE' },
+  );
+  // fetch resolves on any HTTP status. Without this check a failed revert — expired
+  // session, row already gone — reported success, and undo told the user it had
+  // undone something it had not.
+  if (!response.ok && response.status !== 404) {
+    throw new Error(await describeFailure(response, 'could not revert'));
+  }
 }
 
 export interface CommitResult {
@@ -260,7 +267,19 @@ export type ManifestOp =
   | { op: 'addNode'; node: Record<string, unknown> }
   | { op: 'setLayout'; id: string; x: number; y: number }
   | { op: 'addEdge'; edge: Record<string, unknown> }
-  | { op: 'removeEdge'; id: string };
+  | { op: 'removeEdge'; id: string }
+  | { op: 'removeNode'; id: string; cascadeEdges?: boolean }
+  | { op: 'updateNode'; id: string; patch: Record<string, unknown> }
+  | { op: 'updateEdge'; id: string; patch: Record<string, unknown> }
+  | { op: 'renameNode'; from: string; to: string; updateReferences?: boolean };
+
+export interface ApplyOutcome {
+  summary: string;
+  /** The file before the ops, and whether that state was itself a pending edit —
+   *  exactly what undoing this application needs. */
+  previous: string;
+  hadPending: boolean;
+}
 
 /**
  * PRD 7.1: the client never constructs YAML. It posts ops and the server applies
@@ -270,14 +289,33 @@ export async function applyOps(
   projectId: string,
   manifestPath: string,
   ops: ManifestOp[],
-): Promise<{ summary: string }> {
+): Promise<ApplyOutcome> {
   const response = await apiFetch(`/api/projects/${projectId}/ops`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path: manifestPath, ops }),
   });
   if (!response.ok) throw new Error(await describeFailure(response, 'could not apply'));
-  return (await response.json()) as { summary: string };
+  return (await response.json()) as ApplyOutcome;
+}
+
+export interface DiffFile {
+  path: string;
+  kind: 'add' | 'modify' | 'delete' | 'rename';
+  /** What HEAD says, or null when the file is new. */
+  base: string | null;
+  /** What the pending edit says, or null when the change is a delete. */
+  current: string | null;
+}
+
+/** PRD 7: the commit indicator shows a count and a diff preview. This is the preview. */
+export async function fetchDiff(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<{ branch: string; files: DiffFile[] }> {
+  const response = await apiFetch(`/api/projects/${projectId}/diff`, signal ? { signal } : {});
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not load the diff'));
+  return (await response.json()) as { branch: string; files: DiffFile[] };
 }
 
 

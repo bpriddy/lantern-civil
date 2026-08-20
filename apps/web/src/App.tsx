@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, type Altitude } from './canvas/Editor.js';
 /**
  * Monaco is about a megabyte gzipped — more than the rest of Civil combined. Loading
@@ -7,6 +7,10 @@ import { Editor, type Altitude } from './canvas/Editor.js';
  */
 const CodeContext = lazy(() =>
   import('./code/CodeContext.js').then((m) => ({ default: m.CodeContext })),
+);
+/** The diff panel embeds Monaco's diff editor, so it arrives with the same chunk. */
+const DiffPanel = lazy(() =>
+  import('./panes/DiffPanel.js').then((m) => ({ default: m.DiffPanel })),
 );
 import { CommitBar } from './panes/CommitBar.js';
 import { KeyHelp } from './commands/KeyHelp.js';
@@ -32,11 +36,29 @@ import {
   fetchBundle,
   fetchExamples,
   fetchProjects,
+  revertFile,
+  saveFile,
   syncProject,
   type ManifestOp,
   type ProjectBundle,
   type ProjectSummary,
 } from './project.js';
+
+/**
+ * One undoable step: which file an op batch touched, what the file said before it,
+ * and whether that earlier state was itself a pending edit. Undo either restores the
+ * earlier pending content or, when the batch was the first thing to touch the file,
+ * discards the pending row so the file falls back to HEAD.
+ */
+interface UndoEntry {
+  path: string;
+  previous: string;
+  hadPending: boolean;
+  summary: string;
+}
+
+/** Enough for a long session of canvas edits; manifests are small. */
+const UNDO_LIMIT = 50;
 
 export function App(): React.ReactElement {
   const [session, setSession] = useState<SessionState>({ status: 'loading' });
@@ -110,8 +132,21 @@ function Workspace({ me }: { me: Me }) {
    */
   const [stack, setStack] = useState<Altitude[]>([{ kind: 'composition', label: 'app' }]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const [commitNote, setCommitNote] = useState<string | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+
+  /**
+   * The op history, most recent last. In a ref because pushing must not re-render;
+   * undoDepth mirrors the length so `enabled(canUndo)` sees changes.
+   */
+  const undoStack = useRef<UndoEntry[]>([]);
+  const [undoDepth, setUndoDepth] = useState(0);
+  const clearUndo = useCallback(() => {
+    undoStack.current = [];
+    setUndoDepth(0);
+  }, []);
 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(
@@ -158,13 +193,16 @@ function Workspace({ me }: { me: Me }) {
           ? `Committed ${result.files} file(s) on top of newer work.`
           : `Committed ${result.files} file(s).`,
       );
+      // Undo stops at a commit. Walking back past one would resurrect pre-commit
+      // text as a new pending change — an edit war with your own history.
+      clearUndo();
       await refresh();
     } catch (error) {
       setCommitNote((error as Error).message);
     } finally {
       setCommitting(false);
     }
-  }, [activeId, refresh]);
+  }, [activeId, refresh, clearUndo]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -197,6 +235,10 @@ function Workspace({ me }: { me: Me }) {
         setLoad({ status: 'ready', bundle });
         setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
         setSelectedId(null);
+        setSelectedEdgeId(null);
+        setDiffOpen(false);
+        // History is per project; entries name files in the one being left.
+        clearUndo();
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
@@ -226,6 +268,7 @@ function Workspace({ me }: { me: Me }) {
 
   const openFile = useCallback((path: string) => {
     setSelectedId(null);
+    setSelectedEdgeId(null);
     setStack((current) => {
       const label = path.split('/').pop() ?? path;
       const top = current[current.length - 1];
@@ -253,16 +296,19 @@ function Workspace({ me }: { me: Me }) {
 
   const descend = useCallback((altitude: Altitude) => {
     setSelectedId(null);
+    setSelectedEdgeId(null);
     setStack((s) => [...s, altitude]);
   }, []);
 
   const ascend = useCallback(() => {
     setSelectedId(null);
+    setSelectedEdgeId(null);
     setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
   }, []);
 
   const ascendTo = useCallback((index: number) => {
     setSelectedId(null);
+    setSelectedEdgeId(null);
     setStack((s) => s.slice(0, index + 1));
   }, []);
 
@@ -278,10 +324,14 @@ function Workspace({ me }: { me: Me }) {
    */
   const { effect, report } = useCommands(
     {
-      where: atHome ? 'home' : current.kind === 'code' ? 'code' : 'canvas',
-      hasSelection: selectedId !== null,
+      // The diff panel is a location, not an overlay: while it is open, canvas
+      // commands must not fire underneath it, or the diff on screen stops being
+      // the diff that commits.
+      where: atHome ? 'home' : diffOpen ? 'diff' : current.kind === 'code' ? 'code' : 'canvas',
+      hasSelection: selectedId !== null || selectedEdgeId !== null,
       pendingCount,
       canCommit,
+      canUndo: undoDepth > 0,
       depth: stack.length - 1,
     },
     {
@@ -300,9 +350,40 @@ function Workspace({ me }: { me: Me }) {
         return `Left ${leaving.label}.`;
       },
       'canvas.clearSelection': () => {
-        if (!selectedId) return undefined;
+        if (!selectedId && !selectedEdgeId) return undefined;
         setSelectedId(null);
+        setSelectedEdgeId(null);
         return 'Selection cleared.';
+      },
+      'canvas.delete': () => {
+        if (selectedId) {
+          const leaving = selectedId;
+          void runOps([{ op: 'removeNode', id: leaving }], 'Delete').then((ok) => {
+            // Only if it is still this selection: the user may have moved on while
+            // the op was in flight, and their new selection is not ours to clear.
+            if (ok) setSelectedId((cur) => (cur === leaving ? null : cur));
+          });
+          return `Removing “${leaving}”…`;
+        }
+        if (selectedEdgeId) {
+          const leaving = selectedEdgeId;
+          void runOps([{ op: 'removeEdge', id: leaving }], 'Delete').then((ok) => {
+            if (ok) setSelectedEdgeId((cur) => (cur === leaving ? null : cur));
+          });
+          return `Disconnecting “${leaving}”…`;
+        }
+        return undefined;
+      },
+      'edit.undo': () => {
+        const entry = undoStack.current[undoStack.current.length - 1];
+        if (!entry) return undefined;
+        void undoLast();
+        return `Undoing: ${entry.summary}`;
+      },
+      'project.diff': () => {
+        if (pendingCount === 0) return undefined;
+        setDiffOpen(true);
+        return 'Every pending change, as a diff, before it commits.';
       },
       'project.sync': () => {
         if (!canCommit) return undefined;
@@ -336,9 +417,11 @@ function Workspace({ me }: { me: Me }) {
       'project.commit': () => {
         if (pendingCount === 0) return undefined;
         setPickerOpen(false);
-        // Committing needs a message, so the shortcut opens the prompt rather than
-        // committing silently — PRD 7 makes commits explicit.
-        return `${pendingCount} pending change${pendingCount === 1 ? '' : 's'} ready. Add a message to commit.`;
+        // Committing needs a message and deserves the diff in front of it, so the
+        // shortcut opens the review panel rather than committing silently — PRD 7
+        // makes commits explicit and gives the indicator a diff preview.
+        setDiffOpen(true);
+        return `${pendingCount} pending change${pendingCount === 1 ? '' : 's'}. Review, add a message, commit.`;
       },
     },
   );
@@ -395,12 +478,16 @@ function Workspace({ me }: { me: Me }) {
     if (!activeId) return;
     try {
       const { summary, moved } = await syncProject(activeId);
-      if (moved) await refresh();
+      if (moved) {
+        // The head this history was recorded against is gone.
+        clearUndo();
+        await refresh();
+      }
       report({ title: 'Sync', detail: summary });
     } catch (error) {
       report({ title: 'Sync', detail: (error as Error).message, refused: true });
     }
-  }, [activeId, refresh, report]);
+  }, [activeId, refresh, report, clearUndo]);
 
   /**
    * Which manifest the current canvas is a view of. Every op needs it, and getting it
@@ -414,18 +501,53 @@ function Workspace({ me }: { me: Me }) {
   }, [stack, load]);
 
   const runOps = useCallback(
-    async (ops: ManifestOp[], title: string) => {
-      if (!activeId || !manifestPath) return;
+    async (ops: ManifestOp[], title: string): Promise<boolean> => {
+      if (!activeId || !manifestPath) return false;
       try {
-        const { summary } = await applyOps(activeId, manifestPath, ops);
+        const { summary, previous, hadPending } = await applyOps(activeId, manifestPath, ops);
+        // Every application is one undoable step, whatever gesture produced it.
+        undoStack.current.push({ path: manifestPath, previous, hadPending, summary });
+        if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
+        setUndoDepth(undoStack.current.length);
         await refresh();
         report({ title, detail: summary });
+        return true;
       } catch (error) {
         report({ title, detail: (error as Error).message, refused: true });
+        return false;
       }
     },
     [activeId, manifestPath, refresh, report],
   );
+
+  /**
+   * PRD 7 lists Cmd+Z. An op's inverse is not computed — the file's previous text was
+   * kept, and restoring a whole small manifest is simpler and safer than reversing a
+   * splice. When the op was the first touch on the file, the pending row itself is
+   * discarded, so undoing everything returns the project to "no pending changes".
+   */
+  const undoLast = useCallback(async () => {
+    const entry = undoStack.current.pop();
+    setUndoDepth(undoStack.current.length);
+    if (!entry || !activeId) return;
+    try {
+      if (entry.hadPending) {
+        await saveFile(activeId, entry.path, entry.previous);
+      } else {
+        await revertFile(activeId, entry.path);
+      }
+      // What was selected may be what was just unmade; a ghost selection keeps
+      // Delete enabled against a node that is no longer there.
+      setSelectedId(null);
+      setSelectedEdgeId(null);
+      await refresh();
+      report({ title: 'Undo', detail: `Undid: ${entry.summary}` });
+    } catch (error) {
+      // The entry is already popped; putting it back would retry against whatever
+      // just failed. Report and leave the file as it is.
+      report({ title: 'Undo', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, refresh, report]);
 
   const addNode = useCallback(
     async (node: Record<string, unknown>) => {
@@ -464,6 +586,20 @@ function Workspace({ me }: { me: Me }) {
     <div className="shell">
       <Toast effect={effect} />
       {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
+      {diffOpen && bundle ? (
+        <Suspense fallback={null}>
+          <DiffPanel
+            projectId={bundle.project.id}
+            // Asserted, not assumed: `=== 'github'` fails closed when the field is
+            // missing — an older server, a shape change — rather than offering to
+            // commit something with no repository behind it.
+            committable={bundle.project.sourceKind === 'github'}
+            committing={committing}
+            onCommit={(message) => void commit(message)}
+            onClose={() => setDiffOpen(false)}
+          />
+        </Suspense>
+      ) : null}
       {addNodeOpen && bundle ? (
         <AddNode
           altitude={current.kind === 'graph' ? 'graph' : 'composition'}
@@ -542,15 +678,11 @@ function Workspace({ me }: { me: Me }) {
           {canCommit ? <span className="chip-sync">⟳</span> : null}
         </button>
         {/* PRD 7: commits are explicit, and the indicator shows a count. */}
+        {/* PRD 7: the indicator shows a count; clicking it shows the diff preview. */}
         <CommitBar
           count={pendingCount}
-          committing={committing}
           note={commitNote}
-          // Asserted, not assumed. `!== 'example'` fails open when the field is
-          // missing — an older server, a shape change — and offers to commit
-          // something with no repository behind it.
-          committable={bundle?.project.sourceKind === 'github'}
-          onCommit={commit}
+          onReview={() => setDiffOpen(true)}
           onDismissNote={() => setCommitNote(null)}
         />
         <button className="run" type="button" disabled={runDisabled} title={runTitle}>
@@ -594,6 +726,13 @@ function Workspace({ me }: { me: Me }) {
               active={current.active}
               onActiveChange={reportActiveFile}
               onPendingChanged={(saved) => {
+                if (saved) {
+                  // The undo stack's snapshots of this file predate the manual save;
+                  // restoring one would silently destroy it. Those entries die here
+                  // rather than lying in wait.
+                  undoStack.current = undoStack.current.filter((entry) => entry.path !== saved);
+                  setUndoDepth(undoStack.current.length);
+                }
                 void refresh();
                 if (saved) report({ chord: '⌘S', title: 'Save', detail: `${saved} saved as a pending change.` });
               }}
@@ -604,13 +743,14 @@ function Workspace({ me }: { me: Me }) {
             bundle={load.bundle}
             stack={stack}
             selectedId={selectedId}
+            selectedEdgeId={selectedEdgeId}
             onDescend={descend}
             onAscend={ascend}
             onSelect={setSelectedId}
+            onSelectEdge={setSelectedEdgeId}
             onConnect={(edge) => void runOps([{ op: 'addEdge', edge }], 'Connect')}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move')}
-            onRemoveEdge={(id) => void runOps([{ op: 'removeEdge', id }], 'Disconnect')}
           />
         )}
       </main>
@@ -619,7 +759,30 @@ function Workspace({ me }: { me: Me }) {
         {settingsOpen ? (
           <Settings me={me} onClose={() => setSettingsOpen(false)} />
         ) : (
-          <Inspector bundle={bundle} altitude={current} selectedId={selectedId} />
+          <Inspector
+            bundle={bundle}
+            altitude={current}
+            selectedId={selectedId}
+            selectedEdgeId={selectedEdgeId}
+            onPatch={(id, patch) => void runOps([{ op: 'updateNode', id, patch }], 'Edit')}
+            onRename={(from, to) =>
+              void runOps([{ op: 'renameNode', from, to }], 'Rename').then((ok) => {
+                // The selection follows the node to its new name — unless the user
+                // has already selected something else mid-flight.
+                if (ok) setSelectedId((cur) => (cur === from ? to : cur));
+              })
+            }
+            onRemoveNode={(id) =>
+              void runOps([{ op: 'removeNode', id }], 'Delete').then((ok) => {
+                if (ok) setSelectedId((cur) => (cur === id ? null : cur));
+              })
+            }
+            onRemoveEdge={(id) =>
+              void runOps([{ op: 'removeEdge', id }], 'Disconnect').then((ok) => {
+                if (ok) setSelectedEdgeId((cur) => (cur === id ? null : cur));
+              })
+            }
+          />
         )}
       </aside>
     </div>

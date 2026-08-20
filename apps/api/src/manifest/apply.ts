@@ -1,11 +1,18 @@
-import { stringify } from 'yaml';
+import { isMap, isScalar, isSeq, stringify, type YAMLMap } from 'yaml';
+import { ID_PATTERN } from '@civil/schema';
 import {
   ManifestEditError,
   applySplices,
+  findItemMap,
   findSequence,
-  findSequenceItemById,
   readManifest,
+  removeMapEntries,
+  removeMapEntry,
+  removeSequenceItem,
+  removeSequenceItems,
+  setMapEntries,
   trimEnd,
+  valueStartOfKey,
   type ManifestDocument,
   type Splice,
 } from './document.js';
@@ -46,7 +53,44 @@ export interface RemoveEdgeOp {
   id: string;
 }
 
-export type ManifestOp = AddNodeOp | SetLayoutOp | AddEdgeOp | RemoveEdgeOp;
+export interface RemoveNodeOp {
+  op: 'removeNode';
+  id: string;
+  /** Defaults to true: a node's edges go with it, or the manifest dangles. */
+  cascadeEdges?: boolean;
+}
+
+export interface UpdateNodeOp {
+  op: 'updateNode';
+  id: string;
+  /** Field → new value. `null` removes the field. `id` and `type` are refused. */
+  patch: Record<string, unknown>;
+}
+
+export interface UpdateEdgeOp {
+  op: 'updateEdge';
+  id: string;
+  patch: Record<string, unknown>;
+}
+
+export interface RenameNodeOp {
+  op: 'renameNode';
+  from: string;
+  to: string;
+  /** Defaults to true: edge endpoints, exposes/calls lists, invocation keys, and the
+   *  layout entry are rewritten in the same application, so the rename is atomic. */
+  updateReferences?: boolean;
+}
+
+export type ManifestOp =
+  | AddNodeOp
+  | SetLayoutOp
+  | AddEdgeOp
+  | RemoveEdgeOp
+  | RemoveNodeOp
+  | UpdateNodeOp
+  | UpdateEdgeOp
+  | RenameNodeOp;
 
 export interface ApplyResult {
   source: string;
@@ -87,6 +131,9 @@ function renderValue(value: unknown): string {
       .join(', ');
     return `{ ${pairs} }`;
   }
+  // A string with a newline would serialise as a block scalar — several lines, which
+  // no inline position can hold. JSON's escaped form is valid YAML on one line.
+  if (typeof value === 'string' && value.includes('\n')) return JSON.stringify(value);
   // Scalars go through the serialiser so quoting rules are its problem, not ours.
   return stringify(value, { lineWidth: 0 }).trim();
 }
@@ -146,6 +193,14 @@ function applyOne(manifest: ManifestDocument, op: ManifestOp): ApplyResult {
       return addEdge(manifest, op);
     case 'removeEdge':
       return removeEdge(manifest, op);
+    case 'removeNode':
+      return removeNode(manifest, op);
+    case 'updateNode':
+      return updateItem(manifest, ['spec', 'nodes'], op.id, op.patch, 'node');
+    case 'updateEdge':
+      return updateItem(manifest, ['spec', 'edges'], op.id, op.patch, 'edge');
+    case 'renameNode':
+      return renameNode(manifest, op);
   }
 }
 
@@ -161,9 +216,14 @@ function addNode(manifest: ManifestDocument, op: AddNodeOp): ApplyResult {
   // by spaces, so subsequent keys line up under the first.
   const continuation = target.itemPrefix.replace('\n', '').replace(/-\s*$/, '  ');
 
-  const body = target.flow
-    ? flowMapping(op.node, continuation)
-    : blockMapping(op.node, continuation);
+  // Inside inline brackets there is no falling back to block style — a block item
+  // cannot exist there, so the one-line form is used however long it gets.
+  const body =
+    target.itemPrefix === ', '
+      ? renderValue(op.node)
+      : target.flow
+        ? flowMapping(op.node, continuation)
+        : blockMapping(op.node, continuation);
 
   const splice: Splice = {
     start: target.insertAt,
@@ -183,9 +243,12 @@ function addEdge(manifest: ManifestDocument, op: AddEdgeOp): ApplyResult {
 
   const target = findSequence(manifest, ['spec', 'edges']);
   const continuation = target.itemPrefix.replace('\n', '').replace(/-\s*$/, '  ');
-  const body = target.flow
-    ? flowMapping(op.edge, continuation)
-    : blockMapping(op.edge, continuation);
+  const body =
+    target.itemPrefix === ', '
+      ? renderValue(op.edge)
+      : target.flow
+        ? flowMapping(op.edge, continuation)
+        : blockMapping(op.edge, continuation);
 
   const from = (op.edge['from'] as { node?: string } | undefined)?.node;
   const to = (op.edge['to'] as { node?: string } | undefined)?.node;
@@ -203,10 +266,234 @@ function addEdge(manifest: ManifestDocument, op: AddEdgeOp): ApplyResult {
  * and removing a node has to take its edges with it.
  */
 function removeEdge(manifest: ManifestDocument, op: RemoveEdgeOp): ApplyResult {
-  const item = findSequenceItemById(manifest, ['spec', 'edges'], op.id);
   return {
-    source: applySplices(manifest.source, [{ start: item.start, end: item.end, text: '' }]),
+    source: applySplices(manifest.source, [removeSequenceItem(manifest, ['spec', 'edges'], op.id)]),
     summary: `Disconnected “${op.id}”.`,
+  };
+}
+
+/** What the document says right now, for deciding what an op has to touch. */
+function manifestData(manifest: ManifestDocument): {
+  nodes: Record<string, unknown>[];
+  edges: { id?: string; from?: { node?: string }; to?: { node?: string } }[];
+} {
+  const data = manifest.doc.toJS() as {
+    spec?: { nodes?: unknown; edges?: unknown };
+  } | null;
+  return {
+    nodes: Array.isArray(data?.spec?.nodes) ? (data.spec.nodes as Record<string, unknown>[]) : [],
+    edges: Array.isArray(data?.spec?.edges) ? (data.spec.edges as never[]) : [],
+  };
+}
+
+/**
+ * PRD 7.1's example op. The cascade is the point: a removed node's edges go with it
+ * in the same application, because a manifest referring to a node that is not there
+ * is worse than the node was.
+ */
+function removeNode(manifest: ManifestDocument, op: RemoveNodeOp): ApplyResult {
+  const { nodes, edges } = manifestData(manifest);
+  const node = nodes.find((n) => n['id'] === op.id);
+  if (!node) throw new ManifestEditError(`no item with id "${op.id}" in spec.nodes`);
+
+  const touching = edges.filter((e) => e.from?.node === op.id || e.to?.node === op.id);
+
+  if (op.cascadeEdges === false && touching.length > 0) {
+    const names = touching.map((e) => `"${e.id}"`).join(', ');
+    throw new ManifestEditError(
+      `“${op.id}” still has ${touching.length} edge${touching.length === 1 ? '' : 's'} (${names}). ` +
+        'Remove them first, or let cascadeEdges take them along.',
+    );
+  }
+
+  const splices: Splice[] = [removeSequenceItem(manifest, ['spec', 'nodes'], op.id)];
+
+  if (touching.length > 0) {
+    const edgeIds = touching.map((edge) => {
+      if (typeof edge.id !== 'string') {
+        throw new ManifestEditError(`an edge touching “${op.id}” has no id; remove it by hand`);
+      }
+      return edge.id;
+    });
+    // One call for the whole set: adjacent flow items share commas, so their spans
+    // must be computed together or they overlap — and when the set is every edge,
+    // the list is written back as `[]` rather than shredded item by item.
+    splices.push(...removeSequenceItems(manifest, ['spec', 'edges'], edgeIds));
+  }
+
+  const layoutSplice = removeLayoutEntry(manifest, op.id);
+  if (layoutSplice) splices.push(layoutSplice);
+
+  const kind = typeof node['type'] === 'string' ? (node['type'] as string) : 'node';
+  const cascade =
+    touching.length > 0
+      ? ` and ${touching.length} edge${touching.length === 1 ? '' : 's'}`
+      : '';
+  return {
+    source: applySplices(manifest.source, splices),
+    summary: `Removed ${kind} “${op.id}”${cascade}.`,
+  };
+}
+
+/** The layout entry goes with its node; an emptied layout block is written as {}. */
+function removeLayoutEntry(manifest: ManifestDocument, id: string): Splice | undefined {
+  const nodes = manifest.doc.getIn(['layout', 'nodes'], true);
+  if (!isMap(nodes)) return undefined;
+
+  const entry = removeMapEntry(manifest, nodes as YAMLMap, id);
+  if (!entry) return undefined;
+
+  if ((nodes as YAMLMap).items.length === 1 && !(nodes as { flow?: boolean }).flow) {
+    return { start: valueStartOfKey(manifest, ['layout', 'nodes']), end: entry.end, text: ' {}' };
+  }
+  return entry;
+}
+
+/**
+ * updateNode and updateEdge are one mechanism: set fields, remove fields set to
+ * null, and leave every byte the patch does not name alone. The identity fields are
+ * refused — id has renameNode, and a node's type decides which fields may exist at
+ * all, so changing it is a remove-and-add, not an edit.
+ */
+function updateItem(
+  manifest: ManifestDocument,
+  path: readonly string[],
+  id: string,
+  patch: Record<string, unknown>,
+  what: 'node' | 'edge',
+): ApplyResult {
+  if ('id' in patch) {
+    throw new ManifestEditError(
+      what === 'node' ? 'an id is changed with renameNode, not a patch' : 'an edge id cannot be patched',
+    );
+  }
+  if (what === 'node' && 'type' in patch) {
+    throw new ManifestEditError(
+      'a node\'s type decides its whole shape; remove the node and add the one you mean',
+    );
+  }
+  if (Object.keys(patch).length === 0) {
+    throw new ManifestEditError('an empty patch changes nothing');
+  }
+
+  const map = findItemMap(manifest, path, id);
+  const rendered = new Map<string, string>();
+  const set: string[] = [];
+  const nulled: string[] = [];
+
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      nulled.push(key);
+      continue;
+    }
+    rendered.set(key, renderValue(value));
+    set.push(key);
+  }
+
+  // Removals go through one call so that adjacent flow entries — whose spans share
+  // a comma — are merged rather than overlapping.
+  const { splices, removed } = removeMapEntries(manifest, map, nulled);
+  splices.push(...setMapEntries(manifest, map, rendered));
+
+  if (set.length === 0 && removed.length === 0) {
+    throw new ManifestEditError(`nothing in that patch applies to “${id}”`);
+  }
+
+  const parts = [
+    set.length > 0 ? `set ${set.join(', ')}` : '',
+    removed.length > 0 ? `removed ${removed.join(', ')}` : '',
+  ].filter(Boolean);
+  return {
+    source: applySplices(manifest.source, splices),
+    summary: `Updated “${id}” (${parts.join('; ')}).`,
+  };
+}
+
+/** A scalar's replacement splice, when it holds exactly the value being renamed. */
+function renamedScalar(node: unknown, from: string, rendered: string): Splice | undefined {
+  if (!isScalar(node) || node.value !== from || !node.range) return undefined;
+  return { start: node.range[0], end: node.range[1], text: rendered };
+}
+
+/**
+ * PRD 7.1 gives renameNode updateReferences, and this is why: an id is not a label,
+ * it is what everything else holds on to. Edge endpoints, exposes and calls lists,
+ * invocation keys, and the layout entry all say it by name, and a rename that misses
+ * one leaves the manifest pointing at a node that no longer exists.
+ *
+ * Everything is rewritten from one parse and applied as one splice set, so the
+ * rename cannot half-happen.
+ */
+function renameNode(manifest: ManifestDocument, op: RenameNodeOp): ApplyResult {
+  if (!ID_PATTERN.test(op.to)) {
+    throw new ManifestEditError(`"${op.to}" is not a valid id (${ID_PATTERN.source})`);
+  }
+
+  const { nodes } = manifestData(manifest);
+  if (!nodes.some((n) => n['id'] === op.from)) {
+    throw new ManifestEditError(`no item with id "${op.from}" in spec.nodes`);
+  }
+  if (nodes.some((n) => n['id'] === op.to)) {
+    throw new ManifestEditError(`there is already a node called "${op.to}"`);
+  }
+
+  const splices: Splice[] = [];
+
+  // ID_PATTERN admits ids YAML would read as something else entirely — `true`,
+  // `null`, `on` — so the replacement text comes from the serialiser, which quotes
+  // exactly when quoting is needed.
+  const rendered = renderValue(op.to);
+
+  const own = findItemMap(manifest, ['spec', 'nodes'], op.from);
+  const idSplice = renamedScalar(own.get('id', true), op.from, rendered);
+  if (!idSplice) throw new ManifestEditError(`the id of "${op.from}" has no position in the source`);
+  splices.push(idSplice);
+
+  if (op.updateReferences !== false) {
+    const push = (splice: Splice | undefined) => {
+      if (splice) splices.push(splice);
+    };
+
+    const nodeSeq = manifest.doc.getIn(['spec', 'nodes'], true);
+    if (isSeq(nodeSeq)) {
+      for (const item of nodeSeq.items) {
+        if (!isMap(item)) continue;
+        // Composition references: what a client exposes, what a process calls, and
+        // which services a client overrides invocation for.
+        for (const listKey of ['exposes', 'calls']) {
+          const list = item.get(listKey, true);
+          if (isSeq(list)) for (const entry of list.items) push(renamedScalar(entry, op.from, rendered));
+        }
+        const invocation = item.get('invocation', true);
+        if (isMap(invocation)) {
+          for (const pair of invocation.items) push(renamedScalar(pair.key, op.from, rendered));
+        }
+      }
+    }
+
+    const edgeSeq = manifest.doc.getIn(['spec', 'edges'], true);
+    if (isSeq(edgeSeq)) {
+      for (const item of edgeSeq.items) {
+        if (!isMap(item)) continue;
+        for (const endKey of ['from', 'to']) {
+          const end = item.get(endKey, true);
+          if (isMap(end)) push(renamedScalar(end.get('node', true), op.from, rendered));
+        }
+      }
+    }
+
+    const layout = manifest.doc.getIn(['layout', 'nodes'], true);
+    if (isMap(layout)) {
+      for (const pair of layout.items) push(renamedScalar(pair.key, op.from, rendered));
+    }
+  }
+
+  const references = splices.length - 1;
+  const detail =
+    references > 0 ? ` (${references} reference${references === 1 ? '' : 's'} updated)` : '';
+  return {
+    source: applySplices(manifest.source, splices),
+    summary: `Renamed “${op.from}” to “${op.to}”${detail}.`,
   };
 }
 

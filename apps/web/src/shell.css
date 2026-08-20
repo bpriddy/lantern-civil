@@ -1118,3 +1118,94 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 .chip-branch:disabled { cursor: default; }
 .chip-sync { color: var(--text-faint); margin-left: 2px; }
 .chip-branch:hover:not(:disabled) .chip-sync { color: var(--accent); }
+
+/* ---- inspector fields ---------------------------------------------------- */
+
+/* The kv grid holds inputs now: same type treatment as the values they replace. */
+.field {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-inset);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 6px;
+}
+.field:hover { border-color: var(--border-strong); }
+.field:focus { outline: none; border-color: var(--accent-dim); color: var(--text); }
+select.field { cursor: pointer; }
+
+.danger-link {
+  display: block;
+  margin-top: 14px;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.danger-link:hover { color: var(--danger); }
+
+/* ---- diff panel ---------------------------------------------------------- */
+
+.diff-panel {
+  width: min(980px, calc(100vw - 80px));
+  height: min(640px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.diff-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.diff-head .commit-message { width: 280px; }
+
+.diff-body { display: flex; flex: 1; min-height: 0; }
+
+.diff-files {
+  width: 240px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 8px 0;
+}
+
+.diff-file {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.diff-file:hover { color: var(--text); }
+.diff-file.active { background: var(--bg-inset); color: var(--text); }
+
+.diff-kind {
+  display: inline-block;
+  width: 46px;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.diff-kind-add { color: var(--ok); }
+.diff-kind-delete { color: var(--danger); }
+.diff-kind-modify { color: var(--warn); }
+
+.diff-editor { flex: 1; min-width: 0; }

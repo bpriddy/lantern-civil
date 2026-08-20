@@ -45,15 +45,17 @@ export interface EditorProps {
   bundle: ProjectBundle;
   stack: Altitude[];
   selectedId: string | null;
+  selectedEdgeId: string | null;
   onDescend: (altitude: Altitude) => void;
   onAscend: () => void;
   onSelect: (id: string | null) => void;
+  /** Edges select too, so Delete knows what "the selection" is. */
+  onSelectEdge: (id: string | null) => void;
   /** Drawing a connection. The kind is inferred here and sent explicitly. */
   onConnect: (edge: Record<string, unknown>) => void;
   /** Refused connections say why rather than silently not happening. */
   onRefuse: (reason: string) => void;
   onMoveNode: (id: string, x: number, y: number) => void;
-  onRemoveEdge: (id: string) => void;
 }
 
 export function Editor(props: EditorProps) {
@@ -68,13 +70,14 @@ function Surface({
   bundle,
   stack,
   selectedId,
+  selectedEdgeId,
   onDescend,
   onAscend,
   onSelect,
+  onSelectEdge,
   onConnect,
   onRefuse,
   onMoveNode,
-  onRemoveEdge,
 }: EditorProps) {
   const flow = useReactFlow();
   // A code level is rendered by the takeover, not here; the deepest canvas level is
@@ -200,16 +203,29 @@ function Surface({
   return (
     <ReactFlow
       nodes={nodes.map((n) => ({ ...n, selected: n.id === selectedId }))}
-      edges={edges}
+      edges={edges.map((e) => ({ ...e, selected: e.id === selectedEdgeId }))}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={handleDoubleClick}
-      onNodeClick={(_e, node) => onSelect(node.id)}
-      onPaneClick={() => onSelect(null)}
+      onNodeClick={(_e, node) => {
+        onSelectEdge(null);
+        onSelect(node.id);
+      }}
+      onEdgeClick={(_e, edge) => {
+        onSelect(null);
+        onSelectEdge(edge.id);
+      }}
+      onPaneClick={() => {
+        onSelect(null);
+        onSelectEdge(null);
+      }}
       onConnect={handleConnect}
       // Sent on drop rather than per frame: a position is worth one op, and one op is
       // one pending change, not sixty.
       onNodeDragStop={(_e, node) => onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y))}
-      onEdgesDelete={(deleted) => deleted.forEach((edge) => onRemoveEdge(edge.id))}
+      // Deletion belongs to the command registry — one named action, one op path,
+      // one toast — so React Flow's own delete key is turned off rather than letting
+      // two listeners race for the same keystroke.
+      deleteKeyCode={null}
       nodesDraggable
       nodesConnectable
       edgesFocusable

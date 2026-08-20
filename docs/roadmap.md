@@ -160,48 +160,62 @@ added" into "anyone at all", and should not happen before that gate is resolved.
 
 ---
 
-## Finishing M3
+## M3 — done
 
-The op layer exists and is the seam PRD §7.1 describes: the client posts ops, the
-server splices them into the source, and the same route serves the keyboard today and
-an agent later. `docs/ops.md` is that path end to end.
+PRD §14's exit: *"a full app is authorable from empty, and the YAML looks
+hand-written."* Every piece named there now exists and is exercised: structured ops
+for both canvases (the full §7.1 vocabulary — add/remove/update/rename node, add/
+remove/update edge, setLayout), the comment-preserving splice writer with its
+byte-identical round-trip tests, drag to move and drag to connect, the diff preview
+behind the commit indicator, commit + push against a pinned head with re-parenting,
+and undo. `docs/ops.md` is the whole mutation path end to end.
 
-### Done
+The editable inspector is how §5's "everything inspector-editable" landed: each
+field commits an `updateNode` patch, the id field commits a `renameNode`, and the
+remove buttons send the same ops the Delete key does.
 
-- **`addNode`**, **`setLayout`**, **`addEdge`**, **`removeEdge`**, all splice-based,
-  all with a byte-identical no-op round-trip.
-- **Dragging.** Nodes move and emit `setLayout` on drop — on drop rather than per
-  frame, so a drag is one pending change and not two hundred.
-- **Edges.** Drawn by dragging between ports, deleted by selecting and pressing
-  Delete. Kind is inferred from the endpoints per PRD §7 and sent explicitly in the
-  op. A refused connection says why.
+The connect gesture — flagged here earlier as unverified — has since been drawn with
+a real pointer drag in a browser and produced the expected edge, correctly inferred
+and correctly styled. The earlier automation failures were the handles being a
+too-small target at default zoom, not the wiring.
 
-**One caveat, honestly recorded:** the connect gesture is verified only up to the
-handler. React Flow's connection tracking uses pointer capture and does not respond
-to synthesised pointer events, so browser automation could not draw an edge. The
-rules are unit-tested, the op is tested, the wiring is typechecked — but nobody has
-yet drawn an edge with a real mouse and watched it land in `app.yaml`. **That is the
-first thing to do next session, and it is a two-minute check.**
+### Findings from the M3 review, accepted rather than fixed
 
-### Not done
+An adversarial review pass (five lenses, each finding attacked by a skeptic that had
+to reproduce it) confirmed and fixed the splice-overlap corruptions, the undo/save
+interactions, and the diff-panel keyboard leak. Three confirmed findings were left
+as they are, each on purpose:
 
-- **`removeNode`**, with `cascadeEdges`. Removing a node without its edges leaves the
-  manifest referring to something that is not there.
-- **`updateNode`** — the inspector reads but cannot write, because there is no op for
-  a field edit.
-- **`renameNode`.** PRD §7.1 gives it `updateReferences`: edge endpoints and the
-  `layout` key must be rewritten atomically or not at all.
-- **A diff preview.** PRD §7 says the commit indicator "shows a count and a diff
-  preview". It shows the count. This is also `CLAUDE.md`'s fifth agent-first
-  constraint — *nothing is applied unpreviewably* — so it is not only a UI nicety;
-  it is the thing that makes an agent's "here is what I would do" possible at all.
-  Every pending row already holds the full new content and its `base_blob_sha`, so
-  the data is there and this is a rendering job.
-- **Undo.** PRD §7 lists `Cmd+Z`. Either every op gets an inverse or the previous
-  source is kept per step. The second is simpler and, given manifests are small,
-  almost certainly right.
+- **Undo across browser tabs.** Tab A commits; tab B's undo stack predates that
+  commit, and undoing in B resurrects pre-commit text as a new pending change.
+  Recoverable (it is only a pending change) and symptomatic of the larger fact that
+  a second tab's bundle is stale after any external change — cross-tab sync is one
+  problem, not an undo problem, and it is not M3's.
+- **`runOps` reports success when the op landed but the refresh failed.** The op
+  *did* apply; the bundle on screen is transiently stale and heals on the next
+  fetch. Making refresh loud here would make every transient network blip a toast.
+- **The ops route trusts `apply.ts` refusals rather than zod-validating the batch.**
+  A malformed op fails with a specific `op_refused` message, which is adequate;
+  schema validation would improve the 400s an agent sees and can come with the
+  agent.
 
-Nothing here is blocked. These are the reason M3 is not done.
+One pre-existing gap the review surfaced in passing: `GitHubSource` prefetches only
+manifest-shaped files (yaml/json/md, capped at 300), so a repository-backed
+project cannot open source files beyond that set — reads return nothing. Examples
+are unaffected (they read from disk). The fix is an on-demand blob fetch in
+`GitHubSource.read`, which belongs with M4's runner work since executing code needs
+exactly that path.
+
+### Left open on purpose, small
+
+- **Redo.** PRD §7 lists `Cmd+Z` only. The undo stack discards what it pops.
+- **`updateEdge` has no gesture.** The op exists and is tested; nothing in the UI
+  sends it yet. Its first caller will probably be an agent.
+- **`invocation` overrides** (PRD §8.1) have no inspector field; editing them is a
+  Monaco job until M4 makes invocation mean something.
+- **Escape while a field is focused** reverts the field (and deliberately does not
+  also clear the canvas selection). A second Escape ascends. Worth revisiting only
+  if it feels wrong in use.
 
 ## Shipped since this file was written
 

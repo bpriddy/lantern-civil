@@ -604,7 +604,54 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       existsAtHead: base.exists(body.path),
     });
 
-    return { path: change.path, kind: change.kind, summary: applied.summary };
+    return {
+      path: change.path,
+      kind: change.kind,
+      summary: applied.summary,
+      // What the file said before this application, and whether that state was
+      // itself a pending edit. Together they are exactly what undoing this op needs:
+      // restore `previous` as a pending change, or discard the pending row entirely
+      // when the op was the first thing to touch the file.
+      previous: current,
+      hadPending: pending.some((p) => p.path === body.path),
+    };
+  });
+
+  /**
+   * PRD 7: the commit indicator shows "a count and a diff preview". This is the
+   * preview's data — for every pending change, what HEAD says and what the pending
+   * edit says, side by side. Rendering the difference is the client's job; deciding
+   * what is different is not, because only this side can see HEAD.
+   *
+   * It is also CLAUDE.md's fifth agent-first constraint made concrete: everything an
+   * agent could do to a project surfaces here as inspectable before-and-after text
+   * before any of it reaches the repository.
+   */
+  app.get('/api/projects/:id/diff', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
+
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    return {
+      branch: project.defaultBranch,
+      files: pending.map((change) => ({
+        path: change.path,
+        kind: change.kind,
+        base: base.exists(change.path) ? (base.read(change.path) ?? null) : null,
+        current: change.kind === 'delete' ? null : change.content,
+      })),
+    };
   });
 
   /** Discards a pending edit; the file reverts to whatever HEAD says. */

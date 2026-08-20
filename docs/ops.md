@@ -34,7 +34,25 @@ pending_changes               apps/api/src/project/pending.ts
 bundle rebuild                apps/api/src/project/bundle.ts
       ↓                       parses, validates, returns diagnostics
 canvas + toast
+
+… and two read paths hang off the same state:
+GET /diff                     every pending file beside what HEAD says — the preview
+previous + hadPending         returned by every op application — what undo restores
 ```
+
+### Undo is previous-content, not inverse ops
+
+Every op application returns the file's prior text and whether that text was itself
+a pending edit. The client stacks those (`UndoEntry` in `App.tsx` — capped, per
+project, cleared on commit and on sync). Undo restores the previous content as a
+pending change — or, when the op was the first thing to touch the file, discards the
+pending row so the file falls back to HEAD, which is why undoing everything you did
+returns the header to "no pending changes" rather than to a no-op diff.
+
+Inverse ops were considered and rejected: every op would need a hand-written inverse
+proven correct against the splice machinery, and manifests are small enough that
+keeping the whole prior text is free. Monaco keeps its own undo inside files; the
+command is scoped to the canvas so the two never fight.
 
 Each hop is worth a paragraph, because each one is where a future change is most
 likely to go wrong.
@@ -123,27 +141,34 @@ toast shows it now; an agent transcript will show the same string later. This is
 
 ---
 
-## The op vocabulary today
+## The op vocabulary
 
 Defined in `packages/schema/src/ops.ts`, applied in `apps/api/src/manifest/apply.ts`.
+The vocabulary is complete against PRD §7.1.
 
 | Op | What it does | Where the gesture comes from |
 |---|---|---|
 | `addNode` | Appends a node to `spec.nodes` | `node.add` command, `N` |
 | `setLayout` | Writes `layout[id]` — sibling of `spec`, never inside it | Node drag, on drop |
 | `addEdge` | Appends to `spec.edges` with an explicit `kind` | Dragging between ports |
-| `removeEdge` | Removes an edge by id | Selecting an edge, Delete |
+| `removeEdge` | Removes an edge by id | `canvas.delete` on a selected edge; the inspector's Disconnect |
+| `removeNode` | Removes a node, its edges (`cascadeEdges`, default true), and its layout entry | `canvas.delete` on a selected node; the inspector's Remove |
+| `updateNode` | Sets fields from a patch; `null` removes a field; `id`/`type` refused | Every editable inspector field |
+| `updateEdge` | Same mechanism on an edge | Nothing yet — an agent's op first |
+| `renameNode` | Rewrites the id and, with `updateReferences` (default true), every edge endpoint, `exposes`/`calls` entry, `invocation` key, and the layout key, in one splice set | The inspector's id field |
 
-### Still missing, and why each is not trivial
+Worth knowing about the two removal semantics: **`removeNode` cascades edges only.**
+A client that still `exposes` the removed node keeps saying so, and the validator
+flags it on the next bundle — deliberately. An edge to a missing node is structural
+garbage nothing can want; an `exposes` entry is a statement about the client's
+surface, and silently rewriting it would hide a consequence the author should see.
+Rename rewrites those same references precisely because a rename changes nothing
+semantically — nothing there deserves the author's attention.
 
-- **`removeNode`** needs `cascadeEdges`: removing a node leaves every edge touching it
-  dangling, and a manifest referring to a node that is not there is worse than the
-  node.
-- **`updateNode`** is the inspector's op. Every field edit currently has nowhere to go,
-  which is why the inspector reads but does not write.
-- **`renameNode`** is the hard one. PRD §7.1 gives it `updateReferences`, so it must
-  rewrite edge endpoints and the `layout` key atomically. Half of it applied is a
-  broken project.
+Two mechanical notes that keep the YAML hand-written-looking: removing the last item
+of a block collection writes the key back as `[]` / `{}` (so the next add appends
+rather than being refused with "not a sequence"), and items inside inline flow
+brackets take a comma with them on the way out.
 
 ---
 
