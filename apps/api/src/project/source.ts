@@ -13,6 +13,14 @@ import type { ProjectFiles } from '@civil/schema';
 export interface ProjectSource extends ProjectFiles {
   /** Every file in the project, project-relative, sorted. Feeds the tree in PRD 7. */
   list(): string[];
+  /**
+   * Makes the given paths readable by the synchronous `read`, fetching whatever is
+   * not already local. Reads stay sync because the shared validator (PRD 6.4) runs
+   * in the browser and cannot await per file; callers that know what they are about
+   * to need — a file open, contract discovery, a diff, a run bundle — hydrate first.
+   * Absent on sources whose reads are already local (disk).
+   */
+  ensure?(paths: readonly string[]): Promise<void>;
 }
 
 /** Directories that are never part of a project's manifest surface. */

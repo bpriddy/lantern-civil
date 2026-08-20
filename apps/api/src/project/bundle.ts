@@ -123,20 +123,14 @@ async function discoverProjectContracts(
   composition: Composition | undefined,
   graphs: Record<string, Graph>,
 ): Promise<Record<string, ContractResult>> {
-  const requests: ContractRequest[] = [];
-
-  const request = (manifest: string, nodeId: string, file: string, fn?: string) => {
-    const text = source.read(file);
-    // A file the source cannot read yields no contract rather than an error: it is
-    // usually a manifest pointing at something that does not exist yet, which the
-    // validator already reports as its own diagnostic.
-    if (text === undefined) return;
-    requests.push({ key: `${manifest}:${nodeId}`, source: text, function: fn });
-  };
+  // Two passes: name every file first, hydrate them in one round, then read. The
+  // contract sources are Python — exactly the files the prefetch skips — so without
+  // the hydration every committed service face silently loses its ports.
+  const wanted: { manifest: string; nodeId: string; file: string; fn?: string }[] = [];
 
   for (const node of composition?.spec.nodes ?? []) {
     if (node.type === 'service' && 'entrypoint' in node.impl) {
-      request(compositionPath, node.id, node.impl.entrypoint);
+      wanted.push({ manifest: compositionPath, nodeId: node.id, file: node.impl.entrypoint });
     }
   }
 
@@ -154,8 +148,20 @@ async function discoverProjectContracts(
       if (node.type !== 'code') continue;
       const fn = capabilityFunctions.get(node.id);
       const file = node.entrypoint ?? (fn ? source.glob(node.include[0] ?? '')[0] : undefined);
-      if (file) request(path, node.id, file, fn);
+      if (file) wanted.push({ manifest: path, nodeId: node.id, file, ...(fn ? { fn } : {}) });
     }
+  }
+
+  await source.ensure?.(wanted.map((w) => w.file));
+
+  const requests: ContractRequest[] = [];
+  for (const w of wanted) {
+    const text = source.read(w.file);
+    // A file the source cannot read yields no contract rather than an error: it is
+    // usually a manifest pointing at something that does not exist yet, which the
+    // validator already reports as its own diagnostic.
+    if (text === undefined) continue;
+    requests.push({ key: `${w.manifest}:${w.nodeId}`, source: text, function: w.fn });
   }
 
   const results = await discoverContracts(requests);

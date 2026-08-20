@@ -276,6 +276,11 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     const overlay = new OverlaySource(base, pending);
 
+    // Reads are sync; anything not prefetched — source files, mostly — is hydrated
+    // here, once per commit. This is what lets Monaco open a .py the canvas never
+    // needed.
+    await overlay.ensure([filePath]);
+
     const content = overlay.read(filePath);
     if (content === undefined) return reply.code(404).send({ error: 'file_not_found' });
 
@@ -643,6 +648,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     }
 
     const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    // The base half of each diff can be a source file outside the manifest
+    // prefetch; hydrate them so "original" is the text and not a blank pane.
+    await base.ensure?.(pending.map((change) => change.path));
     return {
       branch: project.defaultBranch,
       files: pending.map((change) => ({

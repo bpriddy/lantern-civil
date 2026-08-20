@@ -29,6 +29,13 @@ interface TreeEntry {
  */
 const PREFETCH = /\.(ya?ml|json|md)$/i;
 
+/** How many blob fetches run at once during hydration. */
+const ENSURE_CONCURRENCY = 16;
+
+/** A blob larger than this is not hydrated into memory; Monaco has no business with
+ *  it and a run bundle will stream it another way when that day comes. */
+const MAX_ENSURE_BYTES = 2 * 1024 * 1024;
+
 /** Guards against a pathological repo turning one project load into thousands of calls. */
 const MAX_PREFETCH_FILES = 300;
 
@@ -71,18 +78,32 @@ export class GitHubSource implements ProjectSource {
   private readonly paths: Set<string>;
   private readonly blobShas: Map<string, string>;
   private readonly contents: Map<string, string>;
+  private readonly sizes: Map<string, number>;
+  private readonly app: GitHubApp;
+  private readonly installationId: string;
+  private readonly owner: string;
+  private readonly repo: string;
 
   private constructor(init: {
     commitSha: string;
     truncated: boolean;
     entries: TreeEntry[];
     contents: Map<string, string>;
+    app: GitHubApp;
+    installationId: string;
+    owner: string;
+    repo: string;
   }) {
     this.commitSha = init.commitSha;
     this.truncated = init.truncated;
     this.paths = new Set(init.entries.map((e) => e.path));
     this.blobShas = new Map(init.entries.map((e) => [e.path, e.sha]));
+    this.sizes = new Map(init.entries.map((e) => [e.path, e.size ?? 0]));
     this.contents = init.contents;
+    this.app = init.app;
+    this.installationId = init.installationId;
+    this.owner = init.owner;
+    this.repo = init.repo;
   }
 
   /** Resolves a branch to the commit it currently points at. One call. */
@@ -124,6 +145,10 @@ export class GitHubSource implements ProjectSource {
         truncated: cached.truncated,
         entries: cached.entries,
         contents: cached.contents,
+        app,
+        installationId,
+        owner,
+        repo,
       });
     }
 
@@ -159,7 +184,41 @@ export class GitHubSource implements ProjectSource {
       truncated: tree.truncated,
       entries: blobs,
       contents,
+      app,
+      installationId,
+      owner,
+      repo,
     });
+  }
+
+  /**
+   * Hydrates the sync cache for these paths. Blobs are immutable, and `contents` is
+   * the same Map the commit's cache entry holds, so anything fetched here is fetched
+   * once per commit per container — later loads at this sha read it for free.
+   */
+  async ensure(paths: readonly string[]): Promise<void> {
+    const wanted = [...new Set(paths)].filter(
+      (path) =>
+        !this.contents.has(path) &&
+        this.blobShas.has(path) &&
+        (this.sizes.get(path) ?? 0) <= MAX_ENSURE_BYTES,
+    );
+
+    for (let at = 0; at < wanted.length; at += ENSURE_CONCURRENCY) {
+      await Promise.all(
+        wanted.slice(at, at + ENSURE_CONCURRENCY).map(async (path) => {
+          const blob = await this.app.asInstallation<{ content: string; encoding: string }>(
+            this.installationId,
+            `/repos/${this.owner}/${this.repo}/git/blobs/${this.blobShas.get(path)}`,
+          );
+          const text =
+            blob.encoding === 'base64'
+              ? Buffer.from(blob.content, 'base64').toString('utf8')
+              : blob.content;
+          this.contents.set(path, text);
+        }),
+      );
+    }
   }
 
   /** The blob sha a pending change records as its base, for per-file divergence. */

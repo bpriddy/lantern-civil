@@ -112,3 +112,28 @@ test('status reports what the tree should badge', () => {
     [['src/a.py', 'modify'], ['src/b.py', 'delete'], ['src/new.py', 'add']],
   );
 });
+
+test('ensure forwards only what pending does not satisfy', async () => {
+  const asked: string[][] = [];
+  const hydratable = {
+    ...base,
+    ensure: async (paths: readonly string[]) => { asked.push([...paths]); },
+  };
+  const o = new OverlaySource(hydratable, [
+    change({ path: 'src/a.py', kind: 'modify', content: 'edited' }),
+    change({ path: 'src/moved.py', kind: 'rename', fromPath: 'src/b.py', content: null }),
+    change({ path: 'gone.py', kind: 'delete', content: null }),
+  ]);
+
+  await o.ensure(['src/a.py', 'src/moved.py', 'gone.py', 'app.yaml']);
+
+  // Pending content answers a; the rename needs its base bytes from the OLD path;
+  // the delete needs nothing; the untouched file passes straight through.
+  assert.deepEqual(asked, [['src/b.py', 'app.yaml']]);
+});
+
+test('ensure is safe when the base has no hydration', async () => {
+  const o = new OverlaySource(base, [change({ path: 'src/a.py', kind: 'modify', content: 'x' })]);
+  await o.ensure(['src/a.py', 'app.yaml']);
+  assert.equal(o.read('app.yaml'), 'committed app');
+});

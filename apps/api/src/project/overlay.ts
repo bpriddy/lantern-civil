@@ -34,6 +34,24 @@ export class OverlaySource implements ProjectSource {
     return change?.kind === 'delete' || this.renamedAway.has(path);
   }
 
+  async ensure(paths: readonly string[]): Promise<void> {
+    if (!this.base.ensure) return;
+    const needed: string[] = [];
+    for (const path of paths) {
+      const change = this.changes.get(path);
+      if (!change) {
+        needed.push(path);
+        continue;
+      }
+      // A pure rename's bytes still live at the old path in the base.
+      if (change.kind === 'rename' && change.content === null && change.fromPath) {
+        needed.push(change.fromPath);
+      }
+      // Rows with content need nothing; deletes need nothing.
+    }
+    if (needed.length > 0) await this.base.ensure(needed);
+  }
+
   exists(path: string): boolean {
     if (this.isGone(path)) return false;
     if (this.changes.has(path)) return true;

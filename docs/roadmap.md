@@ -203,12 +203,10 @@ as they are, each on purpose:
   schema validation would improve the 400s an agent sees and can come with the
   agent.
 
-One pre-existing gap the review surfaced in passing: `GitHubSource` prefetches only
-manifest-shaped files (yaml/json/md, capped at 300), so a repository-backed
-project cannot open source files beyond that set — reads return nothing. Examples
-are unaffected (they read from disk). The fix is an on-demand blob fetch in
-`GitHubSource.read`, which belongs with M4's runner work since executing code needs
-exactly that path.
+One pre-existing gap the review surfaced in passing — `GitHubSource` prefetched
+only manifest-shaped files, so repository projects could not open source files or
+discover committed contracts — was fixed as M4's first commit: sources now expose
+`ensure(paths)`, hydrating the sync cache on demand, once per commit.
 
 ### Vocabulary changes strand existing manifests
 
