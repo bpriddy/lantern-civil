@@ -321,3 +321,24 @@ Every node kind that references files now scaffolds them as pending changes on
 creation (agent.yaml + prompt.md, graph files, web/index.html), so no node
 arrives broken. The Add-node dialog is two-step — type, then sub-type — because
 a sub-type is a real decision and defaulting it would decide silently.
+
+
+---
+
+## 15. The PRD learned the truth: users, scoping, and the runner — **v1.1 amendment**
+
+Unlike every entry above, this one changed the PRD itself. At the owner's
+direction, §12 was rewritten to state what is already true and what M4 must make
+true:
+
+- **A users table exists** (delta §10's pivot, now in the design rather than
+  beside it).
+- **Projects are user-scoped**, and access is the only permission: whoever can
+  open a project can edit and run it. No finer-grained layer, deliberately.
+- **Execution is user-scoped**: project code never runs in a process holding
+  platform credentials. This resolves the sandbox gate (roadmap) by decision
+  rather than acceptance — the credential-free runner is now M4's first
+  deliverable, not a deferred option.
+
+The gate's trigger — "before the runner executes its first user-authored code
+node" — stands, now with its answer chosen: isolation, built first.

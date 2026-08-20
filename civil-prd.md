@@ -1,4 +1,9 @@
-# Civil — PRD v1
+# Civil — PRD v1.1
+
+*v1.1 (2026-08-20): §12 rewritten — the IAP design is superseded by in-app Google
+OAuth with a users table (docs/prd-deltas.md §10), projects and execution are
+user-scoped, and the credential-free runner joins M4. History of every divergence
+lives in docs/prd-deltas.md.*
 
 *A web IDE for building applications at graph altitude.*
 
@@ -471,21 +476,47 @@ A dev failure surfaces the malformed payload and the prompt that produced it **s
 ```
 Browser (React SPA)
    │ HTTPS / SSE
-Cloud Load Balancer ── Identity-Aware Proxy   ← auth lives here
-   │
-   └─ Civil API (Cloud Run) ── Cloud SQL Postgres
-            └─ Secret Manager
+Civil API (Cloud Run) ── Cloud SQL Postgres
+   │        └─ Secret Manager          ← platform secrets live here, and only here
+   └─ Civil Runner (Cloud Run)         ← executes project code, holds no secrets
 ```
 
-**Auth: write zero auth code.** IAP in front of Cloud Run, your email allowlisted, app reads the identity header. No user table, no passwords, no sessions to get wrong. Adding a person is an allowlist edit. Cost: welded to GCP, already chosen.
+**Auth: Google OAuth, in the application.** Sign-in with Google — PKCE, `state`,
+`nonce`, server-side sessions, signed cookie. A `users` table keyed on the Google
+subject; sessions are rows, revocable. The consent screen stays in **Testing**
+until execution isolation ships, so sign-in is invite-only by construction.
 
-**Data.** Postgres holds projects, working-tree metadata, runs, run events. GCS holds large event payloads and cached node results. **Never store repo contents as truth** — any cache must be reconstructible by re-cloning.
+**Users, and user-scoped projects.** Everything belongs to a user. Every table
+carries `owner_id → users(id)`; every query filters by owner in the WHERE clause;
+a project is invisible to everyone but its owner. Access is the only permission:
+whoever can open a project can edit it and run it — there is no finer-grained
+layer, deliberately.
 
-**Long runs on Cloud Run** need execution decoupled from the request. Use a minimum instance with in-process job ownership in v1; move to a worker if it strains.
+**Execution is user-scoped too.** Project code never executes in a process that
+holds platform credentials. A run's execution context receives exactly the run's
+needs — the project's files at the pinned commit plus pending edits, the run's
+input, a run-scoped event channel, model access — and nothing else: no database
+URL, no GitHub key, no other user's anything. The API holds the secrets and never
+runs project code; the runner runs project code and never holds secrets. This
+ships inside M4, before the first user-authored node executes.
 
-**Git.** GitHub App, not PATs. Short-lived tokens minted server-side, never sent to the browser.
+**Data.** Postgres holds users, sessions, projects, pending edits, runs, run
+events. GCS holds large payloads and cached node results. Nothing on a container
+filesystem is ever the only copy of anything: committed content is read from
+GitHub through the Git Data API (no clone), uncommitted edits live in
+`pending_changes` — which is what makes a project resumable from any device.
 
-**Model IDs.** Do not hardcode from memory. Resolve current identifiers and the tool-use API shape at build time from https://docs.claude.com/en/docs_site_map.md. Model ID lives in config, exposed in the agent inspector as a dropdown from a server-side list.
+**Long runs on Cloud Run.** The runner executes jobs decoupled from the request;
+ownership and progress live in `runs` and `run_events`, so a watcher can detach
+and reattach without the run noticing.
+
+**Git.** GitHub App, not PATs. Short-lived tokens minted server-side, never sent
+to the browser — and never sent to the runner.
+
+**Model IDs.** Do not hardcode from memory. Resolve current identifiers and the
+tool-use API shape at build time from https://docs.claude.com/en/docs_site_map.md.
+Model ID lives in config, exposed in the agent inspector as a dropdown from a
+server-side list.
 
 ## 13. Open questions
 
@@ -502,7 +533,7 @@ Cloud Load Balancer ── Identity-Aware Proxy   ← auth lives here
 
 **M3 — Visual editing.** Structured ops for both canvases, comment-preserving writer, byte-identical round-trip test, diff preview, commit + push, pull with conflict handling, undo. *Exit: a full app is authorable from empty, and the YAML looks hand-written.*
 
-**M4 — Runtime.** Agent loop, code steps, tool calls with boundary validation, topological runner, job-shaped runs, offset-readable event log, node result cache, live canvas overlays, trace viewer with prompt sha, replay, cancel. *Exit: an `io → code → agent → io` service runs end to end and animates; a failed tool call surfaces payload + prompt side by side.*
+**M4 — Runtime.** The credential-free runner (§12) first — project code never executes beside platform secrets. Then the agent loop, code steps, tool calls with boundary validation, topological runner, job-shaped runs, offset-readable event log, node result cache, live canvas overlays, trace viewer with prompt sha, replay, cancel. *Exit: an `io → code → agent → io` service runs end to end and animates — in the isolated runner; a failed tool call surfaces payload + prompt side by side.*
 
 **M5 — Fixtures and clients.** Fixture storage, edge contract tests with red-wire rendering, single-node runs, generated api client with `wait` and resumable SSE, generated mcp client with Tasks + sync fallback, generated typed frontend client, frontend live preview, processes with schedule triggers.
 

@@ -11,7 +11,11 @@ become now.
 
 ## Gates — things that must be decided before a milestone, not during it
 
-### Sandbox isolation, before M4 executes anything
+### Sandbox isolation, before M4 executes anything — **RESOLVED: isolate first**
+
+**The owner amended the PRD (v1.1, §12): execution is user-scoped.** Project code
+never runs in a process holding platform credentials; the credential-free runner
+is M4's first deliverable. The analysis below is kept for the record.
 
 **Trigger: the first user-authored code node the runner executes.**
 
