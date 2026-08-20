@@ -206,6 +206,21 @@ are unaffected (they read from disk). The fix is an on-demand blob fetch in
 `GitHubSource.read`, which belongs with M4's runner work since executing code needs
 exactly that path.
 
+### Vocabulary changes strand existing manifests
+
+**Trigger: the next schema change to a manifest shape — decide before making it.**
+
+The boundary/client split left a real project unrenderable: one node in the old
+spelling fails the discriminated union at parse, and because graph discovery hangs
+off the composition, the whole canvas emptied rather than showing five good nodes
+and one bad one. The fix was a two-line edit, but a person had to know to make it.
+
+Worth deciding before the vocabulary moves again: either a migration note in the
+diagnostic itself ("client: api is now boundary: api — edit app.yaml") so the
+error teaches the fix, or a `civil migrate` op that rewrites old spellings as a
+pending change. And separately: a parse failure in one node should degrade to
+that node, not blank the altitude.
+
 ### Known gaps, small
 
 - **`canvas.fit` (F) and `nav.descend` (Enter) are declared but unhandled** — the
