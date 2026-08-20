@@ -42,8 +42,13 @@ export interface CommandContext {
   depth: number;
 }
 
-/** What a command did, in words. Undefined means it declined and nothing happened. */
-export type CommandOutcome = string | undefined;
+/**
+ * What a command did, in words. Undefined means it declined and nothing happened —
+ * which is worth a toast, because a keystroke that silently does nothing reads as a
+ * bug. Null means it acted and the effect speaks for itself on screen — deleting the
+ * selected node is watched happening, so no toast repeats it.
+ */
+export type CommandOutcome = string | null | undefined;
 
 export interface Command {
   id: CommandId;
@@ -198,14 +203,19 @@ export const COMMANDS: readonly Command[] = [
     description:
       'Pick up commits pushed to the repository since this project was opened. Civil ' +
       'edits against a fixed commit, so it does not follow the branch on its own.',
-    keys: ['mod+r'],
+    // Not mod+r: the browser owns that one — it is how the page reloads, and no
+    // amount of preventDefault reliably wins it back. Plain R matches the other
+    // single-key canvas verbs (N adds, F fits).
+    keys: ['r'],
     enabled: (c) => c.where !== 'home' && c.canCommit,
   },
   {
     id: 'project.settings',
     title: 'Settings',
     description: 'Show account and connections.',
-    keys: ['mod+,'],
+    // Not mod+comma — that is the browser's own settings on macOS. One key to the
+    // right, no collision.
+    keys: ['mod+.'],
     enabled: (c) => c.where !== 'home',
   },
   {

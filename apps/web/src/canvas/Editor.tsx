@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
   Controls,
   ReactFlow,
   ReactFlowProvider,
+  applyNodeChanges,
   useReactFlow,
   type Node,
+  type NodeChange,
   type Viewport,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -93,7 +95,7 @@ function Surface({
    */
   const viewports = useRef<Map<number, Viewport>>(new Map());
 
-  const { nodes, edges, nodeTypes } = useMemo(() => {
+  const { nodes: computedNodes, edges, nodeTypes } = useMemo(() => {
     const context = {
       graphs: bundle.graphs,
       agents: bundle.agents,
@@ -116,6 +118,31 @@ function Surface({
       nodeTypes: graphNodeTypes,
     };
   }, [bundle, current]);
+
+  /**
+   * The manifest is the truth, but a drag needs sixty frames of provisional truth
+   * before its one real write. React Flow reports positions through onNodesChange;
+   * holding them in state here is what makes the node travel with the pointer
+   * instead of teleporting on mouse-up when the op round-trips.
+   */
+  const [liveNodes, setLiveNodes] = useState<Node[]>(computedNodes);
+  const dragging = useRef(false);
+  useEffect(() => {
+    // A refresh mid-drag must not yank the node out from under the pointer; the
+    // drop's own op and refresh will reconcile everything a moment later.
+    if (!dragging.current) setLiveNodes(computedNodes);
+  }, [computedNodes]);
+
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    // Positions and measurements only. Selection and removal belong to the shell,
+    // which expresses them as ops — accepting them here would fork that authority.
+    const positional = changes.filter(
+      (change) => change.type === 'position' || change.type === 'dimensions',
+    );
+    if (positional.length > 0) {
+      setLiveNodes((current) => applyNodeChanges(positional, current));
+    }
+  }, []);
 
   const depth = stack.length - 1;
 
@@ -202,7 +229,7 @@ function Surface({
 
   return (
     <ReactFlow
-      nodes={nodes.map((n) => ({ ...n, selected: n.id === selectedId }))}
+      nodes={liveNodes.map((n) => ({ ...n, selected: n.id === selectedId }))}
       edges={edges.map((e) => ({ ...e, selected: e.id === selectedEdgeId }))}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={handleDoubleClick}
@@ -219,9 +246,17 @@ function Surface({
         onSelectEdge(null);
       }}
       onConnect={handleConnect}
-      // Sent on drop rather than per frame: a position is worth one op, and one op is
-      // one pending change, not sixty.
-      onNodeDragStop={(_e, node) => onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y))}
+      onNodesChange={handleNodesChange}
+      onNodeDragStart={() => {
+        dragging.current = true;
+      }}
+      // The op is sent on drop rather than per frame: a position is worth one op,
+      // and one op is one pending change, not sixty. The sixty frames in between
+      // live in liveNodes above.
+      onNodeDragStop={(_e, node) => {
+        dragging.current = false;
+        onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y));
+      }}
       // Deletion belongs to the command registry — one named action, one op path,
       // one toast — so React Flow's own delete key is turned off rather than letting
       // two listeners race for the same keystroke.

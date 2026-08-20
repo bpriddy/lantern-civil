@@ -45,11 +45,13 @@ export function useCommands(context: CommandContext, handlers: CommandHandlers) 
     }
 
     const outcome = handler();
+    // Null is "done, and you watched it happen" — the effect is its own feedback,
+    // so no toast. Undefined is "declined", which still deserves one: a keystroke
+    // that silently does nothing reads as a bug.
+    if (outcome === null) return;
     setEffect({
       seq: seq.current,
       title: command.title,
-      // A command that returns nothing declined; saying so beats a toast that looks
-      // like success while nothing changed.
       detail: outcome ?? 'Nothing to do.',
       refused: outcome === undefined,
       ...(chord ? { chord } : {}),

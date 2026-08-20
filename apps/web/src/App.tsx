@@ -356,21 +356,24 @@ function Workspace({ me }: { me: Me }) {
         return 'Selection cleared.';
       },
       'canvas.delete': () => {
+        // Quiet on success: the node or edge is watched leaving the canvas, which
+        // is better feedback than a toast about it. Refusals still speak from
+        // runOps — a Delete that does nothing must say why.
         if (selectedId) {
           const leaving = selectedId;
-          void runOps([{ op: 'removeNode', id: leaving }], 'Delete').then((ok) => {
+          void runOps([{ op: 'removeNode', id: leaving }], 'Delete', { quiet: true }).then((ok) => {
             // Only if it is still this selection: the user may have moved on while
             // the op was in flight, and their new selection is not ours to clear.
             if (ok) setSelectedId((cur) => (cur === leaving ? null : cur));
           });
-          return `Removing “${leaving}”…`;
+          return null;
         }
         if (selectedEdgeId) {
           const leaving = selectedEdgeId;
-          void runOps([{ op: 'removeEdge', id: leaving }], 'Delete').then((ok) => {
+          void runOps([{ op: 'removeEdge', id: leaving }], 'Delete', { quiet: true }).then((ok) => {
             if (ok) setSelectedEdgeId((cur) => (cur === leaving ? null : cur));
           });
-          return `Disconnecting “${leaving}”…`;
+          return null;
         }
         return undefined;
       },
@@ -501,7 +504,7 @@ function Workspace({ me }: { me: Me }) {
   }, [stack, load]);
 
   const runOps = useCallback(
-    async (ops: ManifestOp[], title: string): Promise<boolean> => {
+    async (ops: ManifestOp[], title: string, opts?: { quiet?: boolean }): Promise<boolean> => {
       if (!activeId || !manifestPath) return false;
       try {
         const { summary, previous, hadPending } = await applyOps(activeId, manifestPath, ops);
@@ -510,9 +513,16 @@ function Workspace({ me }: { me: Me }) {
         if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
         setUndoDepth(undoStack.current.length);
         await refresh();
-        report({ title, detail: summary });
+        // Direct manipulation announces itself — the node moves, the edge appears,
+        // the field changes — so `quiet` skips the toast there. Indirect invocations
+        // (a key chord now, an agent later) keep it: their effect needs saying. The
+        // summary still exists either way, which is what agent-first rule 4 requires
+        // — reportable is about the string, not about always rendering it.
+        if (!opts?.quiet) report({ title, detail: summary });
         return true;
       } catch (error) {
+        // Refusals always speak, quiet or not: when a gesture does nothing, silence
+        // reads as a bug.
         report({ title, detail: (error as Error).message, refused: true });
         return false;
       }
@@ -748,9 +758,9 @@ function Workspace({ me }: { me: Me }) {
             onAscend={ascend}
             onSelect={setSelectedId}
             onSelectEdge={setSelectedEdgeId}
-            onConnect={(edge) => void runOps([{ op: 'addEdge', edge }], 'Connect')}
+            onConnect={(edge) => void runOps([{ op: 'addEdge', edge }], 'Connect', { quiet: true })}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
-            onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move')}
+            onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
           />
         )}
       </main>
@@ -764,21 +774,21 @@ function Workspace({ me }: { me: Me }) {
             altitude={current}
             selectedId={selectedId}
             selectedEdgeId={selectedEdgeId}
-            onPatch={(id, patch) => void runOps([{ op: 'updateNode', id, patch }], 'Edit')}
+            onPatch={(id, patch) => void runOps([{ op: 'updateNode', id, patch }], 'Edit', { quiet: true })}
             onRename={(from, to) =>
-              void runOps([{ op: 'renameNode', from, to }], 'Rename').then((ok) => {
+              void runOps([{ op: 'renameNode', from, to }], 'Rename', { quiet: true }).then((ok) => {
                 // The selection follows the node to its new name — unless the user
                 // has already selected something else mid-flight.
                 if (ok) setSelectedId((cur) => (cur === from ? to : cur));
               })
             }
             onRemoveNode={(id) =>
-              void runOps([{ op: 'removeNode', id }], 'Delete').then((ok) => {
+              void runOps([{ op: 'removeNode', id }], 'Delete', { quiet: true }).then((ok) => {
                 if (ok) setSelectedId((cur) => (cur === id ? null : cur));
               })
             }
             onRemoveEdge={(id) =>
-              void runOps([{ op: 'removeEdge', id }], 'Disconnect').then((ok) => {
+              void runOps([{ op: 'removeEdge', id }], 'Disconnect', { quiet: true }).then((ok) => {
                 if (ok) setSelectedEdgeId((cur) => (cur === id ? null : cur));
               })
             }
