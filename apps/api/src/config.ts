@@ -19,6 +19,8 @@ const zEnv = z.object({
 
   /** Absolute origin this instance is reached at. The OAuth redirect must match exactly. */
   CIVIL_PUBLIC_URL: z.string().url().optional(),
+  /** Where the credential-free runner listens (PRD 12). Absent = runs cannot execute. */
+  CIVIL_RUNNER_URL: z.string().url().optional(),
 
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
@@ -53,6 +55,7 @@ export type Config = Readonly<{
   logLevel: string;
   databaseUrl: string;
   publicUrl: string | undefined;
+  runnerUrl: string | undefined;
   google: { clientId: string; clientSecret: string } | undefined;
   sessionSecret: string | undefined;
   github:
@@ -81,6 +84,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
     publicUrl: e.CIVIL_PUBLIC_URL,
+    runnerUrl: e.CIVIL_RUNNER_URL,
     google:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }
