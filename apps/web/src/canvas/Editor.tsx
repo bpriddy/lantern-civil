@@ -6,6 +6,8 @@ import {
   ReactFlow,
   ReactFlowProvider,
   applyNodeChanges,
+  getNodesBounds,
+  getViewportForBounds,
   useReactFlow,
   type Node,
   type NodeChange,
@@ -53,6 +55,9 @@ export interface EditorProps {
   onAscend: () => void;
   /** React Flow's own gestures decide what is selected; the shell owns the state. */
   onSelectionChange: (nodes: string[], edges: string[]) => void;
+  /** Hands the shell the canvas-owned verbs (fit, for now) so commands can reach
+   *  them. The registry names the action; the canvas performs it. */
+  onRegisterActions?: (actions: { fit: () => void }) => void;
   /** Drawing a connection. The kind is inferred here and sent explicitly. */
   onConnect: (edge: Record<string, unknown>) => void;
   /** Refused connections say why rather than silently not happening. */
@@ -76,11 +81,30 @@ function Surface({
   onDescend,
   onAscend,
   onSelectionChange,
+  onRegisterActions,
   onConnect,
   onRefuse,
   onMoveNode,
 }: EditorProps) {
   const flow = useReactFlow();
+
+  useEffect(() => {
+    onRegisterActions?.({
+      // Not fitView: in controlled mode React Flow queues it until the next nodes
+      // change, and a keypress is followed by no change — the queue never flushes
+      // (its own Controls button has the same problem here). The viewport is
+      // computed directly and set immediately instead, the same non-queued path
+      // the descent restore uses.
+      fit: () => {
+        const pane = document.querySelector('.react-flow');
+        if (!pane) return;
+        const { width, height } = pane.getBoundingClientRect();
+        const bounds = getNodesBounds(flow.getNodes());
+        const viewport = getViewportForBounds(bounds, width, height, 0.2, 1.1, 0.22);
+        void flow.setViewport(viewport, { duration: DESCENT_MS });
+      },
+    });
+  }, [onRegisterActions, flow]);
   // A code level is rendered by the takeover, not here; the deepest canvas level is
   // what stays behind it.
   const current =
@@ -134,14 +158,17 @@ function Surface({
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      // Positions and measurements update the live nodes; selection changes are
-      // forwarded to the shell, which owns what "the selection" means. Removal
-      // never happens here at all — it is an op, behind a confirmation.
-      const positional = changes.filter(
-        (change) => change.type === 'position' || change.type === 'dimensions',
+      // React Flow's bookkeeping (positions, measurements, replaces) is applied;
+      // selection is forwarded to the shell, which owns what it means; removal
+      // never happens here at all — it is an op, behind a confirmation. Applying
+      // the bookkeeping is load-bearing beyond the drag: fitView in controlled
+      // mode queues until the parent responds to a change event with a re-render,
+      // so a handler that ignores changes silently disables fit.
+      const applied = changes.filter(
+        (change) => change.type !== 'select' && change.type !== 'remove',
       );
-      if (positional.length > 0) {
-        setLiveNodes((current) => applyNodeChanges(positional, current));
+      if (applied.length > 0) {
+        setLiveNodes((current) => applyNodeChanges(applied, current));
       }
 
       const selects = changes.filter((change) => change.type === 'select');
@@ -295,8 +322,9 @@ function Surface({
   );
 }
 
-/** Where a double-click lands: another canvas, a code takeover, or nowhere. */
-function descentTarget(data: NodeData): Altitude | undefined {
+/** Where a descent lands: another canvas, a code takeover, or nowhere. Exported
+ *  because the Enter command asks the same question the double-click asks. */
+export function descentTarget(data: NodeData): Altitude | undefined {
   const manifest = data.manifest;
   const descent = data.descent;
   if (!descent) return undefined;

@@ -16,6 +16,7 @@ export function Inspector({
   selectedIds,
   selectedEdgeIds,
   onPatch,
+  onPatchEdge,
   onRename,
   onRemoveNode,
   onRemoveEdge,
@@ -25,6 +26,7 @@ export function Inspector({
   selectedIds: string[];
   selectedEdgeIds: string[];
   onPatch: (id: string, patch: Record<string, unknown>) => void;
+  onPatchEdge: (id: string, patch: Record<string, unknown>) => void;
   onRename: (from: string, to: string) => void;
   onRemoveNode: (id: string) => void;
   onRemoveEdge: (id: string) => void;
@@ -51,7 +53,12 @@ export function Inspector({
             onRemove={() => onRemoveNode(node.id)}
           />
         ) : edge ? (
-          <EdgeDetail edge={edge} onRemove={() => onRemoveEdge(edge.id)} />
+          <EdgeDetail
+            edge={edge}
+            nodes={nodesOf(bundle, altitude)}
+            onPatch={(patch) => onPatchEdge(edge.id, patch)}
+            onRemove={() => onRemoveEdge(edge.id)}
+          />
         ) : many ? (
           <p className="muted">
             {selectedIds.length > 0
@@ -338,31 +345,78 @@ function NodeDetail({
 
 function EdgeDetail({
   edge,
+  nodes,
+  onPatch,
   onRemove,
 }: {
   edge: CompositionEdge | GraphEdge;
+  nodes: readonly (CompositionNode | GraphNode)[];
+  onPatch: (patch: Record<string, unknown>) => void;
   onRemove: () => void;
 }) {
+  const from = nodes.find((n) => n.id === edge.from.node);
+  const to = nodes.find((n) => n.id === edge.to.node);
+
+  /**
+   * Almost every edge's kind is implied by what it connects — client → boundary
+   * can only route, io → code can only flow — so offering a control there would
+   * be a question with one answer. The single genuine choice is agent → code:
+   * a tool grant (capability) or the agent's output feeding a step (flow).
+   */
+  const kindIsAChoice = from?.type === 'agent' && to?.type === 'code';
+  const capability = edge.kind === 'capability';
+
   return (
     <>
       <dl className="kv">
         <dt>edge</dt>
         <dd>{edge.id}</dd>
         <dt>kind</dt>
-        <dd>{edge.kind}</dd>
+        {kindIsAChoice ? (
+          <dd>
+            <select
+              className="field"
+              value={edge.kind}
+              onChange={(e) => onPatch({ kind: e.target.value })}
+            >
+              <option value="capability">capability — tools the agent may call</option>
+              <option value="flow">flow — output feeds the step</option>
+            </select>
+          </dd>
+        ) : (
+          <dd title="Implied by what this edge connects. To change it, change the endpoints.">
+            {edge.kind}
+          </dd>
+        )}
         <dt>from</dt>
         <dd>{edge.from.node}</dd>
         <dt>to</dt>
-        <dd>
-          {edge.to.node}
-          {'function' in edge.to && edge.to.function ? ` · ${edge.to.function}` : ''}
-        </dd>
+        <dd>{edge.to.node}</dd>
+        {capability ? (
+          <Field
+            label="function"
+            value={'function' in edge.to ? (edge.to.function ?? '') : ''}
+            placeholder="any public function"
+            onCommit={(v) =>
+              onPatch({ to: v === '' ? { node: edge.to.node } : { node: edge.to.node, function: v } })
+            }
+          />
+        ) : null}
       </dl>
       <button type="button" className="danger-link" onClick={onRemove}>
         Disconnect
       </button>
     </>
   );
+}
+
+function nodesOf(
+  bundle: ProjectBundle | undefined,
+  altitude: Altitude,
+): readonly (CompositionNode | GraphNode)[] {
+  if (!bundle || altitude.kind === 'code') return [];
+  if (altitude.kind === 'composition') return bundle.composition?.spec.nodes ?? [];
+  return bundle.graphs[altitude.path]?.spec.nodes ?? [];
 }
 
 function findNode(

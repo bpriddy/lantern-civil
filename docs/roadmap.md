@@ -221,13 +221,17 @@ error teaches the fix, or a `civil migrate` op that rewrites old spellings as a
 pending change. And separately: a parse failure in one node should degrade to
 that node, not blank the altitude.
 
-### Known gaps, small
+### Known issue: fit-to-view does not fire
 
-- **`canvas.fit` (F) and `nav.descend` (Enter) are declared but unhandled** — the
-  registry offers them, KeyHelp lists them, and invoking them toasts "Not
-  available here." Both need the React Flow instance, which lives inside the
-  Editor; wiring them is part of deciding how commands reach component-owned
-  capabilities (the same seam the command-target question lives in).
+`F` and React Flow's own fit button both leave the viewport where it is (observed
+in browser automation; the owner deprioritised the hunt). Established so far: the
+command layer works (the handler runs, the registered action is invoked), React
+Flow's queued fitView never flushes in our controlled setup, and a direct
+`getNodesBounds` + `setViewport` also did not move the viewport — plus one
+uncaught `undefined.includes` from an event handler on the same page, possibly
+related. The arrival fit on descent still works. Next probe when picked up again:
+whether `setViewport` works at all outside the descent-restore path, on a clean
+production build rather than a HMR-churned dev page.
 
 ### Left open on purpose, small
 

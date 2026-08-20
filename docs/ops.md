@@ -154,7 +154,7 @@ The vocabulary is complete against PRD §7.1.
 | `removeEdge` | Removes an edge by id | `canvas.delete` on a selected edge; the inspector's Disconnect |
 | `removeNode` | Removes a node, its edges (`cascadeEdges`, default true), and its layout entry | `canvas.delete` on a selected node; the inspector's Remove |
 | `updateNode` | Sets fields from a patch; `null` removes a field; `id`/`type` refused | Every editable inspector field |
-| `updateEdge` | Same mechanism on an edge | Nothing yet — an agent's op first |
+| `updateEdge` | Same mechanism on an edge | The edge inspector: kind where it is a genuine choice (agent → code), and a capability edge's `function` |
 | `renameNode` | Rewrites the id and, with `updateReferences` (default true), every edge endpoint, `exposes`/`calls` entry, `invocation` key, and the layout key, in one splice set | The inspector's id field |
 
 Worth knowing about the two removal semantics: **`removeNode` cascades edges only.**

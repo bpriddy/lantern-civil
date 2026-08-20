@@ -1,5 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Editor, type Altitude } from './canvas/Editor.js';
+import { Editor, descentTarget, type Altitude } from './canvas/Editor.js';
+import { compositionToFlow, graphToFlow } from './canvas/model.js';
+import type { NodeData } from './canvas/nodes.js';
 /**
  * Monaco is about a megabyte gzipped — more than the rest of Civil combined. Loading
  * it eagerly would make every canvas session pay for an editor it may never open, so
@@ -155,6 +157,9 @@ function Workspace({ me }: { me: Me }) {
     undoStack.current = [];
     setUndoDepth(0);
   }, []);
+
+  /** The canvas's own verbs, registered by the Editor when it mounts. */
+  const canvasActions = useRef<{ fit: () => void } | null>(null);
 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [activeId, setActiveId] = useState<string | undefined>(
@@ -351,6 +356,36 @@ function Workspace({ me }: { me: Me }) {
         const leaving = stack[stack.length - 1]!;
         ascend();
         return `Left ${leaving.label}.`;
+      },
+      'nav.descend': () => {
+        // The same question the double-click asks, asked of the one selected node.
+        if (current.kind === 'code' || !bundle) return undefined;
+        if (selectedIds.length !== 1 || selectedEdgeIds.length > 0) {
+          return selectedEdgeIds.length > 0 ? 'An edge has no interior.' : undefined;
+        }
+        const context = {
+          graphs: bundle.graphs,
+          agents: bundle.agents,
+          files: bundle.files,
+          contracts: bundle.contracts,
+        };
+        const flow =
+          current.kind === 'composition'
+            ? bundle.composition &&
+              compositionToFlow(bundle.composition, bundle.compositionPath, bundle.diagnostics, context)
+            : bundle.graphs[current.path] &&
+              graphToFlow(bundle.graphs[current.path]!, current.path, bundle.diagnostics, context);
+        const flowNode = flow?.nodes.find((n) => n.id === selectedIds[0]);
+        const target = flowNode ? descentTarget(flowNode.data as NodeData) : undefined;
+        if (!target) return `“${selectedIds[0]}” is a leaf — nothing to enter.`;
+        descend(target);
+        return `Entered ${target.label}.`;
+      },
+      'canvas.fit': () => {
+        if (!canvasActions.current) return undefined;
+        canvasActions.current.fit();
+        // The motion is its own feedback.
+        return null;
       },
       'canvas.clearSelection': () => {
         if (selectedIds.length === 0 && selectedEdgeIds.length === 0) return undefined;
@@ -858,6 +893,9 @@ function Workspace({ me }: { me: Me }) {
               setSelectedIds(nodes);
               setSelectedEdgeIds(edgeIds);
             }}
+            onRegisterActions={(actions) => {
+              canvasActions.current = actions;
+            }}
             onConnect={(edge) => void connectEdge(edge)}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
@@ -875,6 +913,7 @@ function Workspace({ me }: { me: Me }) {
             selectedIds={selectedIds}
             selectedEdgeIds={selectedEdgeIds}
             onPatch={(id, patch) => void runOps([{ op: 'updateNode', id, patch }], 'Edit', { quiet: true })}
+            onPatchEdge={(id, patch) => void runOps([{ op: 'updateEdge', id, patch }], 'Edit', { quiet: true })}
             onRename={(from, to) =>
               void runOps([{ op: 'renameNode', from, to }], 'Rename', { quiet: true }).then((ok) => {
                 // The selection follows the node to its new name — unless the user

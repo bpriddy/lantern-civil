@@ -37,6 +37,15 @@ export class OverlaySource implements ProjectSource {
   exists(path: string): boolean {
     if (this.isGone(path)) return false;
     if (this.changes.has(path)) return true;
+    // Directories are implied by their contents, pending contents included — the
+    // same rule every base source applies. Without this, a scaffolded
+    // web/index.html leaves the client's `path: web` "not existing" until the
+    // commit, and a node that validates only after committing breaks the promise
+    // that pending edits behave like real ones.
+    const prefix = path.endsWith('/') ? path : `${path}/`;
+    for (const [p, change] of this.changes) {
+      if (change.kind !== 'delete' && p.startsWith(prefix)) return true;
+    }
     return this.base.exists(path);
   }
 

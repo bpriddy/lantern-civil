@@ -34,6 +34,17 @@ test('an edit shadows the committed file', () => {
   assert.equal(o.read('src/b.py'), 'committed b', 'untouched files still come from HEAD');
 });
 
+test('a directory implied by a pending file exists before the commit', () => {
+  // The scaffold writes web/index.html as a pending add; the client node's
+  // `path: web` must validate against it immediately, not after committing.
+  const overlay = new OverlaySource(base, [
+    change({ path: 'web/index.html', kind: 'add', content: '<!doctype html>' }),
+  ]);
+  assert.equal(overlay.exists('web'), true);
+  assert.equal(overlay.exists('web/'), true);
+  assert.equal(overlay.exists('we'), false, 'a prefix of a name is not a directory');
+});
+
 test('an added file exists before it is committed', () => {
   const o = new OverlaySource(base, [change({ path: 'src/new.py', kind: 'add', content: 'brand new' })]);
   assert.equal(o.exists('src/new.py'), true);
