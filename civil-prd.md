@@ -513,6 +513,12 @@ and reattach without the run noticing.
 **Git.** GitHub App, not PATs. Short-lived tokens minted server-side, never sent
 to the browser — and never sent to the runner.
 
+**Model access is platform-level.** One Anthropic key for the whole platform —
+not per project, not per user — held by the runner as its only secret, the single
+deliberate exception to "the runner holds no secrets" (a hostile run could spend
+model budget; it still cannot touch data, git, or anyone's anything). Per-user
+keys and budgets are not v1.
+
 **Model IDs.** Do not hardcode from memory. Resolve current identifiers and the
 tool-use API shape at build time from https://docs.claude.com/en/docs_site_map.md.
 Model ID lives in config, exposed in the agent inspector as a dropdown from a
