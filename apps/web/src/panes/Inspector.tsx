@@ -13,8 +13,8 @@ import type { ProjectBundle } from '../project.js';
 export function Inspector({
   bundle,
   altitude,
-  selectedId,
-  selectedEdgeId,
+  selectedIds,
+  selectedEdgeIds,
   onPatch,
   onRename,
   onRemoveNode,
@@ -22,15 +22,21 @@ export function Inspector({
 }: {
   bundle: ProjectBundle | undefined;
   altitude: Altitude;
-  selectedId: string | null;
-  selectedEdgeId: string | null;
+  selectedIds: string[];
+  selectedEdgeIds: string[];
   onPatch: (id: string, patch: Record<string, unknown>) => void;
   onRename: (from: string, to: string) => void;
   onRemoveNode: (id: string) => void;
   onRemoveEdge: (id: string) => void;
 }) {
-  const node = findNode(bundle, altitude, selectedId);
-  const edge = findEdge(bundle, altitude, selectedEdgeId);
+  // Detail is for a selection of one; a box-select gets a count and the Delete
+  // hint, because bulk-editing fields across nodes is not a thing that means
+  // anything.
+  const single = selectedIds.length === 1 && selectedEdgeIds.length === 0;
+  const singleEdge = selectedEdgeIds.length === 1 && selectedIds.length === 0;
+  const many = selectedIds.length + selectedEdgeIds.length > 1;
+  const node = single ? findNode(bundle, altitude, selectedIds[0]!) : undefined;
+  const edge = singleEdge ? findEdge(bundle, altitude, selectedEdgeIds[0]!) : undefined;
 
   return (
     <>
@@ -46,6 +52,17 @@ export function Inspector({
           />
         ) : edge ? (
           <EdgeDetail edge={edge} onRemove={() => onRemoveEdge(edge.id)} />
+        ) : many ? (
+          <p className="muted">
+            {selectedIds.length > 0
+              ? `${selectedIds.length} node${selectedIds.length === 1 ? '' : 's'}`
+              : ''}
+            {selectedIds.length > 0 && selectedEdgeIds.length > 0 ? ' and ' : ''}
+            {selectedEdgeIds.length > 0
+              ? `${selectedEdgeIds.length} edge${selectedEdgeIds.length === 1 ? '' : 's'}`
+              : ''}{' '}
+            selected. Delete removes them together.
+          </p>
         ) : (
           <p className="muted">Nothing selected.</p>
         )}

@@ -46,13 +46,13 @@ const DESCENT_ZOOM = 2.2;
 export interface EditorProps {
   bundle: ProjectBundle;
   stack: Altitude[];
-  selectedId: string | null;
-  selectedEdgeId: string | null;
+  /** Selection is plural: shift-drag boxes and shift-clicks accumulate it. */
+  selectedIds: string[];
+  selectedEdgeIds: string[];
   onDescend: (altitude: Altitude) => void;
   onAscend: () => void;
-  onSelect: (id: string | null) => void;
-  /** Edges select too, so Delete knows what "the selection" is. */
-  onSelectEdge: (id: string | null) => void;
+  /** React Flow's own gestures decide what is selected; the shell owns the state. */
+  onSelectionChange: (nodes: string[], edges: string[]) => void;
   /** Drawing a connection. The kind is inferred here and sent explicitly. */
   onConnect: (edge: Record<string, unknown>) => void;
   /** Refused connections say why rather than silently not happening. */
@@ -71,12 +71,11 @@ export function Editor(props: EditorProps) {
 function Surface({
   bundle,
   stack,
-  selectedId,
-  selectedEdgeId,
+  selectedIds,
+  selectedEdgeIds,
   onDescend,
   onAscend,
-  onSelect,
-  onSelectEdge,
+  onSelectionChange,
   onConnect,
   onRefuse,
   onMoveNode,
@@ -133,16 +132,44 @@ function Surface({
     if (!dragging.current) setLiveNodes(computedNodes);
   }, [computedNodes]);
 
-  const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    // Positions and measurements only. Selection and removal belong to the shell,
-    // which expresses them as ops — accepting them here would fork that authority.
-    const positional = changes.filter(
-      (change) => change.type === 'position' || change.type === 'dimensions',
-    );
-    if (positional.length > 0) {
-      setLiveNodes((current) => applyNodeChanges(positional, current));
-    }
-  }, []);
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      // Positions and measurements update the live nodes; selection changes are
+      // forwarded to the shell, which owns what "the selection" means. Removal
+      // never happens here at all — it is an op, behind a confirmation.
+      const positional = changes.filter(
+        (change) => change.type === 'position' || change.type === 'dimensions',
+      );
+      if (positional.length > 0) {
+        setLiveNodes((current) => applyNodeChanges(positional, current));
+      }
+
+      const selects = changes.filter((change) => change.type === 'select');
+      if (selects.length > 0) {
+        const next = new Set(selectedIds);
+        for (const change of selects) {
+          if (change.selected) next.add(change.id);
+          else next.delete(change.id);
+        }
+        onSelectionChange([...next], selectedEdgeIds);
+      }
+    },
+    [selectedIds, selectedEdgeIds, onSelectionChange],
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: { type: string; id?: string; selected?: boolean }[]) => {
+      const selects = changes.filter((change) => change.type === 'select');
+      if (selects.length === 0) return;
+      const next = new Set(selectedEdgeIds);
+      for (const change of selects) {
+        if (change.selected) next.add(change.id!);
+        else next.delete(change.id!);
+      }
+      onSelectionChange(selectedIds, [...next]);
+    },
+    [selectedIds, selectedEdgeIds, onSelectionChange],
+  );
 
   const depth = stack.length - 1;
 
@@ -229,24 +256,13 @@ function Surface({
 
   return (
     <ReactFlow
-      nodes={liveNodes.map((n) => ({ ...n, selected: n.id === selectedId }))}
-      edges={edges.map((e) => ({ ...e, selected: e.id === selectedEdgeId }))}
+      nodes={liveNodes.map((n) => ({ ...n, selected: selectedIds.includes(n.id) }))}
+      edges={edges.map((e) => ({ ...e, selected: selectedEdgeIds.includes(e.id) }))}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={handleDoubleClick}
-      onNodeClick={(_e, node) => {
-        onSelectEdge(null);
-        onSelect(node.id);
-      }}
-      onEdgeClick={(_e, edge) => {
-        onSelect(null);
-        onSelectEdge(edge.id);
-      }}
-      onPaneClick={() => {
-        onSelect(null);
-        onSelectEdge(null);
-      }}
       onConnect={handleConnect}
       onNodesChange={handleNodesChange}
+      onEdgesChange={handleEdgesChange}
       onNodeDragStart={() => {
         dragging.current = true;
       }}

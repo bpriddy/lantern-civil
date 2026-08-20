@@ -1220,3 +1220,42 @@ select.field { cursor: pointer; }
 .diff-kind-modify { color: var(--warn); }
 
 .diff-editor { flex: 1; min-width: 0; }
+
+/* ---- delete confirmation -------------------------------------------------- */
+
+.confirm { width: 380px; }
+
+.confirm-body { padding: 12px 14px 4px; }
+
+.confirm-id {
+  display: inline-block;
+  margin: 0 6px 6px 0;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-inset);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px 12px;
+}
+
+.confirm-delete {
+  height: 26px;
+  padding: 0 14px;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--danger);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.confirm-delete:hover { background: rgba(229, 103, 79, 0.12); }

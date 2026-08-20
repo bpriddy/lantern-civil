@@ -13,6 +13,7 @@ const DiffPanel = lazy(() =>
   import('./panes/DiffPanel.js').then((m) => ({ default: m.DiffPanel })),
 );
 import { CommitBar } from './panes/CommitBar.js';
+import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
 import { Toast } from './commands/Toast.js';
 import { useCommands } from './commands/useCommands.js';
@@ -131,8 +132,15 @@ function Workspace({ me }: { me: Me }) {
    * that "inside": the last entry is where you are, and the rest is how you got there.
    */
   const [stack, setStack] = useState<Altitude[]>([{ kind: 'composition', label: 'app' }]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  /** Selection is plural — shift-drag boxes and shift-clicks accumulate it. */
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  /** What Delete is asking about, while it asks. */
+  const [confirming, setConfirming] = useState<{ nodes: string[]; edges: string[] } | null>(null);
+  const clearSelection = useCallback(() => {
+    setSelectedIds([]);
+    setSelectedEdgeIds([]);
+  }, []);
   const [committing, setCommitting] = useState(false);
   const [commitNote, setCommitNote] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
@@ -234,8 +242,7 @@ function Workspace({ me }: { me: Me }) {
       .then((bundle) => {
         setLoad({ status: 'ready', bundle });
         setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
-        setSelectedId(null);
-        setSelectedEdgeId(null);
+        clearSelection();
         setDiffOpen(false);
         // History is per project; entries name files in the one being left.
         clearUndo();
@@ -267,8 +274,7 @@ function Workspace({ me }: { me: Me }) {
   }, []);
 
   const openFile = useCallback((path: string) => {
-    setSelectedId(null);
-    setSelectedEdgeId(null);
+    clearSelection();
     setStack((current) => {
       const label = path.split('/').pop() ?? path;
       const top = current[current.length - 1];
@@ -282,7 +288,7 @@ function Workspace({ me }: { me: Me }) {
       }
       return [...current, { kind: 'code' as const, label, files: [path], active: path }];
     });
-  }, []);
+  }, [clearSelection]);
 
   const enterProject = useCallback((id: string) => {
     setActiveId(id);
@@ -295,22 +301,19 @@ function Workspace({ me }: { me: Me }) {
   }, []);
 
   const descend = useCallback((altitude: Altitude) => {
-    setSelectedId(null);
-    setSelectedEdgeId(null);
+    clearSelection();
     setStack((s) => [...s, altitude]);
-  }, []);
+  }, [clearSelection]);
 
   const ascend = useCallback(() => {
-    setSelectedId(null);
-    setSelectedEdgeId(null);
+    clearSelection();
     setStack((s) => (s.length > 1 ? s.slice(0, -1) : s));
-  }, []);
+  }, [clearSelection]);
 
   const ascendTo = useCallback((index: number) => {
-    setSelectedId(null);
-    setSelectedEdgeId(null);
+    clearSelection();
     setStack((s) => s.slice(0, index + 1));
-  }, []);
+  }, [clearSelection]);
 
   const bundle = load.status === 'ready' ? load.bundle : undefined;
   const current = stack[stack.length - 1]!;
@@ -328,7 +331,7 @@ function Workspace({ me }: { me: Me }) {
       // commands must not fire underneath it, or the diff on screen stops being
       // the diff that commits.
       where: atHome ? 'home' : diffOpen ? 'diff' : current.kind === 'code' ? 'code' : 'canvas',
-      hasSelection: selectedId !== null || selectedEdgeId !== null,
+      hasSelection: selectedIds.length > 0 || selectedEdgeIds.length > 0,
       pendingCount,
       canCommit,
       canUndo: undoDepth > 0,
@@ -350,32 +353,16 @@ function Workspace({ me }: { me: Me }) {
         return `Left ${leaving.label}.`;
       },
       'canvas.clearSelection': () => {
-        if (!selectedId && !selectedEdgeId) return undefined;
-        setSelectedId(null);
-        setSelectedEdgeId(null);
+        if (selectedIds.length === 0 && selectedEdgeIds.length === 0) return undefined;
+        clearSelection();
         return 'Selection cleared.';
       },
       'canvas.delete': () => {
-        // Quiet on success: the node or edge is watched leaving the canvas, which
-        // is better feedback than a toast about it. Refusals still speak from
-        // runOps — a Delete that does nothing must say why.
-        if (selectedId) {
-          const leaving = selectedId;
-          void runOps([{ op: 'removeNode', id: leaving }], 'Delete', { quiet: true }).then((ok) => {
-            // Only if it is still this selection: the user may have moved on while
-            // the op was in flight, and their new selection is not ours to clear.
-            if (ok) setSelectedId((cur) => (cur === leaving ? null : cur));
-          });
-          return null;
-        }
-        if (selectedEdgeId) {
-          const leaving = selectedEdgeId;
-          void runOps([{ op: 'removeEdge', id: leaving }], 'Delete', { quiet: true }).then((ok) => {
-            if (ok) setSelectedEdgeId((cur) => (cur === leaving ? null : cur));
-          });
-          return null;
-        }
-        return undefined;
+        // Deleting destroys information, so it asks first. The modal is the
+        // feedback, so the command itself is silent.
+        if (selectedIds.length === 0 && selectedEdgeIds.length === 0) return undefined;
+        setConfirming({ nodes: selectedIds, edges: selectedEdgeIds });
+        return null;
       },
       'edit.undo': () => {
         const entry = undoStack.current[undoStack.current.length - 1];
@@ -548,8 +535,7 @@ function Workspace({ me }: { me: Me }) {
       }
       // What was selected may be what was just unmade; a ghost selection keeps
       // Delete enabled against a node that is no longer there.
-      setSelectedId(null);
-      setSelectedEdgeId(null);
+      clearSelection();
       await refresh();
       report({ title: 'Undo', detail: `Undid: ${entry.summary}` });
     } catch (error) {
@@ -557,7 +543,32 @@ function Workspace({ me }: { me: Me }) {
       // just failed. Report and leave the file as it is.
       report({ title: 'Undo', detail: (error as Error).message, refused: true });
     }
-  }, [activeId, refresh, report]);
+  }, [activeId, refresh, report, clearSelection]);
+
+  /**
+   * What a confirmed Delete performs: every selected node (each cascading its own
+   * edges), plus every selected edge whose fate is not already sealed by a selected
+   * endpoint — one batch, one pending change, one undo step.
+   */
+  const performDelete = useCallback(async () => {
+    if (!confirming) return;
+    setConfirming(null);
+    const graphOrComposition =
+      current.kind === 'graph' ? bundle?.graphs[current.path] : bundle?.composition;
+    const doomed = new Set(confirming.nodes);
+    const ops: ManifestOp[] = [
+      ...confirming.nodes.map((id): ManifestOp => ({ op: 'removeNode', id })),
+      ...confirming.edges
+        .filter((id) => {
+          const edge = graphOrComposition?.spec.edges.find((e) => e.id === id);
+          return !edge || (!doomed.has(edge.from.node) && !doomed.has(edge.to.node));
+        })
+        .map((id): ManifestOp => ({ op: 'removeEdge', id })),
+    ];
+    if (ops.length === 0) return;
+    const ok = await runOps(ops, 'Delete', { quiet: true });
+    if (ok) clearSelection();
+  }, [confirming, current, bundle, runOps, clearSelection]);
 
   /**
    * Drawing an edge, with one added meaning: a flow edge is the moment a code
@@ -679,6 +690,23 @@ function Workspace({ me }: { me: Me }) {
             onClose={() => setDiffOpen(false)}
           />
         </Suspense>
+      ) : null}
+      {confirming ? (
+        <ConfirmDelete
+          nodes={confirming.nodes}
+          edges={confirming.edges}
+          cascades={(() => {
+            const doc =
+              current.kind === 'graph' ? bundle?.graphs[current.path] : bundle?.composition;
+            const doomed = new Set(confirming.nodes);
+            const named = new Set(confirming.edges);
+            return (doc?.spec.edges ?? []).filter(
+              (e) => !named.has(e.id) && (doomed.has(e.from.node) || doomed.has(e.to.node)),
+            ).length;
+          })()}
+          onConfirm={() => void performDelete()}
+          onCancel={() => setConfirming(null)}
+        />
       ) : null}
       {addNodeOpen && bundle ? (
         <AddNode
@@ -822,12 +850,14 @@ function Workspace({ me }: { me: Me }) {
           <Editor
             bundle={load.bundle}
             stack={stack}
-            selectedId={selectedId}
-            selectedEdgeId={selectedEdgeId}
+            selectedIds={selectedIds}
+            selectedEdgeIds={selectedEdgeIds}
             onDescend={descend}
             onAscend={ascend}
-            onSelect={setSelectedId}
-            onSelectEdge={setSelectedEdgeId}
+            onSelectionChange={(nodes, edgeIds) => {
+              setSelectedIds(nodes);
+              setSelectedEdgeIds(edgeIds);
+            }}
             onConnect={(edge) => void connectEdge(edge)}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
@@ -842,24 +872,21 @@ function Workspace({ me }: { me: Me }) {
           <Inspector
             bundle={bundle}
             altitude={current}
-            selectedId={selectedId}
-            selectedEdgeId={selectedEdgeId}
+            selectedIds={selectedIds}
+            selectedEdgeIds={selectedEdgeIds}
             onPatch={(id, patch) => void runOps([{ op: 'updateNode', id, patch }], 'Edit', { quiet: true })}
             onRename={(from, to) =>
               void runOps([{ op: 'renameNode', from, to }], 'Rename', { quiet: true }).then((ok) => {
                 // The selection follows the node to its new name — unless the user
                 // has already selected something else mid-flight.
-                if (ok) setSelectedId((cur) => (cur === from ? to : cur));
+                if (ok) setSelectedIds((cur) => cur.map((id) => (id === from ? to : id)));
               })
             }
-            onRemoveNode={(id) =>
-              void runOps([{ op: 'removeNode', id }], 'Delete', { quiet: true }).then((ok) => {
-                if (ok) setSelectedId((cur) => (cur === id ? null : cur));
-              })
-            }
+            // The inspector's remove buttons ask the same question the Delete key asks.
+            onRemoveNode={(id) => setConfirming({ nodes: [id], edges: [] })}
             onRemoveEdge={(id) =>
               void runOps([{ op: 'removeEdge', id }], 'Disconnect', { quiet: true }).then((ok) => {
-                if (ok) setSelectedEdgeId((cur) => (cur === id ? null : cur));
+                if (ok) setSelectedEdgeIds((cur) => cur.filter((e) => e !== id));
               })
             }
           />
