@@ -383,7 +383,17 @@ body {
   color: var(--danger);
 }
 
-.node.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-dim); }
+/**
+ * Selection lives on React Flow's wrapper (.react-flow__node.selected), not on our
+ * inner div — a `.node.selected` rule never matches anything. The glow is a ring
+ * plus halo rather than a border swap, so a selected node that is also in error
+ * keeps its red border inside a blue glow: selection and health stay two signals.
+ */
+.react-flow__node.selected .node {
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    0 0 16px 2px rgba(90, 169, 255, 0.4);
+}
 .node-descendable { border-style: solid; box-shadow: 3px 3px 0 -1px var(--border); }
 .node-error { border-color: var(--danger); }
 .node-blocked { border-color: var(--warn); }
