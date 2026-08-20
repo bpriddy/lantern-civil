@@ -428,6 +428,16 @@ body {
 .react-flow__edge.edge-depends .react-flow__edge-path { stroke: var(--warn); stroke-width: 1.2; }
 .react-flow__edge-text { fill: var(--text-faint); font-size: 9px; }
 
+/* Selection glows the same accent on an edge as on a node. The extra .react-flow
+   ancestor outguns React Flow's own .selected rule (stroke: #555), which ships in
+   its stylesheet at equal specificity and later import order. */
+.react-flow .react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(90, 169, 255, 0.75));
+}
+.react-flow .react-flow__edge.selected .react-flow__edge-text { fill: var(--accent); }
+
 /* ---- breadcrumb --------------------------------------------------------- */
 
 .crumb {
