@@ -206,6 +206,14 @@ are unaffected (they read from disk). The fix is an on-demand blob fetch in
 `GitHubSource.read`, which belongs with M4's runner work since executing code needs
 exactly that path.
 
+### Known gaps, small
+
+- **`canvas.fit` (F) and `nav.descend` (Enter) are declared but unhandled** — the
+  registry offers them, KeyHelp lists them, and invoking them toasts "Not
+  available here." Both need the React Flow instance, which lives inside the
+  Editor; wiring them is part of deciding how commands reach component-owned
+  capabilities (the same seam the command-target question lives in).
+
 ### Left open on purpose, small
 
 - **Redo.** PRD §7 lists `Cmd+Z` only. The undo stack discards what it pops.
