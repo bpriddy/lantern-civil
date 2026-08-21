@@ -382,3 +382,40 @@ Composition-altitude Run gains its first meaning — superseding §4/§7's "Run 
 no meaning on the composition canvas", which was true only under
 interpretation. M4's graph runs remain as the module-level debugger. Heavier
 infrastructure accepted knowingly: the owner is client #1.
+
+
+## 18. The emitted code contract — **owner's decisions, completes §16's design**
+
+Settled 2026-08-21 across several rounds; the full contract is
+`docs/emitted-code.md`. Three rulings, each a correction of a proposal:
+
+**Vanilla, not a DSL.** A `ctx.step(...)` orchestration style was rejected as
+"civil as the python code"; emitted orchestration is plain Python — functions,
+calls, assignments.
+
+**Devex pattern, not runtime pattern.** Emitted code reading `civil/` YAML at
+runtime was rejected next. Nothing in `civil/` is load-bearing at runtime;
+agent configuration becomes literal kwargs in code, prompts become ordinary
+app assets, and **agent.yaml dissolves** (at migration time, when the
+transpiler lands).
+
+**Proportional emission, not zero-runtime absolutism.** The "civil-runtime
+approaches zero" conclusion overfit a trivial example. Real graphs — parallel
+branches, joins over partial failure, retries, caching, durable runs,
+multi-agent coordination — do not absorb into a vendor SDK call. The rule:
+emit exactly as much runtime as the graph's semantics demand, judged by
+whether a strong engineer hand-writing that application would accept the
+import. Trivial stays vanilla; stdlib `asyncio` covers simple concurrency;
+`civil-runtime`'s runtime half survives only where earned, and only by
+clearing the bar of *a standalone library an engineer would choose with Civil
+nowhere in sight*.
+
+**Engines: Claude by default, behind an interface** — revising §15's
+"Anthropic only" assumption. Every agent emits as a plain function whose
+signature is the interface and whose body is provider-specific, Claude via the
+official SDK by default. The agent node gains an optional `engine` facet
+(absent = Claude); in the library tier, an `Engine` protocol with
+`ClaudeEngine` shipped and OSS/local engines (OpenAI-compatible endpoints:
+Ollama, vLLM) as thin adapters configured by environment variables. The
+platform's single Anthropic key is unchanged; alternative engines are the
+environment's concern.

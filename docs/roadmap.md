@@ -22,6 +22,13 @@ app; write-through editing; session logs) → commit-path integration with
 mine-or-theirs → document migration into `civil/` → lift-on-open → the typed
 web SDK → the testing ladder.
 
+**What the transpiler writes is settled** (`docs/emitted-code.md`, 2026-08-21):
+proportional emission (vanilla → stdlib asyncio → an earned civil-runtime
+import, judged by the strong-engineer test), agents as plain functions with
+Claude-default bodies behind an `engine` interface, agent.yaml dissolving into
+code kwargs and prompt assets, instrumentation observer-side. The transpiler
+can start; its golden tests encode this contract.
+
 ## Gates — things that must be decided before a milestone, not during it
 
 ### Sandbox isolation, before M4 executes anything — **RESOLVED: isolate first**
