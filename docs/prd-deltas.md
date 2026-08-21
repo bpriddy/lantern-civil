@@ -368,3 +368,17 @@ reads API calls out of it; the canvas remains a deliberately partial view.
 The reason this round-trips where every visual tool before it failed: the
 canvas never represented control flow, so the representation only claims what
 static analysis can recover from conventional code.
+
+
+## 17. Run means run the app — **owner's decision, companion to §16**
+
+`docs/app-session.md`. Pressing Run starts an app session: a real (ephemeral)
+filesystem materialised from HEAD plus pending, the civil layer transpiled into
+it, the boundary server and every client's dev script running, the app proxied
+into an in-IDE preview pane that is part of development, not a viewing gallery.
+Code contexts edit the session's files directly (durability writes through to
+pending, invisibly); graph edits update the documents and hot re-transpile.
+Composition-altitude Run gains its first meaning — superseding §4/§7's "Run has
+no meaning on the composition canvas", which was true only under
+interpretation. M4's graph runs remain as the module-level debugger. Heavier
+infrastructure accepted knowingly: the owner is client #1.
