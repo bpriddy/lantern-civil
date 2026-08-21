@@ -97,6 +97,11 @@ resource "google_cloud_run_v2_service" "civil" {
       }
 
       env {
+        name  = "CIVIL_RUNNER_URL"
+        value = local.runner_url
+      }
+
+      env {
         name = "DATABASE_URL"
         value_source {
           secret_key_ref {

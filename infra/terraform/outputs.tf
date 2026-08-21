@@ -45,3 +45,13 @@ output "migrate_job_name" {
   description = "Cloud Run job that applies migrations from the same image as the service."
   value       = google_cloud_run_v2_job.migrate.name
 }
+
+
+output "runner_service_name" {
+  value = google_cloud_run_v2_service.runner.name
+}
+
+output "runner_url" {
+  description = "Where the API dispatches runs. Only the API's identity may invoke it."
+  value       = local.runner_url
+}

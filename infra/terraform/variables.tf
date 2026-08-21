@@ -60,3 +60,10 @@ variable "github_client_id" {
   type        = string
   default     = ""
 }
+
+
+variable "runner_image" {
+  description = "Runner container image. Placeholder until scripts/deploy.sh pushes a real one; ignored on later applies."
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}

@@ -1,0 +1,7 @@
+# Builds the runner image from the repository root, where civil-runtime lives.
+# scripts/deploy.sh passes _IMAGE.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "runner/Dockerfile", "-t", "${_IMAGE}", "."]
+images:
+  - "${_IMAGE}"

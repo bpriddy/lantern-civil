@@ -30,6 +30,35 @@ interface RunDeps {
   pool: pg.Pool;
 }
 
+/**
+ * Cloud Run's IAM guards the runner — only the API's identity may invoke it — so
+ * dispatch carries an ID token minted by the metadata server. Locally there is no
+ * metadata server and no IAM: the fetch fails fast once, and dispatch goes bare.
+ * Tokens last an hour; cached for fifty minutes.
+ */
+let cachedIdToken: { audience: string; token: string; expires: number } | null = null;
+let metadataAbsent = false;
+
+async function idTokenFor(audience: string): Promise<string | undefined> {
+  if (metadataAbsent) return undefined;
+  if (cachedIdToken && cachedIdToken.audience === audience && Date.now() < cachedIdToken.expires) {
+    return cachedIdToken.token;
+  }
+  try {
+    const response = await fetch(
+      `http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity?audience=${encodeURIComponent(audience)}`,
+      { headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(2000) },
+    );
+    if (!response.ok) throw new Error(`metadata ${response.status}`);
+    const token = await response.text();
+    cachedIdToken = { audience, token, expires: Date.now() + 50 * 60 * 1000 };
+    return token;
+  } catch {
+    metadataAbsent = true;
+    return undefined;
+  }
+}
+
 /** A run bundle: everything the runner needs and nothing it must not have. */
 interface RunBundle {
   runId: string;
@@ -119,9 +148,13 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunDeps): void {
 
     // Fire and account: dispatch failures become a finished-failed run with the
     // reason in the log, not a run stuck queued forever.
+    const idToken = await idTokenFor(config.runnerUrl);
     void fetch(`${config.runnerUrl}/execute`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(idToken ? { authorization: `Bearer ${idToken}` } : {}),
+      },
       body: JSON.stringify(bundle),
     })
       .then(async (response) => {

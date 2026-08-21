@@ -27,11 +27,34 @@ SERVICE=$(tf output -raw service_name)
 REPO=$(tf output -raw image_repository)
 JOB=$(tf output -raw migrate_job_name)
 
+RUNNER=$(tf output -raw runner_service_name 2>/dev/null || echo "")
+
 TAG="$(git rev-parse --short HEAD)$( git diff --quiet || echo '-dirty' )"
 IMAGE="${REPO}/api:${TAG}"
 
 echo "==> Building ${IMAGE}"
 gcloud builds submit --project="$PROJECT_ID" --tag="$IMAGE" .
+
+if [[ -n "$RUNNER" ]]; then
+  # The runner deploys only once its one secret exists — a revision referencing a
+  # versionless secret fails to start, and the error it fails with says less than
+  # this does.
+  if ! gcloud secrets versions list civil-anthropic-key --project="$PROJECT_ID" \
+      --filter="state=enabled" --format="value(name)" --limit=1 | grep -q .; then
+    echo "error: civil-anthropic-key has no enabled version." >&2
+    echo "       Add the platform's model key yourself (never through tooling):" >&2
+    echo "         printf 'sk-ant-…' | gcloud secrets versions add civil-anthropic-key --data-file=- --project=$PROJECT_ID" >&2
+    exit 1
+  fi
+
+  RUNNER_IMAGE="${REPO}/runner:${TAG}"
+  echo "==> Building ${RUNNER_IMAGE}"
+  gcloud builds submit --project="$PROJECT_ID" --config=runner/cloudbuild.yaml \
+    --substitutions="_IMAGE=${RUNNER_IMAGE}" .
+
+  echo "==> Deploying runner"
+  gcloud run deploy "$RUNNER" --project="$PROJECT_ID" --region="$REGION" --image="$RUNNER_IMAGE" --quiet
+fi
 
 echo "==> Migrating"
 gcloud run jobs update "$JOB" --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" --quiet
@@ -66,6 +89,18 @@ check "/"        200 "text/html"
 check "/api/me"  401 "application/json"
 # The container must be able to answer for itself.
 check "/readyz"  200 "application/json"
+
+# The runner must refuse strangers at the platform, before the service hears them.
+if [[ -n "$RUNNER" ]]; then
+  RUNNER_URL=$(tf output -raw runner_url)
+  got=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 "${RUNNER_URL}/healthz" || echo "000")
+  if [[ "$got" == "403" || "$got" == "401" ]]; then
+    printf "    ok   %-16s %s (IAM refuses the unauthenticated)\n" "runner" "$got"
+  else
+    printf "    FAIL %-16s got %s, wanted 401/403 — the runner may be publicly invokable\n" "runner" "$got"
+    fail=1
+  fi
+fi
 
 if [[ $fail -ne 0 ]]; then
   echo
