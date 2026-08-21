@@ -94,10 +94,13 @@ check "/readyz"  200 "application/json"
 if [[ -n "$RUNNER" ]]; then
   RUNNER_URL=$(tf output -raw runner_url)
   got=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 30 "${RUNNER_URL}/healthz" || echo "000")
-  if [[ "$got" == "403" || "$got" == "401" ]]; then
-    printf "    ok   %-16s %s (IAM refuses the unauthenticated)\n" "runner" "$got"
+  # Cloud Run answers the unauthenticated with 403 or — masking the service's
+  # existence — 404. Both mean the platform refused before the runner heard it;
+  # 200 would mean the runner is public, which it must never be.
+  if [[ "$got" == "403" || "$got" == "401" || "$got" == "404" ]]; then
+    printf "    ok   %-16s %s (the platform refuses the unauthenticated)\n" "runner" "$got"
   else
-    printf "    FAIL %-16s got %s, wanted 401/403 — the runner may be publicly invokable\n" "runner" "$got"
+    printf "    FAIL %-16s got %s — the runner may be publicly invokable\n" "runner" "$got"
     fail=1
   fi
 fi

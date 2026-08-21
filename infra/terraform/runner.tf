@@ -113,7 +113,10 @@ resource "google_cloud_run_v2_service" "runner" {
 }
 
 locals {
-  runner_url = "https://${var.service_name}-runner-${data.google_project.this.number}.${var.region}.run.app"
+  # The service's own URI, not a computed guess: the runner landed on the legacy
+  # hostname format, and a wrong address here fails as runs that never start. No
+  # cycle — the runner references nothing that references it.
+  runner_url = google_cloud_run_v2_service.runner.uri
 }
 
 # The API is the runner's only caller. It authenticates with an ID token minted
