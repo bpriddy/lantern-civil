@@ -5,6 +5,34 @@ companion to `docs/transpilation.md` and `docs/app-session.md`. This is the
 product surface: the code Civil emits is the strongest claim Civil makes about
 itself, and every rule here exists to keep that claim honest.
 
+## The two first-class rules
+
+Stated by the owner on 2026-08-21, after the Engine facade ruling. Everything
+else in this contract serves these two.
+
+**1. The user's pattern IS the pattern.** The transpiler models its output on
+the code already in the repo — naming, module layout, sync or async style,
+type-hint density, docstring habits, import style. Emission consults the
+repo's own conventions (lift's analysis, pointed the other way) and writes
+code that reads as if the repo's author wrote it. Civil's own style exists
+only as the seed for an empty repo, and it is a default, not a doctrine: the
+moment the user's code establishes a pattern, the pattern wins. Two
+consequences: determinism is redefined as *same documents + same repo
+patterns → same bytes* (golden tests fix a repo context), and the outer wall
+is re-liftability — emission follows the user's pattern as far as lift can
+still read it back.
+
+**2. Composed and modularized; opinions only at the broadest level.** Emitted
+code is modules implemented by plain functions, never by library opinion.
+Only the broadest choices appear in generalized code — the language, the
+Python/JS framework. Anything that could conceivably be configured from
+project to project defaults to a cleanly separated interface with identity as
+data: the Engine facade is the archetype, and the same seam discipline
+applies to every swappable concern the transpiler meets (storage, transport,
+observability, ...). The test the transpiler applies to each new feature,
+forever: *could a project conceivably configure this differently?* Then it
+enters through an interface, not an inline choice.
+
 ## Principles
 
 1. **`civil/` is never read at runtime.** The documents matter at design time;

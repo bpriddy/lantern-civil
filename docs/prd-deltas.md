@@ -422,3 +422,12 @@ optional `engine` facet maps to one module-level literal. Accepted
 consequence: any app with an agent imports `civil_runtime.engines`, the
 library's floor. The platform's single Anthropic key is unchanged;
 alternative engines are the environment's concern.
+
+**Two first-class transpiler rules**, stated by the owner and now heading the
+contract: (1) *the user's pattern IS the pattern* — emission models itself on
+the repo's existing code, Civil's style is only the empty-repo seed, and
+determinism becomes "same documents + same repo patterns → same bytes";
+(2) *composed and modularized* — modules implemented by plain functions,
+opinions only at the broadest level (language, framework), and anything
+conceivably configurable per project enters through a cleanly separated
+interface with identity as data, the Engine facade being the archetype.
