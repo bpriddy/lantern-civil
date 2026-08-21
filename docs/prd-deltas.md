@@ -342,3 +342,29 @@ true:
 
 The gate's trigger — "before the runner executes its first user-authored code
 node" — stands, now with its answer chosen: isolation, built first.
+
+
+---
+
+## 16. From interpretation to transpilation — **owner's decision, the largest since v1**
+
+Decided in discussion on 2026-08-21; the full design is `docs/transpilation.md`.
+
+The PRD's model — manifests walked by civil-runtime at runtime — is superseded.
+Civil becomes **an editor of the repo**: the canvas edits Civil's own documents
+(now living in a `civil/` folder, the project's one Civil-private footprint),
+and commit transpiles them into ordinary code at the repo locations the
+documents reference. The deployed application is standard Python/JS with a
+small civil-runtime library dependency; Civil is a supplement to a normal
+repository, not its structure.
+
+Key rulings: transpile at commit through Civil's own commit path (never git
+hooks, never on keystroke); the Run button executes an ephemeral transpile of
+pending state (the dev-server pattern); conflicts on co-owned files are
+mine-or-theirs, no merging; hand edits outside Civil reconcile via a prompted
+lift on open ("update from the repo"); the frontend is orthogonal — Civil only
+reads API calls out of it; the canvas remains a deliberately partial view.
+
+The reason this round-trips where every visual tool before it failed: the
+canvas never represented control flow, so the representation only claims what
+static analysis can recover from conventional code.

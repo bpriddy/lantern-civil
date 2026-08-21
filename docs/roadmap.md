@@ -9,6 +9,17 @@ become now.
 
 ---
 
+## The next chapter: transpilation
+
+`docs/transpilation.md` (2026-08-21) redefines what Civil produces: the canvas
+edits documents in `civil/`, commit transpiles them into ordinary code in the
+repo, and the deployed app is standard software with a small runtime library.
+The M5 client work now flows through this design — the boundary server and
+orchestration are transpiled into the repo, not hosted by the platform. Build
+order sketch: the transpiler (graph → orchestration, composition → boundary
+server) → commit-path integration with mine-or-theirs → document migration into
+`civil/` → lift-on-open → the typed web SDK.
+
 ## Gates — things that must be decided before a milestone, not during it
 
 ### Sandbox isolation, before M4 executes anything — **RESOLVED: isolate first**
