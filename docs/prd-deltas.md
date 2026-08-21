@@ -411,11 +411,13 @@ clearing the bar of *a standalone library an engineer would choose with Civil
 nowhere in sight*.
 
 **Engines: Claude by default, behind an interface** — revising §15's
-"Anthropic only" assumption. Every agent emits as a plain function whose
-signature is the interface and whose body is provider-specific, Claude via the
-official SDK by default. The agent node gains an optional `engine` facet
-(absent = Claude); in the library tier, an `Engine` protocol with
-`ClaudeEngine` shipped and OSS/local engines (OpenAI-compatible endpoints:
-Ollama, vLLM) as thin adapters configured by environment variables. The
+"Anthropic only" assumption. Every agent emits as a plain function written
+against `civil-runtime`'s `Engine` protocol — never a direct vendor SDK call
+(the owner rejected a direct-call draft; the interface is the pattern). The
+vendor idiom lives once, inside the shipped `ClaudeEngine` adapter; the agent
+node gains an optional `engine` facet mapping to one module-level constructor
+line; OSS/local engines (OpenAI-compatible endpoints: Ollama, vLLM) are thin
+adapters configured by environment variables. Accepted consequence: any app
+with an agent imports `civil_runtime.engines`, the library's floor. The
 platform's single Anthropic key is unchanged; alternative engines are the
 environment's concern.

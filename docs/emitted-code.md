@@ -33,7 +33,7 @@ itself, and every rule here exists to keep that claim honest.
 | Graph semantics | What is emitted | Runtime dependency |
 |---|---|---|
 | Linear flow | Plain functions, plain calls | None |
-| Single agent | A plain function wrapping the vendor SDK's own loop | The vendor SDK |
+| Any agent | A plain function calling the `Engine` interface, `ClaudeEngine` by default | `civil_runtime.engines` (thin — the library's floor) |
 | Parallel branches, simple joins | `asyncio` in the emitted code | Standard library |
 | Retries, partial-failure semantics, node result caching, durable runs, supervision | Orchestration through `civil-runtime` | The earned import |
 
@@ -42,19 +42,29 @@ the strong-engineer test. When in doubt, emit the lower tier.
 
 ## Agents
 
-An agent is emitted as a **plain function**; the signature is the interface,
-and the provider-specific body is localized inside it. The default body targets
-**Claude via the official Anthropic SDK** (model ids resolved at build time,
-never hardcoded from memory — PRD §12).
+An agent is emitted as a **plain function written against the `Engine`
+interface** — never a direct vendor SDK call (owner's ruling, 2026-08-21,
+revising an earlier direct-call draft). `civil-runtime` defines a small
+`Engine` protocol — system, user content, tools, and a turn budget in; a
+`Reply` out — and ships **`ClaudeEngine` as the default implementation**. The
+vendor idiom (the Anthropic SDK and its `tool_runner` loop, model ids resolved
+at build time per PRD §12) lives inside the adapter, once, in the library —
+not repeated in every application file. `Reply` absorbs conclusion-extraction
+boilerplate. This is the strong-engineer idiom, not an exception to it: teams
+wrap LLM vendors behind thin adapters by reflex; vendor lock at every call
+site is what they regret.
 
-The agent node carries an optional `engine` facet; absent means Claude, and
-absent is the default emission. In the library tier, `civil-runtime` defines a
-small `Engine` protocol — messages and tools in, response and tool-calls out —
-with `ClaudeEngine` shipped and local/OSS engines (Ollama, vLLM and other
-OpenAI-compatible endpoints) implementable as thin adapters configured by
-environment variables, which is where all engine credentials and base URLs
-live. This revises PRD §15's "Anthropic only": **Claude by default, behind an
-interface.**
+The emitted function's body constructs its engine at module level with literal
+kwargs — `engine = ClaudeEngine(model=...)` — so the node's optional `engine`
+facet maps to one statically-liftable line, and swapping engines changes one
+line (or none: an `engine_from_env(default=...)` construction makes it a
+deploy-time choice). Local/OSS engines (Ollama, vLLM and other
+OpenAI-compatible endpoints) are thin adapters configured by environment
+variables, which is where all engine credentials and base URLs live. This
+revises PRD §15's "Anthropic only": **Claude by default, behind an
+interface.** Consequence, accepted knowingly: any app with an agent imports
+`civil_runtime.engines` — the library's guaranteed floor, and the module most
+strictly held to the standalone bar below.
 
 **`agent.yaml` dissolves.** Model, turn budget, and engine become literal
 kwargs in the emitted function — statically liftable, so the inspector edits
