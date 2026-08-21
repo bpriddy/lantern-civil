@@ -13,14 +13,13 @@ else in this contract serves these two.
 **1. The user's pattern IS the pattern.** The transpiler models its output on
 the code already in the repo — naming, module layout, sync or async style,
 type-hint density, docstring habits, import style. Emission consults the
-repo's own conventions (lift's analysis, pointed the other way) and writes
-code that reads as if the repo's author wrote it. Civil's own style exists
-only as the seed for an empty repo, and it is a default, not a doctrine: the
-moment the user's code establishes a pattern, the pattern wins. Two
-consequences: determinism is redefined as *same documents + same repo
-patterns → same bytes* (golden tests fix a repo context), and the outer wall
-is re-liftability — emission follows the user's pattern as far as lift can
-still read it back.
+repo's own conventions (via the pattern analyzer, below) and writes code that
+reads as if the repo's author wrote it. Civil's own style exists only as the
+seed for an empty repo, and it is a default, not a doctrine: the moment the
+user's code establishes a pattern, the pattern wins. Two consequences:
+determinism is redefined as *same documents + same pattern prompt → same
+bytes* (golden tests fix both inputs), and the outer wall is re-liftability —
+emission follows the user's pattern as far as lift can still read it back.
 
 **2. Composed and modularized; opinions only at the broadest level.** Emitted
 code is modules implemented by plain functions, never by library opinion.
@@ -32,6 +31,36 @@ applies to every swappable concern the transpiler meets (storage, transport,
 observability, ...). The test the transpiler applies to each new feature,
 forever: *could a project conceivably configure this differently?* Then it
 enters through an interface, not an inline choice.
+
+## The two components: pattern analyzer, transpiler
+
+Rule 1 is implemented by a dedicated component, not by templates guessing —
+**LLM code analysis is critical for the transpiler** (owner's ruling,
+2026-08-21).
+
+**The pattern analyzer** reads the repo's code and writes a *code pattern
+helper prompt* — `civil/patterns.md`, a human-readable description of the
+repo's conventions (naming, module layout, typing, imports, error handling,
+docstring habits). It runs on exactly the two "a human wrote code" triggers:
+an **inbound change** (the repo changed outside Civil, detected at open/sync —
+the lift trigger, reused) and a **handwritten change in Monaco**. Graph edits
+never trigger it, so the profile stays stable and the analysis stays rare.
+When no helper prompt exists — an empty repo, or one the analyzer has not yet
+met — the transpiler sticks to the default code pattern.
+
+The helper prompt is itself a civil document: committed, shown in the diff
+panel, and hand-editable — an owner can tune their own pattern prompt
+directly. Because the analysis is snapshotted into this artifact, the LLM's
+nondeterminism is quarantined in the analyzer: the transpiler's inputs are
+two versioned files (the documents, the pattern prompt), which is what makes
+the determinism rule above enforceable. Placement follows the security model:
+model access lives only in the runner (PRD §12), so the analyzer executes
+runner-side, dispatched like a run — the API never holds a model key. The
+analyzer (LLM, style and idiom) and lift (static analysis, structure) are
+distinct components that share triggers.
+
+**The transpiler** consumes the documents and the helper prompt and emits the
+code, under every rule in this contract.
 
 ## Principles
 
@@ -129,6 +158,10 @@ wanted lenient there).
 
 ## Open items, recorded not resolved
 
+- How generative the transpiler itself is: deterministic templates steered by
+  the pattern prompt, or LLM emission with input-hash memoization for
+  stability. Decided when the build starts; the diff panel and mine-or-theirs
+  are the review gates either way.
 - The exact earn-the-import line, feature by feature, decided as the
   transpiler meets each one.
 - Multi-vendor template families (an `engine` facet naming a non-Claude vendor

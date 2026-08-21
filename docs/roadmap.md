@@ -23,11 +23,16 @@ mine-or-theirs → document migration into `civil/` → lift-on-open → the typ
 web SDK → the testing ladder.
 
 **What the transpiler writes is settled** (`docs/emitted-code.md`, 2026-08-21):
-proportional emission (vanilla → stdlib asyncio → an earned civil-runtime
-import, judged by the strong-engineer test), agents as plain functions with
-Claude-default bodies behind an `engine` interface, agent.yaml dissolving into
+two first-class rules (the user's pattern IS the pattern; composed and
+modularized, interfaces for anything per-project configurable), proportional
+emission (vanilla → stdlib asyncio → an earned civil-runtime import, judged by
+the strong-engineer test), agents as plain functions calling one `Engine`
+facade (vendor identity as data, Claude default), agent.yaml dissolving into
 code kwargs and prompt assets, instrumentation observer-side. The transpiler
-can start; its golden tests encode this contract.
+is two components: the **pattern analyzer** (LLM code analysis, triggered by
+inbound or hand-written changes, writing the `civil/patterns.md` helper
+prompt, runner-side) and the **transpiler** proper (documents + pattern prompt
+in, code out). It can start; its golden tests encode this contract.
 
 ## Gates — things that must be decided before a milestone, not during it
 
