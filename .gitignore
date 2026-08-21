@@ -37,3 +37,4 @@ __pycache__/
 .pgdata/
 
 .DS_Store
+runner/.venv

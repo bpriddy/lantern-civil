@@ -17,7 +17,7 @@
     "test": "npm run test --workspaces --if-present && npm run test:python",
     "migrate": "npm run migrate --workspace @civil/api",
     "deploy": "./scripts/deploy.sh",
-    "test:python": "python3 runtime/tests/test_discover.py"
+    "test:python": "python3 runtime/tests/test_discover.py && python3 runtime/tests/test_runner.py"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

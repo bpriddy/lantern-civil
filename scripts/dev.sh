@@ -41,11 +41,22 @@ npm run migrate --workspace @civil/api -- up >/dev/null
 echo "Building shared packages..."
 npm run build --workspace @civil/schema --silent
 
+# The runner: the process that executes project code (PRD 12). Its venv is set up
+# on first use; ANTHROPIC_API_KEY from .env reaches it through the sourced env,
+# and without one, agent nodes fail with a message that says exactly that.
+if [[ ! -d runner/.venv ]]; then
+  echo "Setting up the runner's venv..."
+  python3 -m venv runner/.venv
+  runner/.venv/bin/pip install -q -r runner/requirements.txt
+fi
+
 echo
-echo "  api  http://127.0.0.1:${PORT:-8080}"
-echo "  web  http://127.0.0.1:5173   <- open this"
+echo "  api     http://127.0.0.1:${PORT:-8080}"
+echo "  web     http://127.0.0.1:5173   <- open this"
+echo "  runner  http://127.0.0.1:8081"
 echo
 
-exec npx concurrently -k -n api,web -c green,cyan \
+exec npx concurrently -k -n api,web,runner -c green,cyan,yellow \
   "npm run dev --workspace @civil/api" \
-  "npm run dev --workspace @civil/web"
+  "npm run dev --workspace @civil/web" \
+  "runner/.venv/bin/python runner/server.py"
