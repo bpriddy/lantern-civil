@@ -17,8 +17,17 @@ from typing import Any, Callable
 
 import yaml
 
+import asyncio
+
 from civil_runtime.discover import discover
-from civil_runtime.runner import GraphError, call as call_handler, load_function
+from civil_runtime.runner import GraphError, load_function
+
+
+def call_tool(fn: Callable[..., Any], args: dict[str, Any]) -> Any:
+    result = fn(**args)
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 # PRD 12: the model id lives in config. The fallback was resolved at build time,
 # not remembered — override with CIVIL_DEFAULT_MODEL as models move.
@@ -52,15 +61,20 @@ def _load_tools(scratch: Path, refs: list[Any]) -> list[Tool]:
         entrypoint = _resolve_entrypoint(scratch, ref.entrypoint)
         source = (scratch / entrypoint).read_text()
         contract = discover(source, function=ref.function)
-        # The discovered handler takes one argument whose schema is the input
-        # shape; the model sees exactly that (PRD 7.2 — no second declaration).
-        inputs = contract.get("inputs") or []
-        schema = (inputs[0] or {}).get("schema") if inputs else None
+        # The model's input_schema must be a top-level object, so the function's
+        # parameters become its properties — exactly the ports discovery projects
+        # (PRD 7.2, no second declaration). Calls come back keyed by parameter.
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for port in contract.get("inputs") or []:
+            properties[port["name"]] = port.get("schema") or {}
+            if port.get("required"):
+                required.append(port["name"])
         tools.append(
             Tool(
                 name=contract["name"],
                 description=contract.get("description") or f"{entrypoint}:{contract['name']}",
-                input_schema=schema or {"type": "object"},
+                input_schema={"type": "object", "properties": properties, "required": required},
                 entrypoint=entrypoint,
                 function=contract["name"],
             )
@@ -87,6 +101,26 @@ def _validate(tool: Tool, args: Any, mode: str) -> str | None:
     if schema.get("type") == "object" and not isinstance(args, dict):
         return f"call to {tool.name} must be an object"
     return None
+
+
+def _conclude(text: str) -> Any:
+    """The agent's last words, as data when they contain data.
+
+    Models mix reasoning with the answer however firmly the prompt asks
+    otherwise, so: the whole text as JSON first, then the outermost braced
+    span, then — honestly — just the text.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if 0 <= start < end:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+    return text
 
 
 def run_agent(
@@ -180,7 +214,10 @@ def run_agent(
 
                 try:
                     fn = load_function(scratch, tool.entrypoint, tool.function)
-                    output = call_handler(fn, block.input)
+                    # Tool arguments arrive keyed by parameter name; the call
+                    # mirrors the signature the schema was read from.
+                    args = block.input if isinstance(block.input, dict) else {}
+                    output = call_tool(fn, args)
                     report({
                         "type": "node.tool_result",
                         "nodeId": node.id,
@@ -207,9 +244,6 @@ def run_agent(
             continue
 
         text = "".join(block.text for block in response.content if block.type == "text")
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return text
+        return _conclude(text)
 
     raise GraphError(f'agent "{node.id}" hit its turn budget ({max_turns}) without concluding')

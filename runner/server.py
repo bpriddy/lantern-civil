@@ -71,7 +71,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    port = int(os.environ.get("PORT", "8081"))
+    # CIVIL_RUNNER_PORT locally, where a sourced .env carries the API's PORT too;
+    # PORT on Cloud Run, where every container is handed its own.
+    port = int(os.environ.get("CIVIL_RUNNER_PORT") or os.environ.get("PORT") or "8081")
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"[runner] listening on :{port}")
     server.serve_forever()
