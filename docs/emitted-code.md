@@ -60,7 +60,11 @@ analyzer (LLM, style and idiom) and lift (static analysis, structure) are
 distinct components that share triggers.
 
 **The transpiler** consumes the documents and the helper prompt and emits the
-code, under every rule in this contract.
+code, under every rule in this contract. Emission starts generative — LLM
+emission steered by the helper prompt, input-hash memoized for stability,
+with the diff panel and mine-or-theirs as the review gates — and evolves to
+have, or to *write*, templates that harden stabilized patterns (owner's call,
+2026-08-21; the roadmap records the hardening path).
 
 ## Principles
 
@@ -158,10 +162,6 @@ wanted lenient there).
 
 ## Open items, recorded not resolved
 
-- How generative the transpiler itself is: deterministic templates steered by
-  the pattern prompt, or LLM emission with input-hash memoization for
-  stability. Decided when the build starts; the diff panel and mine-or-theirs
-  are the review gates either way.
 - The exact earn-the-import line, feature by feature, decided as the
   transpiler meets each one.
 - Multi-vendor template families (an `engine` facet naming a non-Claude vendor

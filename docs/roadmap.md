@@ -34,6 +34,16 @@ inbound or hand-written changes, writing the `civil/patterns.md` helper
 prompt, runner-side) and the **transpiler** proper (documents + pattern prompt
 in, code out). It can start; its golden tests encode this contract.
 
+**Transpiler hardening path** (owner's call, 2026-08-21): v1 emits
+generatively — LLM emission steered by the pattern helper prompt, input-hash
+memoized for stability, with the diff panel and mine-or-theirs as the review
+gates. The analyzer's prompts start deliberately less prescriptive. As
+patterns stabilize, the transpiler evolves to have — or to *write* — templates
+that harden them: recurring emissions crystallize into deterministic
+templates, prompt refinement narrows the generative surface, and the
+generative path remains for whatever templates don't yet cover. Direction of
+travel: judgment first, determinism earned.
+
 ## Gates — things that must be decided before a milestone, not during it
 
 ### Sandbox isolation, before M4 executes anything — **RESOLVED: isolate first**
