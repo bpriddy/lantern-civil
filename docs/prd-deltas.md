@@ -412,12 +412,13 @@ nowhere in sight*.
 
 **Engines: Claude by default, behind an interface** — revising §15's
 "Anthropic only" assumption. Every agent emits as a plain function written
-against `civil-runtime`'s `Engine` protocol — never a direct vendor SDK call
-(the owner rejected a direct-call draft; the interface is the pattern). The
-vendor idiom lives once, inside the shipped `ClaudeEngine` adapter; the agent
-node gains an optional `engine` facet mapping to one module-level constructor
-line; OSS/local engines (OpenAI-compatible endpoints: Ollama, vLLM) are thin
-adapters configured by environment variables. Accepted consequence: any app
-with an agent imports `civil_runtime.engines`, the library's floor. The
-platform's single Anthropic key is unchanged; alternative engines are the
-environment's concern.
+against a single `Engine` facade — never a direct vendor SDK call, and never
+a vendor-named class in app code (the owner rejected both drafts in
+sequence: **vendor identity is data, not code**). `Engine`'s optional engine
+key selects the adapter and an absent key means Claude; the adapters
+(Anthropic's `tool_runner` loop; OpenAI-compatible loops for Ollama/vLLM) are
+library internals, configured by environment variables. The agent node's
+optional `engine` facet maps to one module-level literal. Accepted
+consequence: any app with an agent imports `civil_runtime.engines`, the
+library's floor. The platform's single Anthropic key is unchanged;
+alternative engines are the environment's concern.
