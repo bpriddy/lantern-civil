@@ -17,8 +17,10 @@ repo, and the deployed app is standard software with a small runtime library.
 The M5 client work now flows through this design — the boundary server and
 orchestration are transpiled into the repo, not hosted by the platform. Build
 order sketch: the transpiler (graph → orchestration, composition → boundary
-server) → commit-path integration with mine-or-theirs → document migration into
-`civil/` → lift-on-open → the typed web SDK.
+server) → the app session and preview pane (`docs/app-session.md`: Run runs the
+app; write-through editing; session logs) → commit-path integration with
+mine-or-theirs → document migration into `civil/` → lift-on-open → the typed
+web SDK → the testing ladder.
 
 ## Gates — things that must be decided before a milestone, not during it
 
