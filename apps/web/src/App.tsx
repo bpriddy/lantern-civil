@@ -22,6 +22,8 @@ import { useCommands } from './commands/useCommands.js';
 import { Home } from './panes/Home.js';
 import { AddNode } from './panes/AddNode.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
+import { RunPanel } from './panes/RunPanel.js';
+import { RunLog } from './panes/RunLog.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
 import { Settings } from './panes/Settings.js';
@@ -41,8 +43,13 @@ import {
   fetchProjects,
   revertFile,
   saveFile,
+  startRun,
+  fetchRunEvents,
+  cancelRun,
   syncProject,
   type ManifestOp,
+  type RunEvent,
+  type RunSummary,
   type ProjectBundle,
   type ProjectSummary,
 } from './project.js';
@@ -147,11 +154,19 @@ function Workspace({ me }: { me: Me }) {
   const [commitNote, setCommitNote] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
 
+  /** The run being watched: its identity, where it stands, and its story so far. */
+  const [runPanelOpen, setRunPanelOpen] = useState(false);
+  const [activeRun, setActiveRun] = useState<{ id: string; status: RunSummary['status'] } | null>(null);
+  const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
+  const [runLogOpen, setRunLogOpen] = useState(false);
+
   /**
    * The op history, most recent last. In a ref because pushing must not re-render;
    * undoDepth mirrors the length so `enabled(canUndo)` sees changes.
    */
   const undoStack = useRef<UndoEntry[]>([]);
+  /** Which graph the active run belongs to, for routing top-level events. */
+  const runGraphRef = useRef<string | undefined>(undefined);
   const [undoDepth, setUndoDepth] = useState(0);
   const clearUndo = useCallback(() => {
     undoStack.current = [];
@@ -325,6 +340,19 @@ function Workspace({ me }: { me: Me }) {
   const pendingCount = bundle?.pending.length ?? 0;
   const canCommit = bundle?.project.sourceKind === 'github';
 
+  const fatalCount = useMemo(
+    () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
+    [bundle],
+  );
+  const runBlockedCount = useMemo(
+    () => bundle?.diagnostics.filter((d) => d.severity === 'run-blocking').length ?? 0,
+    [bundle],
+  );
+
+  // PRD 4: Run has no meaning on the composition canvas. PRD 6.4: a flow cycle blocks
+  // Run without failing the save. Both are expressed here rather than hidden.
+  const runDisabled = current.kind !== 'graph' || runBlockedCount > 0 || fatalCount > 0;
+
   /**
    * The keyboard dispatches into the command registry, and an agent will dispatch
    * into the same one (CLAUDE.md). Each handler returns what it did in words, which
@@ -340,6 +368,8 @@ function Workspace({ me }: { me: Me }) {
       pendingCount,
       canCommit,
       canUndo: undoDepth > 0,
+      canRun: current.kind === 'graph' && !runDisabled,
+      runActive: activeRun?.status === 'queued' || activeRun?.status === 'running',
       depth: stack.length - 1,
     },
     {
@@ -405,6 +435,16 @@ function Workspace({ me }: { me: Me }) {
         void undoLast();
         return `Undoing: ${entry.summary}`;
       },
+      'run.start': () => {
+        setRunPanelOpen(true);
+        // The input panel is the next thing on screen; it speaks for itself.
+        return null;
+      },
+      'run.cancel': () => {
+        if (!activeRun || !activeId) return undefined;
+        void cancelRun(activeId, activeRun.id).catch(() => undefined);
+        return 'Cancellation requested — the run stops at the next node boundary.';
+      },
       'project.diff': () => {
         if (pendingCount === 0) return undefined;
         setDiffOpen(true);
@@ -451,21 +491,6 @@ function Workspace({ me }: { me: Me }) {
     },
   );
 
-  const fatalCount = useMemo(
-    () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
-    [bundle],
-  );
-  const runBlockedCount = useMemo(
-    () => bundle?.diagnostics.filter((d) => d.severity === 'run-blocking').length ?? 0,
-    [bundle],
-  );
-
-  // PRD 4: Run has no meaning on the composition canvas. PRD 6.4: a flow cycle blocks
-  // Run without failing the save. Both are expressed here rather than hidden.
-  // PRD 4: nothing executes at the composition altitude. Nor is there anything to run
-  // while looking at a file — Run belongs to a graph, and enabling it anywhere else
-  // offers something that cannot happen.
-  const runDisabled = current.kind !== 'graph' || runBlockedCount > 0 || fatalCount > 0;
   const runTitle =
     current.kind === 'composition'
       ? 'Run has no meaning on the composition canvas'
@@ -513,6 +538,76 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Sync', detail: (error as Error).message, refused: true });
     }
   }, [activeId, refresh, report, clearUndo]);
+
+  /**
+   * Watching is reading (PRD 8.2): poll the event log from the last seq while the
+   * run is live. The runner never hears from us; reconnecting after a reload would
+   * be the same range read from wherever the log left off.
+   */
+  useEffect(() => {
+    if (!activeRun || !activeId) return;
+    if (activeRun.status !== 'queued' && activeRun.status !== 'running') return;
+
+    let lastSeq = runEvents.length > 0 ? runEvents[runEvents.length - 1]!.seq : -1;
+    let stopped = false;
+
+    const tick = async () => {
+      try {
+        const { status, events } = await fetchRunEvents(activeId, activeRun.id, lastSeq);
+        if (stopped) return;
+        if (events.length > 0) {
+          lastSeq = events[events.length - 1]!.seq;
+          setRunEvents((current) => [...current, ...events]);
+        }
+        if (status !== activeRun.status) {
+          setActiveRun({ id: activeRun.id, status });
+        }
+      } catch {
+        /* a missed poll is not a failed run; the next tick reads on */
+      }
+    };
+
+    void tick();
+    const interval = window.setInterval(() => void tick(), 800);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+    // runEvents deliberately absent: lastSeq advances inside the closure.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun?.id, activeRun?.status, activeId]);
+
+  /** Node states for the canvas overlays, from the story so far. */
+  const runStates = useMemo(() => {
+    const states: Record<string, string> = {};
+    const here = current.kind === 'graph' ? current.path : undefined;
+    if (!here) return states;
+    for (const event of runEvents) {
+      // Top-level events carry no graphPath; subgraph events carry theirs.
+      const at = event.graphPath ?? (activeRun ? runGraphRef.current : undefined);
+      if (at !== here || !event.nodeId) continue;
+      if (event.type === 'node.started') states[event.nodeId] = 'running';
+      else if (event.type === 'node.finished' || event.type === 'node.output') states[event.nodeId] = 'finished';
+      else if (event.type === 'node.failed') states[event.nodeId] = 'failed';
+    }
+    return states;
+  }, [runEvents, current, activeRun]);
+
+  const beginRun = useCallback(
+    async (input: unknown) => {
+      if (!activeId || current.kind !== 'graph') return;
+      try {
+        const run = await startRun(activeId, current.path, input);
+        runGraphRef.current = current.path;
+        setActiveRun({ id: run.id, status: run.status });
+        setRunEvents([]);
+        setRunLogOpen(true);
+      } catch (error) {
+        report({ title: 'Run', detail: (error as Error).message, refused: true });
+      }
+    },
+    [activeId, current, report],
+  );
 
   /**
    * Which manifest the current canvas is a view of. Every op needs it, and getting it
@@ -726,6 +821,14 @@ function Workspace({ me }: { me: Me }) {
           />
         </Suspense>
       ) : null}
+      {runPanelOpen && bundle && current.kind === 'graph' ? (
+        <RunPanel
+          projectId={bundle.project.id}
+          graphPath={current.path}
+          onRun={(input) => void beginRun(input)}
+          onClose={() => setRunPanelOpen(false)}
+        />
+      ) : null}
       {confirming ? (
         <ConfirmDelete
           nodes={confirming.nodes}
@@ -828,7 +931,24 @@ function Workspace({ me }: { me: Me }) {
           onReview={() => setDiffOpen(true)}
           onDismissNote={() => setCommitNote(null)}
         />
-        <button className="run" type="button" disabled={runDisabled} title={runTitle}>
+        {activeRun ? (
+          <button
+            type="button"
+            className={`chip runchip runchip-${activeRun.status}`}
+            onClick={() => setRunLogOpen((v) => !v)}
+            title="Show or hide the run log"
+          >
+            <span className="dot" />
+            run · {activeRun.status}
+          </button>
+        ) : null}
+        <button
+          className="run"
+          type="button"
+          disabled={runDisabled}
+          title={runTitle}
+          onClick={() => setRunPanelOpen(true)}
+        >
           Run
         </button>
         <button className="avatar" type="button" onClick={() => setSettingsOpen((v) => !v)} title={me.email}>
@@ -887,6 +1007,7 @@ function Workspace({ me }: { me: Me }) {
             stack={stack}
             selectedIds={selectedIds}
             selectedEdgeIds={selectedEdgeIds}
+            runStates={runStates}
             onDescend={descend}
             onAscend={ascend}
             onSelectionChange={(nodes, edgeIds) => {
@@ -901,6 +1022,14 @@ function Workspace({ me }: { me: Me }) {
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
           />
         )}
+        {activeRun && runLogOpen && current.kind !== 'code' ? (
+          <RunLog
+            status={activeRun.status}
+            events={runEvents}
+            onCancel={() => activeId && void cancelRun(activeId, activeRun.id).catch(() => undefined)}
+            onClose={() => setRunLogOpen(false)}
+          />
+        ) : null}
       </main>
 
       <aside className="pane inspector">

@@ -51,6 +51,8 @@ export interface EditorProps {
   /** Selection is plural: shift-drag boxes and shift-clicks accumulate it. */
   selectedIds: string[];
   selectedEdgeIds: string[];
+  /** Live run overlays: node id → running | finished | failed (PRD 11.2). */
+  runStates: Record<string, string>;
   onDescend: (altitude: Altitude) => void;
   onAscend: () => void;
   /** React Flow's own gestures decide what is selected; the shell owns the state. */
@@ -78,6 +80,7 @@ function Surface({
   stack,
   selectedIds,
   selectedEdgeIds,
+  runStates,
   onDescend,
   onAscend,
   onSelectionChange,
@@ -283,7 +286,11 @@ function Surface({
 
   return (
     <ReactFlow
-      nodes={liveNodes.map((n) => ({ ...n, selected: selectedIds.includes(n.id) }))}
+      nodes={liveNodes.map((n) => ({
+        ...n,
+        selected: selectedIds.includes(n.id),
+        ...(runStates[n.id] ? { className: `run-${runStates[n.id]}` } : {}),
+      }))}
       edges={edges.map((e) => ({ ...e, selected: selectedEdgeIds.includes(e.id) }))}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={handleDoubleClick}

@@ -340,3 +340,65 @@ export async function syncProject(
   if (!response.ok) throw new Error(await describeFailure(response, 'could not sync'));
   return (await response.json()) as { headSha: string; moved: boolean; summary: string };
 }
+
+
+// ---- runs (PRD 8, 9.1) -----------------------------------------------------
+
+export interface RunSummary {
+  id: string;
+  graphPath: string;
+  status: 'queued' | 'running' | 'finished' | 'partial' | 'failed' | 'cancelled';
+  eventSeq: number;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface RunEvent {
+  seq: number;
+  type: string;
+  nodeId: string | null;
+  graphPath: string | null;
+  payload: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** Starts a run of a graph. The answer is a job, not a result (PRD 8.2). */
+export async function startRun(
+  projectId: string,
+  graph: string,
+  input: unknown,
+): Promise<RunSummary> {
+  const response = await apiFetch(`/api/projects/${projectId}/runs`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ graph, input }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not start the run'));
+  return ((await response.json()) as { run: RunSummary }).run;
+}
+
+/** Events after a seq — reconnecting is a range read, not a resubscription. */
+export async function fetchRunEvents(
+  projectId: string,
+  runId: string,
+  after: number,
+  signal?: AbortSignal,
+): Promise<{ status: RunSummary['status']; eventSeq: number; events: RunEvent[] }> {
+  const response = await apiFetch(
+    `/api/projects/${projectId}/runs/${runId}/events?after=${after}`,
+    signal ? { signal } : {},
+  );
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not read the run'));
+  const body = (await response.json()) as {
+    run: { status: RunSummary['status']; eventSeq: number };
+    events: RunEvent[];
+  };
+  return { status: body.run.status, eventSeq: body.run.eventSeq, events: body.events };
+}
+
+export async function cancelRun(projectId: string, runId: string): Promise<void> {
+  const response = await apiFetch(`/api/projects/${projectId}/runs/${runId}/cancel`, {
+    method: 'POST',
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not cancel'));
+}

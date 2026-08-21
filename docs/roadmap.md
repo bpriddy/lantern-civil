@@ -223,17 +223,13 @@ error teaches the fix, or a `civil migrate` op that rewrites old spellings as a
 pending change. And separately: a parse failure in one node should degrade to
 that node, not blank the altitude.
 
-### Known issue: fit-to-view does not fire
+### Fit-to-view — resolved
 
-`F` and React Flow's own fit button both leave the viewport where it is (observed
-in browser automation; the owner deprioritised the hunt). Established so far: the
-command layer works (the handler runs, the registered action is invoked), React
-Flow's queued fitView never flushes in our controlled setup, and a direct
-`getNodesBounds` + `setViewport` also did not move the viewport — plus one
-uncaught `undefined.includes` from an event handler on the same page, possibly
-related. The arrival fit on descent still works. Next probe when picked up again:
-whether `setViewport` works at all outside the descent-restore path, on a clean
-production build rather than a HMR-churned dev page.
+React Flow's queued fitView never flushes in this controlled setup (its own
+Controls button included), so fit computes the viewport directly —
+`getNodesBounds` + `getViewportForBounds` + `setViewport`, the same non-queued
+path the descent restore uses. The long hunt's confusing tail was HMR-corrupted
+dev pages; on a clean load the direct implementation works, verified.
 
 ### Left open on purpose, small
 

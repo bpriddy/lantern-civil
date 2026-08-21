@@ -1269,3 +1269,108 @@ select.field { cursor: pointer; }
   cursor: pointer;
 }
 .confirm-delete:hover { background: rgba(229, 103, 79, 0.12); }
+
+/* ---- runs ----------------------------------------------------------------- */
+
+/* The centre hosts the drawer, so it needs a positioning context. */
+.centre { position: relative; }
+
+.runchip { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
+.runchip-running .dot, .runchip-queued .dot { background: var(--accent); animation: run-pulse 1.2s ease-in-out infinite; }
+.runchip-finished .dot { background: var(--ok); }
+.runchip-failed .dot { background: var(--danger); }
+.runchip-cancelled .dot, .runchip-partial .dot { background: var(--warn); }
+
+/* Node overlays: the story of the run, on the nodes it happened to. */
+@keyframes run-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.react-flow__node.run-running .node {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 14px 2px rgba(90, 169, 255, 0.35);
+  animation: run-pulse 1.2s ease-in-out infinite;
+}
+.react-flow__node.run-finished .node {
+  border-color: var(--ok);
+  box-shadow: 0 0 0 1px rgba(78, 201, 160, 0.5);
+}
+.react-flow__node.run-failed .node {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 1.5px var(--danger), 0 0 14px 2px rgba(229, 103, 79, 0.35);
+}
+
+/* The input panel. */
+.runpanel { width: 460px; }
+.runpanel-body { padding: 10px 14px 0; }
+.runpanel-input {
+  width: 100%;
+  height: 140px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.runpanel-input:focus { outline: none; border-color: var(--accent-dim); }
+.runpanel-complaint { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
+
+/* The event log drawer: the spine, on screen (PRD 9.1). */
+.runlog {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 220px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border-top: 1px solid var(--border-strong);
+  z-index: 5;
+}
+
+.runlog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.runlog-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+}
+.runlog-status-running, .runlog-status-queued { color: var(--accent); border-color: var(--accent-dim); }
+.runlog-status-finished { color: var(--ok); }
+.runlog-status-failed { color: var(--danger); border-color: var(--danger); }
+.runlog-status-cancelled, .runlog-status-partial { color: var(--warn); }
+
+.runlog-count { font-size: 11px; color: var(--text-faint); }
+
+.runlog-body { flex: 1; overflow-y: auto; padding: 6px 0; }
+
+.runlog-row {
+  display: grid;
+  grid-template-columns: 34px 130px 110px 1fr;
+  gap: 10px;
+  padding: 2px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.runlog-seq { color: var(--text-faint); text-align: right; }
+.runlog-type { color: var(--text-faint); }
+.runlog-node { color: var(--text); }
+.runlog-detail { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.runlog-node-failed .runlog-type, .runlog-node-failed .runlog-detail { color: var(--danger); }
+.runlog-run-finished .runlog-type { color: var(--ok); }
+.runlog-node-tool_call .runlog-type, .runlog-node-tool_result .runlog-type { color: #c792ea; }

@@ -23,6 +23,8 @@ export type CommandId =
   | 'edit.undo'
   | 'canvas.clearSelection'
   | 'file.save'
+  | 'run.start'
+  | 'run.cancel'
   | 'project.diff'
   | 'project.commit'
   | 'project.sync'
@@ -39,6 +41,10 @@ export interface CommandContext {
   canCommit: boolean;
   /** Whether the op history has anything to walk back. */
   canUndo: boolean;
+  /** A runnable graph is on screen with nothing blocking Run. */
+  canRun: boolean;
+  /** A run is queued or running right now. */
+  runActive: boolean;
   depth: number;
 }
 
@@ -180,6 +186,22 @@ export const COMMANDS: readonly Command[] = [
     description: 'Write the open file as a pending change. Nothing is committed.',
     keys: ['mod+s'],
     enabled: (c) => c.where === 'code',
+  },
+  {
+    id: 'run.start',
+    title: 'Run',
+    description:
+      'Run the graph on this canvas: choose an input, then watch it execute — the ' +
+      'canvas animates and the event log tells the story.',
+    keys: ['shift+enter'],
+    enabled: (c) => c.canRun,
+  },
+  {
+    id: 'run.cancel',
+    title: 'Cancel run',
+    description: 'Ask the running graph to stop. It stops at the next node boundary.',
+    keys: ['shift+escape'],
+    enabled: (c) => c.runActive,
   },
   {
     id: 'project.diff',
