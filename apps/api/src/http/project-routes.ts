@@ -23,6 +23,7 @@ import {
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
+import { writeThroughToSession } from './session-routes.js';
 import { markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
@@ -266,6 +267,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       if (/\.(py|tsx?|js)$/.test(body.path) && !body.path.startsWith('civil/')) {
         await markPatternsStale(pool, request.identity.id, project.id);
       }
+      // The save is durable above; the running app hears about it here, or never
+      // needs to (docs/app-session.md's two-tier rule — HMR is a side effect).
+      await writeThroughToSession(config.sessionUrl, project.id, body.path, body.content);
       return { path: change.path, kind: change.kind, updatedAt: change.updatedAt };
     } catch (error) {
       if (error instanceof ContentTooLargeError) {

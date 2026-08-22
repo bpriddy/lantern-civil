@@ -658,6 +658,7 @@ function Workspace({ me }: { me: Me }) {
           previews: status.previews,
           boundaries: status.boundaries ?? [],
           processes: status.processes,
+          filesVersion: status.filesVersion,
         });
       })
       .catch(() => undefined);
@@ -691,6 +692,7 @@ function Workspace({ me }: { me: Me }) {
           previews: status.previews,
           boundaries: status.boundaries ?? [],
           processes: status.processes,
+          filesVersion: status.filesVersion,
         });
         return;
       }
@@ -739,6 +741,7 @@ function Workspace({ me }: { me: Me }) {
             previews: status.previews.length > 0 ? status.previews : cur.previews,
             boundaries: status.boundaries ?? cur.boundaries,
             processes: status.processes,
+            filesVersion: status.filesVersion ?? cur.filesVersion,
           };
         });
       } catch {

@@ -455,6 +455,9 @@ export interface SessionStatus {
   previews: SessionPreview[];
   /** Boundary servers running in the session — the app even when no client is. */
   boundaries: SessionPreview[];
+  /** Bumps on every write-through; the preview remounts when it moves, because
+   *  an iframe cannot be trusted to hear the dev server's own reload push. */
+  filesVersion?: number;
 }
 
 export interface SessionLogLine {

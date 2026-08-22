@@ -143,6 +143,16 @@ def test_patch_writes_through_to_disk() -> None:
     ok((workspace / "deep" / "nested" / "file.txt").exists(), "parents are created")
 
 
+def test_write_through_bumps_files_version() -> None:
+    _, before = request("GET", "/sessions/proj-1")
+    ok(isinstance(before.get("filesVersion"), int), "status carries filesVersion")
+    request("PATCH", "/sessions/proj-1/files", {"files": {"bump.txt": "x"}})
+    _, after = request("GET", "/sessions/proj-1")
+    ok(after["filesVersion"] == before["filesVersion"] + 1, "a write-through moves it")
+    _, again = request("GET", "/sessions/proj-1")
+    ok(again["filesVersion"] == after["filesVersion"], "reading never moves it")
+
+
 def test_write_failures_answer_400() -> None:
     # app/data.txt exists as a file, so a path through it cannot land — the
     # request must answer, not drop the connection.

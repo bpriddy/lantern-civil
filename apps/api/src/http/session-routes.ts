@@ -83,6 +83,29 @@ const sendSessionError = (reply: FastifyReply, error: unknown): FastifyReply => 
   throw error;
 };
 
+/**
+ * The two-tier editing rule's write-through (docs/app-session.md): a file save
+ * also lands on the live session's real filesystem, so the running app's watcher
+ * fires HMR. Best-effort by construction — pending is the durability, the session
+ * is a cache — so "no session" (404), "no service", and "unreachable" are all
+ * silence, never a failed save.
+ */
+export async function writeThroughToSession(
+  sessionUrl: string | undefined,
+  projectId: string,
+  path: string,
+  content: string,
+): Promise<void> {
+  if (!sessionUrl) return;
+  try {
+    await callSession(sessionUrl, 'PATCH', `/sessions/${projectId}/files`, {
+      files: { [path]: content },
+    });
+  } catch {
+    /* the session catches up at the next Run's rematerialisation */
+  }
+}
+
 const previewUrl = (port: number): string => `http://127.0.0.1:${port}`;
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionDeps): void {

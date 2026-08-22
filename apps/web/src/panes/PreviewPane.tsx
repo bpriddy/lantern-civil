@@ -15,12 +15,14 @@ export type AppSessionState =
       previews: SessionPreview[];
       boundaries: SessionPreview[];
       processes: SessionProcess[];
+      filesVersion?: number | undefined;
     }
   | {
       phase: 'live';
       previews: SessionPreview[];
       boundaries: SessionPreview[];
       processes: SessionProcess[];
+      filesVersion?: number | undefined;
     }
   /** Transpile and session failures land here, in the pane — a toast is too small
    *  a place for a list of validator issues. */
@@ -134,7 +136,9 @@ export function PreviewPane({
       ) : (
         <iframe
           // The url in the key: switching clients remounts too, not just refresh.
-          key={`${selected.url}#${nonce}`}
+          // filesVersion in the key: a write-through remounts the frame, so a save
+          // shows up even when the dev server's reload push never reached it.
+          key={`${selected.url}#${nonce}#${running ? (session.filesVersion ?? 0) : 0}`}
           className="preview-frame"
           src={selected.url}
           title={`Preview of ${selected.name}`}

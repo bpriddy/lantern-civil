@@ -118,6 +118,10 @@ class Session:
         self.procs: list[Proc] = []
         self.stopped = False
         self.last_seen = time.monotonic()
+        # Bumped on every write-through: the IDE's preview cannot always rely on
+        # the dev server's own reload push reaching an iframe, so status carries
+        # a version the pane can compare and remount on.
+        self.files_version = 1
         self._active_setup: subprocess.Popen | None = None
         self._log_lock = threading.Lock()
         self._lines: deque = deque(maxlen=LOG_CAP)
@@ -150,6 +154,8 @@ class Session:
                 path.write_text(content)
             except OSError as error:
                 raise WorkspaceWriteError(f"{rel}: {error}") from error
+        if files:
+            self.files_version += 1
         return len(files)
 
     def start(self, spec: dict) -> None:
@@ -361,6 +367,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "processes": [proc.status() for proc in session.procs],
                 "workspace": str(session.workspace),
+                "filesVersion": session.files_version,
             })
             return
         if len(parts) == 3 and parts[0] == "sessions" and parts[2] == "logs":
