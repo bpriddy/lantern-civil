@@ -71,12 +71,44 @@ session simply means it doesn't have to.
 5. Run-semantics split by altitude; command registry entries.
 6. The testing ladder, rung by rung.
 
+## The substrate: an interface, decided 2026-08-21
+
+Rule 2 of the emitted-code contract applied to Civil's own infrastructure:
+the session substrate is anything conceivably configured per deployment, so
+it lives behind a cleanly separated interface — the session service speaks a
+small contract (create with files and process specs, write files, status,
+logs, destroy) and substrates are adapters behind it, the same move as
+`Engine`. The design dictates; the platform serves.
+
+- **Local adapter first**: a session process in the dev stack supervising
+  ordinary child processes on the developer's machine. Not a dodge — it is
+  the dev loop, and every session semantic (materialize, supervise,
+  write-through, reap) is identical code on any substrate. Locally the
+  preview iframe points straight at the process's localhost port; the proxy
+  problem belongs entirely to the deployed adapter.
+- **Deployed adapter: pod-per-session on GKE Autopilot, in our own project.**
+  One pod = one session = the real filesystem in the cloud. No new vendor,
+  one bill, and user code never leaves our cloud — sandbox providers (E2B,
+  Modal) were considered and declined on the PRD §12 data boundary; the
+  adapter seam is where one could slot in later if pod cold-starts ever
+  hurt. Ballpark at one user × 4h/day: ~$10/month of pod time (2 vCPU/4GB ≈
+  $0.11/h), first-cluster management fee covered by GKE's free tier.
+- **Sessions are runner-family and hold the model key.** The running app
+  calls models through `civil_runtime.engines`, so the session machine
+  carries the platform Anthropic key exactly as the runner does — the same
+  documented exception, the same blast radius, no platform credentials
+  beyond it.
+- **The PORT convention**: a client node's dev script must bind the port the
+  session hands it in `$PORT` (the Heroku convention). This is the one thing
+  Civil asks of a frontend's tooling.
+
 ## Open items, recorded not resolved
 
-- Preview proxying mechanics: session URLs, auth (the session is the owner's
-  only), websocket passthrough for HMR.
-- Process supervision: restart policy for crashed dev scripts, port allocation,
-  what "the app is up" means for a session with several processes.
+- Deployed-adapter proxying: session URLs, auth (the session is the owner's
+  only), websocket passthrough for HMR. Local sidesteps all three.
+- Restart policy for crashed dev scripts; what "the app is up" means for a
+  session with several processes.
 - Session ⇄ pending write-through ordering and conflict with a concurrent
   editor elsewhere (same rule as everywhere: mine or theirs, no merging).
-- Where session cost controls live (idle timeout, one session per project).
+- Dependency warm-up for fast rematerialisation (prebuilt images, cached
+  node_modules) — the local adapter's shared venv is the v1 shortcut.
