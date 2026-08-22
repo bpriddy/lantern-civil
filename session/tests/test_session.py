@@ -340,6 +340,7 @@ def main() -> int:
         test_create_materialises_and_starts,
         test_logs_paginate_by_seq,
         test_patch_writes_through_to_disk,
+        test_write_through_bumps_files_version,
         test_write_failures_answer_400,
         test_reposting_the_same_id_replaces,
         test_concurrent_creates_for_one_id_serialise,

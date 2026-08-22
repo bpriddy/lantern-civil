@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Editor, descentTarget, type Altitude } from './canvas/Editor.js';
+import { parseRoute, routePath, type Route } from './routes.js';
 import { compositionToFlow, graphToFlow } from './canvas/model.js';
 import type { NodeData } from './canvas/nodes.js';
 /**
@@ -137,6 +138,22 @@ type Load =
 
 const ACTIVE_PROJECT_KEY = 'civil.activeProject';
 
+/** Where the address bar says to start; read once, before state exists. */
+const BOOT_ROUTE = parseRoute(window.location.pathname);
+
+/** What the stack looks like on arrival at a route (labels firm up at bundle load). */
+const stackForRoute = (route: Route): Altitude[] => {
+  const base: Altitude[] = [{ kind: 'composition', label: 'app' }];
+  if (route.kind === 'graph') {
+    base.push({
+      kind: 'graph',
+      path: route.graphPath,
+      label: (route.graphPath.split('/').pop() ?? route.graphPath).replace(/\.graph\.ya?ml$/, ''),
+    });
+  }
+  return base;
+};
+
 function Workspace({ me }: { me: Me }) {
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -146,7 +163,7 @@ function Workspace({ me }: { me: Me }) {
    * context and you are then INSIDE it, not looking at it in a panel. The stack is
    * that "inside": the last entry is where you are, and the rest is how you got there.
    */
-  const [stack, setStack] = useState<Altitude[]>([{ kind: 'composition', label: 'app' }]);
+  const [stack, setStack] = useState<Altitude[]>(() => stackForRoute(BOOT_ROUTE));
   /** Selection is plural — shift-drag boxes and shift-clicks accumulate it. */
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
@@ -188,15 +205,18 @@ function Workspace({ me }: { me: Me }) {
   const canvasActions = useRef<{ fit: () => void } | null>(null);
 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [activeId, setActiveId] = useState<string | undefined>(
-    () => localStorage.getItem(ACTIVE_PROJECT_KEY) ?? undefined,
+  const [activeId, setActiveId] = useState<string | undefined>(() =>
+    BOOT_ROUTE.kind === 'home'
+      ? (localStorage.getItem(ACTIVE_PROJECT_KEY) ?? undefined)
+      : BOOT_ROUTE.projectId,
   );
   /**
    * Civil used to open whichever project was remembered, so a new account arrived
    * inside an example it never chose and an existing one had no way back out. Home
-   * is where you land; the remembered project is only a shortcut back to it.
+   * is where you land; the remembered project is only a shortcut back to it —
+   * unless the address bar names a place, which is a direct link and wins.
    */
-  const [atHome, setAtHome] = useState(true);
+  const [atHome, setAtHome] = useState(BOOT_ROUTE.kind === 'home');
   const [keyHelpOpen, setKeyHelpOpen] = useState(false);
   const [addNodeOpen, setAddNodeOpen] = useState(false);
   const [initializing, setInitializing] = useState(false);
@@ -206,6 +226,43 @@ function Workspace({ me }: { me: Me }) {
     const list = await fetchProjects();
     setProjects(list);
     return list;
+  }, []);
+
+  /** The address bar mirrors the place: home, a project, or a graph inside it. */
+  const currentPath = useMemo(() => {
+    if (atHome || !activeId) return '/';
+    let graph: string | undefined;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const level = stack[i];
+      if (level?.kind === 'graph') {
+        graph = level.path;
+        break;
+      }
+    }
+    return routePath(
+      graph
+        ? { kind: 'graph', projectId: activeId, graphPath: graph }
+        : { kind: 'project', projectId: activeId },
+    );
+  }, [atHome, activeId, stack]);
+
+  useEffect(() => {
+    // Equality is the loop guard: applying a popped state re-derives the same
+    // path and pushes nothing.
+    if (window.location.pathname !== currentPath) {
+      window.history.pushState(null, '', currentPath);
+    }
+  }, [currentPath]);
+
+  useEffect(() => {
+    const onPop = () => {
+      const route = parseRoute(window.location.pathname);
+      setAtHome(route.kind === 'home');
+      if (route.kind !== 'home') setActiveId(route.projectId);
+      setStack(stackForRoute(route));
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
 
 
@@ -272,7 +329,23 @@ function Workspace({ me }: { me: Me }) {
     void fetchBundle(activeId, controller.signal)
       .then((bundle) => {
         setLoad({ status: 'ready', bundle });
-        setStack([{ kind: 'composition', label: bundle.project.name || 'app' }]);
+        // A deep-linked graph survives the load when the bundle actually has it
+        // (its label firms up from the document); anything else lands at the top.
+        setStack((current) => {
+          const composition: Altitude = {
+            kind: 'composition',
+            label: bundle.project.name || 'app',
+          };
+          const top = current[current.length - 1];
+          if (top?.kind === 'graph' && bundle.graphs[top.path]) {
+            const doc = bundle.graphs[top.path]!;
+            return [
+              composition,
+              { kind: 'graph', path: top.path, label: doc.metadata.name || doc.metadata.id },
+            ];
+          }
+          return [composition];
+        });
         clearSelection();
         setDiffOpen(false);
         // History is per project; entries name files in the one being left.
