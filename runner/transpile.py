@@ -17,7 +17,10 @@ import os
 import re
 from typing import Any
 
-MAX_TOKENS = int(os.environ.get("CIVIL_TRANSPILE_MAX_TOKENS", "16384"))
+# 16384 truncated a real project's emission mid-tool-call (civil-project-test,
+# 2026-08-22); streaming lifts the SDK's 10-minute non-streaming ceiling, so the
+# default errs high — actual cost follows actual output, not the cap.
+MAX_TOKENS = int(os.environ.get("CIVIL_TRANSPILE_MAX_TOKENS", "32768"))
 
 # Three attempts total: the emission, then two chances to fix what the
 # validators caught. Past that the issues go to the caller, honestly (422).
@@ -387,7 +390,7 @@ def transpile(
     system = SYSTEM_TEMPLATE.format(default_model=model)
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        response = client.messages.create(
+        request = dict(
             model=model,
             max_tokens=MAX_TOKENS,
             system=system,
@@ -395,12 +398,28 @@ def transpile(
             tools=[EMIT_FILES_TOOL],
             tool_choice={"type": "tool", "name": "emit_files"},
         )
+        # A full emission can outlast the SDK's 10-minute non-streaming ceiling,
+        # so stream when the client can and accumulate to the same Message shape.
+        stream = getattr(client.messages, "stream", None)
+        if stream is not None:
+            with stream(**request) as events:
+                response = events.get_final_message()
+        else:
+            response = client.messages.create(**request)
 
         block = next((b for b in response.content if b.type == "tool_use"), None)
         if block is None:
             # tool_choice forces the call; its absence is the model failing, not
             # the emission failing validation.
             raise ValueError("the model reply carried no emit_files call")
+
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            # A truncated emission can parse as malformed OR as a shorter file set
+            # that validates — both are wrong, and retrying only grows the prompt.
+            raise ValueError(
+                "the model hit the output ceiling mid-emission "
+                f"(CIVIL_TRANSPILE_MAX_TOKENS={MAX_TOKENS}); raise it for this project"
+            )
 
         files, roles, issues = _parse_emission(block.input)
         if not issues:

@@ -453,6 +453,8 @@ export interface SessionProcess {
 export interface SessionStatus {
   processes: SessionProcess[];
   previews: SessionPreview[];
+  /** Boundary servers running in the session — the app even when no client is. */
+  boundaries: SessionPreview[];
 }
 
 export interface SessionLogLine {

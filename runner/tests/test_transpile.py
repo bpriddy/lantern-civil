@@ -332,6 +332,18 @@ def test_validator_wants_run_per_graph_document() -> None:
     ok(any("define run()" in i for i in issues), "the .graph.yaml naming counts as a graph too")
 
 
+def test_truncated_emission_is_a_model_failure_not_a_retry() -> None:
+    print("test_truncated_emission_is_a_model_failure_not_a_retry")
+    truncated = Response([ToolUse([])], stop_reason="max_tokens")
+    client = FakeClient(truncated)
+    try:
+        transpile(DOCUMENTS, None, CONTEXT, client, "m")
+        raise AssertionError("a max_tokens emission must raise")
+    except ValueError as error:
+        ok("output ceiling" in str(error), "truncation raises with the ceiling named")
+    ok(len(client.messages.calls) == 1, "truncation never burns retries")
+
+
 def test_retry_feeds_issues_back() -> None:
     print("test_retry_feeds_issues_back")
     client = FakeClient(

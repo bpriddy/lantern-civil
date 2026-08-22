@@ -10,8 +10,18 @@ import type { SessionPreview, SessionProcess } from '../project.js';
 export type AppSessionState =
   | { phase: 'idle' }
   /** Requested, or found materialising: nothing confirmed running yet. */
-  | { phase: 'starting'; previews: SessionPreview[]; processes: SessionProcess[] }
-  | { phase: 'live'; previews: SessionPreview[]; processes: SessionProcess[] }
+  | {
+      phase: 'starting';
+      previews: SessionPreview[];
+      boundaries: SessionPreview[];
+      processes: SessionProcess[];
+    }
+  | {
+      phase: 'live';
+      previews: SessionPreview[];
+      boundaries: SessionPreview[];
+      processes: SessionProcess[];
+    }
   /** Transpile and session failures land here, in the pane — a toast is too small
    *  a place for a list of validator issues. */
   | { phase: 'error'; message: string };
@@ -33,6 +43,7 @@ export function PreviewPane({
 }) {
   const running = session.phase === 'starting' || session.phase === 'live';
   const previews = running ? session.previews : [];
+  const boundaries = running ? session.boundaries : [];
   const processes = running ? session.processes : [];
 
   /** Which client is on screen, when there are several. */
@@ -109,6 +120,16 @@ export function PreviewPane({
       ) : !selected ? (
         <div className="preview-empty">
           <p className="muted">The session is up, but no client exposes a preview.</p>
+          {/* A headless app is still an app: say what IS running, with an address —
+              never leave the user to discover it as a 404. */}
+          {boundaries.map((b) => (
+            <p key={b.name} className="muted">
+              boundary <strong>{b.name}</strong> at{' '}
+              <a className="link" href={b.url} target="_blank" rel="noreferrer">
+                {b.url}
+              </a>
+            </p>
+          ))}
         </div>
       ) : (
         <iframe

@@ -114,10 +114,42 @@ const COMPOSITION: NodeFamily[] = [
         type: 'client',
         idBase: 'web',
         hint: 'A web client, built and served.',
-        defaults: () => ({ client: 'web', path: 'web' }),
+        defaults: (id) => ({ client: 'web', path: id, dev: 'npm run dev' }),
+        // A web node is born runnable (owner's rule, 2026-08-22): the scaffold is a
+        // working vite app, not a placeholder — Run must show something on day one.
+        // Any framework can replace it; Civil only needs the directory and $PORT.
         scaffold: (id) => [
           {
-            path: 'web/index.html',
+            path: `${id}/package.json`,
+            content: [
+              '{',
+              `  "name": "${id}",`,
+              '  "private": true,',
+              '  "type": "module",',
+              '  "scripts": { "dev": "vite" },',
+              '  "devDependencies": { "vite": "^6.0.0" }',
+              '}',
+              '',
+            ].join('\n'),
+          },
+          {
+            path: `${id}/vite.config.ts`,
+            content: [
+              "import { defineConfig } from 'vite';",
+              '',
+              '// docs/app-session.md: the one thing Civil asks of a frontend’s tooling — bind',
+              '// the port the session hands it in $PORT. strictPort, because silently drifting',
+              '// to a free port would break the preview URL the session derived.',
+              'export default defineConfig({',
+              '  server: process.env.PORT',
+              '    ? { port: Number(process.env.PORT), strictPort: true }',
+              '    : {},',
+              '});',
+              '',
+            ].join('\n'),
+          },
+          {
+            path: `${id}/index.html`,
             content: [
               '<!doctype html>',
               '<html>',
@@ -126,9 +158,25 @@ const COMPOSITION: NodeFamily[] = [
               `    <title>${id}</title>`,
               '  </head>',
               '  <body>',
-              '    <!-- Build in any framework; Civil only needs to know the directory. -->',
+              '    <div id="root"></div>',
+              '    <script type="module" src="/src/main.ts"></script>',
               '  </body>',
               '</html>',
+              '',
+            ].join('\n'),
+          },
+          {
+            path: `${id}/src/main.ts`,
+            content: [
+              '// The scaffold renders proof of life; replace all of this with your app.',
+              "const root = document.querySelector('#root');",
+              'if (root) {',
+              '  root.innerHTML = `',
+              '    <main style="font-family: system-ui; padding: 4rem; color: #222">',
+              `      <h1 style="margin: 0">${id}</h1>`,
+              `      <p>Served by the app session. Edit <code>${id}/src/main.ts</code> and save.</p>`,
+              '    </main>`;',
+              '}',
               '',
             ].join('\n'),
           },

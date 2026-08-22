@@ -656,6 +656,7 @@ function Workspace({ me }: { me: Me }) {
         setAppSession({
           phase: status.processes.some((p) => p.running) ? 'live' : 'starting',
           previews: status.previews,
+          boundaries: status.boundaries ?? [],
           processes: status.processes,
         });
       })
@@ -672,12 +673,14 @@ function Workspace({ me }: { me: Me }) {
     if (!activeId) return;
     setPreviewOpen(true);
     if (appSession.phase === 'starting' || appSession.phase === 'live') return;
-    setAppSession({ phase: 'starting', previews: [], processes: [] });
+    setAppSession({ phase: 'starting', previews: [], boundaries: [], processes: [] });
     try {
-      const { previews } = await startSession(activeId);
+      const { previews, boundaries } = await startSession(activeId);
       // Still 'starting': live is what the status poll says, not what the POST
       // hopes. Unless a stop raced the start — then the stop stands.
-      setAppSession((cur) => (cur.phase === 'starting' ? { ...cur, previews } : cur));
+      setAppSession((cur) =>
+        cur.phase === 'starting' ? { ...cur, previews, boundaries: boundaries ?? [] } : cur,
+      );
     } catch (error) {
       // A start that timed out on the wire may still have started the app; one
       // probe settles it, and a session that answers is attached, not mourned.
@@ -686,6 +689,7 @@ function Workspace({ me }: { me: Me }) {
         setAppSession({
           phase: status.processes.some((p) => p.running) ? 'live' : 'starting',
           previews: status.previews,
+          boundaries: status.boundaries ?? [],
           processes: status.processes,
         });
         return;
@@ -733,6 +737,7 @@ function Workspace({ me }: { me: Me }) {
           return {
             phase: cur.phase === 'live' || someRunning || allExited ? 'live' : 'starting',
             previews: status.previews.length > 0 ? status.previews : cur.previews,
+            boundaries: status.boundaries ?? cur.boundaries,
             processes: status.processes,
           };
         });
