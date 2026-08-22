@@ -11,7 +11,7 @@ COPY runner/requirements.txt runner/requirements.txt
 RUN pip install --no-cache-dir -r runner/requirements.txt
 
 COPY runtime/src runtime/src
-COPY runner/server.py runner/execute.py runner/agent.py runner/
+COPY runner/server.py runner/execute.py runner/agent.py runner/patterns.py runner/transpile.py runner/
 
 # Cloud Run injects PORT; the server binds it.
 CMD ["python", "-u", "runner/server.py"]
