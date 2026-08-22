@@ -20,6 +20,7 @@ export function Inspector({
   onRename,
   onRemoveNode,
   onRemoveEdge,
+  onSavePrompt,
 }: {
   bundle: ProjectBundle | undefined;
   altitude: Altitude;
@@ -30,6 +31,7 @@ export function Inspector({
   onRename: (from: string, to: string) => void;
   onRemoveNode: (id: string) => void;
   onRemoveEdge: (id: string) => void;
+  onSavePrompt: (path: string, content: string) => Promise<boolean>;
 }) {
   // Detail is for a selection of one; a box-select gets a count and the Delete
   // hint, because bulk-editing fields across nodes is not a thing that means
@@ -51,6 +53,7 @@ export function Inspector({
             onPatch={(patch) => onPatch(node.id, patch)}
             onRename={(to) => onRename(node.id, to)}
             onRemove={() => onRemoveNode(node.id)}
+            onSavePrompt={onSavePrompt}
           />
         ) : edge ? (
           <EdgeDetail
@@ -99,6 +102,58 @@ export function Inspector({
  * the draft back and goes no further — reverting a field must not also clear the
  * canvas selection, which is what the global Escape would do.
  */
+/**
+ * The agent's objective, editable in place. Same contract as Field — commit on
+ * blur (or Cmd/Ctrl+Enter), snap back when the save is refused — sized for prose.
+ * An absent prompt file starts empty and the first save creates it.
+ */
+function PromptEditor({
+  value,
+  onSave,
+}: {
+  value: string | undefined;
+  onSave: (content: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState(value ?? '');
+  const [saving, setSaving] = useState(false);
+  const sent = useRef<string | null>(null);
+  useEffect(() => {
+    setDraft(value ?? '');
+    sent.current = null;
+  }, [value]);
+
+  const commit = () => {
+    if (draft === (value ?? '') || sent.current === draft) return;
+    sent.current = draft;
+    setSaving(true);
+    void onSave(draft)
+      .then((ok) => {
+        if (!ok) {
+          setDraft(value ?? '');
+          sent.current = null;
+        }
+      })
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <>
+      <textarea
+        className="prompt prompt-edit"
+        value={draft}
+        placeholder="What should this agent do? Saved to the prompt file."
+        spellCheck={false}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') e.currentTarget.blur();
+        }}
+      />
+      {saving ? <p className="muted">saving…</p> : null}
+    </>
+  );
+}
+
 function Field({
   label,
   value,
@@ -171,12 +226,14 @@ function NodeDetail({
   onPatch,
   onRename,
   onRemove,
+  onSavePrompt,
 }: {
   node: CompositionNode | GraphNode;
   bundle: ProjectBundle | undefined;
   onPatch: (patch: Record<string, unknown>) => void;
   onRename: (to: string) => void;
   onRemove: () => void;
+  onSavePrompt: (path: string, content: string) => Promise<boolean>;
 }) {
   // An optional string field: emptying it removes the key rather than writing "".
   const optional = (key: string) => (v: string) => onPatch({ [key]: v === '' ? null : v });
@@ -330,9 +387,14 @@ function NodeDetail({
             <dd>{agent.agent.spec.maxTurns ?? '(unset)'}</dd>
           </dl>
           <h3 className="section">Objective</h3>
-          {/* The prompt is a file, so editing it is Monaco's job — descend into the
-              agent to open it. The inspector edits the node, not its files. */}
-          <pre className="prompt">{agent.prompt ?? '(prompt file missing)'}</pre>
+          {/* The prompt is a file, and this edits that file — the inspector's rule
+              for agents: prompts and params map to the actual files in the repo.
+              Keyed by ref so switching agents replaces the draft, never leaks it. */}
+          <PromptEditor
+            key={agent.ref}
+            value={agent.prompt}
+            onSave={(content) => onSavePrompt(agent.agent.spec.promptFile, content)}
+          />
         </>
       ) : null}
 

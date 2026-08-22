@@ -1337,6 +1337,19 @@ function Workspace({ me }: { me: Me }) {
                 if (ok) setSelectedIds((cur) => cur.map((id) => (id === from ? to : id)));
               })
             }
+            // The prompt is a file; saving it rides the same route as a Monaco save,
+            // so pending, the diff panel, and a live session's hot reload all follow.
+            onSavePrompt={async (path, content) => {
+              if (!activeId) return false;
+              try {
+                await saveFile(activeId, path, content);
+                await refresh();
+                return true;
+              } catch (error) {
+                report({ title: 'Save prompt', detail: (error as Error).message, refused: true });
+                return false;
+              }
+            }}
             // The inspector's remove buttons ask the same question the Delete key asks.
             onRemoveNode={(id) => setConfirming({ nodes: [id], edges: [] })}
             onRemoveEdge={(id) =>

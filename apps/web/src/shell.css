@@ -477,6 +477,20 @@ body {
   overflow: auto;
 }
 
+/* The objective, editable in place: the same skin as the read view, sized for
+   prose, brightening on focus the way every field does. */
+.prompt-edit {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  color: var(--text);
+}
+.prompt-edit:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .diagnostic {
   margin-bottom: 8px;
   padding: 7px 8px;
