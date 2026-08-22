@@ -73,6 +73,28 @@ templates, prompt refinement narrows the generative surface, and the
 generative path remains for whatever templates don't yet cover. Direction of
 travel: judgment first, determinism earned.
 
+## The horizon after the chapter — owner's additions, 2026-08-22
+
+- **Harnesses as a first-class experience.** The founding intent named "loops,
+  graph patterns and harnesses" as what building in the AI-stack era involves;
+  this makes a harness a thing you can hold. Specific UX for **importing** a
+  harness (bringing an existing one — a repo's, a package's, another
+  project's — into a project), **authoring** one in Civil, and **attaching**
+  one (wiring it around an agent, a graph, or the app). Open design
+  territory: what the unit is (a subgraph, a template family, a library the
+  emitted code imports), how attachment reads on the canvas, and how rule 1
+  applies when a harness arrives from outside the repo.
+- **Agent piloting of the entire app.** An agent builds and evolves the
+  application through both surfaces at once: civil generation (the op layer
+  has been the agent seam since PRD §7.1) and code generation (handlers,
+  prompts, frontends). The user states intent; the pilot edits documents and
+  files with the same tools the human uses, reviewed through the same diff
+  panel and commit path — piloted, never opaque.
+- **Propulsive devex, continued.** In the same spirit as the harness work:
+  keep adding the affordances that make AI-stack app development intuitive
+  and propulsive. The founding intent, standing as a roadmap directive — the
+  test every future item answers to.
+
 ## Gates — things that must be decided before a milestone, not during it
 
 ### Sandbox isolation, before M4 executes anything — **RESOLVED: isolate first**
