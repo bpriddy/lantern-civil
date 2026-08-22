@@ -28,6 +28,7 @@ export type CommandId =
   | 'project.diff'
   | 'project.commit'
   | 'project.sync'
+  | 'project.transpile'
   | 'help.keys';
 
 export interface CommandContext {
@@ -230,6 +231,15 @@ export const COMMANDS: readonly Command[] = [
     // single-key canvas verbs (N adds, F fits).
     keys: ['r'],
     enabled: (c) => c.where !== 'home' && c.canCommit,
+  },
+  {
+    id: 'project.transpile',
+    title: 'Transpile',
+    description:
+      'Emit the civil documents as code. Emitted files arrive as pending changes, ' +
+      'reviewed and committed like any other edit — nothing is applied unpreviewably.',
+    keys: ['t'],
+    enabled: (c) => c.where !== 'home',
   },
   {
     id: 'project.settings',

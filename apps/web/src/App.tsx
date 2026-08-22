@@ -47,6 +47,7 @@ import {
   fetchRunEvents,
   cancelRun,
   syncProject,
+  transpileProject,
   type ManifestOp,
   type RunEvent,
   type RunSummary,
@@ -455,6 +456,10 @@ function Workspace({ me }: { me: Me }) {
         void doSync();
         return 'Checking the repository…';
       },
+      'project.transpile': () => {
+        void doTranspile();
+        return 'Transpiling the civil documents…';
+      },
       'project.settings': () => {
         setSettingsOpen((v) => !v);
         return 'Settings.';
@@ -538,6 +543,28 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Sync', detail: (error as Error).message, refused: true });
     }
   }, [activeId, refresh, report, clearUndo]);
+
+  /**
+   * The emitted files arrive as pending changes, so the refresh is what makes them
+   * appear in the tree and the commit indicator — the same beat every other
+   * mutation follows.
+   */
+  const doTranspile = useCallback(async () => {
+    if (!activeId) return;
+    try {
+      const { files, cached, patternsRefreshed } = await transpileProject(activeId);
+      await refresh();
+      const count = `${files.length} file${files.length === 1 ? '' : 's'}`;
+      report({
+        title: 'Transpile',
+        detail: cached
+          ? `Transpiled ${count} — unchanged inputs, replayed from cache.`
+          : `Transpiled ${count}.${patternsRefreshed ? ' Pattern prompt refreshed.' : ''}`,
+      });
+    } catch (error) {
+      report({ title: 'Transpile', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, refresh, report]);
 
   /**
    * Watching is reading (PRD 8.2): poll the event log from the last seq while the

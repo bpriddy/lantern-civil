@@ -34,6 +34,19 @@ inbound or hand-written changes, writing the `civil/patterns.md` helper
 prompt, runner-side) and the **transpiler** proper (documents + pattern prompt
 in, code out). It can start; its golden tests encode this contract.
 
+**Transpiler v1 is BUILT** (2026-08-21). `civil_runtime.engines` (the Engine
+facade, vendor identity as data, Claude adapter private), `runner/patterns.py`
++ `runner/transpile.py` (POST /analyze, POST /transpile, GET /transpile/meta;
+forced emit_files structured output; deterministic validators with a two-retry
+feedback loop), and the API layer (migration 007, memoization keyed by
+documents+context+patterns+model+promptVersion, staleness triggers, pending-
+change emission, the `project.transpile` command, key T). Proven live: the
+doc-pipeline classify graph transpiled in one attempt and the emitted code —
+three ordinary modules, one facade import — executed end-to-end against real
+Claude (invoice, 0.97, enriched). The emission is frozen as golden test #1
+(`runner/tests/golden/doc-pipeline/`). Next in the chapter: the app session
+and preview pane.
+
 **Transpiler hardening path** (owner's call, 2026-08-21): v1 emits
 generatively — LLM emission steered by the pattern helper prompt, input-hash
 memoized for stability, with the diff panel and mine-or-theirs as the review

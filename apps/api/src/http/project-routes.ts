@@ -23,6 +23,7 @@ import {
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
+import { markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -260,6 +261,11 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         content: body.content,
         existsAtHead: base.exists(body.path),
       });
+      // A handwritten code save is one of the pattern analyzer's two triggers
+      // (docs/emitted-code.md); civil documents and manifests are not code.
+      if (/\.(py|tsx?|js)$/.test(body.path) && !body.path.startsWith('civil/')) {
+        await markPatternsStale(pool, request.identity.id, project.id);
+      }
       return { path: change.path, kind: change.kind, updatedAt: change.updatedAt };
     } catch (error) {
       if (error instanceof ContentTooLargeError) {

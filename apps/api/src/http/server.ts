@@ -10,6 +10,7 @@ import { registerAuthRoutes } from './auth-routes.js';
 import { registerGitHubRoutes } from './github-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRunRoutes } from './run-routes.js';
+import { registerTranspileRoutes } from './transpile-routes.js';
 import { UnauthenticatedError, createIdentityReader, type Identity } from './identity.js';
 
 declare module 'fastify' {
@@ -136,6 +137,7 @@ export async function createServer(deps: ServerDeps) {
 
   registerProjectRoutes(app, { config, pool });
   registerRunRoutes(app, { config, pool });
+  registerTranspileRoutes(app, { config, pool });
   registerGitHubRoutes(app, { config, pool });
 
   // IAP fronted one service, and so does this: the SPA is served from the same origin

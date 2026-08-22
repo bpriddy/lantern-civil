@@ -329,6 +329,35 @@ export async function initializeProject(
 }
 
 
+export interface TranspileResult {
+  /** Every emitted path, now sitting in pending changes. */
+  files: string[];
+  /** The emission was replayed from the memo — same inputs, same bytes. */
+  cached: boolean;
+  /** civil/patterns.md was re-analyzed before emitting. */
+  patternsRefreshed: boolean;
+}
+
+/** Turns the civil documents into code. Emitted files land as pending changes. */
+export async function transpileProject(projectId: string): Promise<TranspileResult> {
+  const response = await apiFetch(`/api/projects/${projectId}/transpile`, { method: 'POST' });
+  if (!response.ok) {
+    // A 422 carries the validator's issues — the actionable half of the failure.
+    const body = (await response.json().catch(() => ({}))) as {
+      message?: string;
+      error?: string;
+      issues?: string[];
+    };
+    const issues =
+      Array.isArray(body.issues) && body.issues.length > 0 ? ` — ${body.issues.join('; ')}` : '';
+    throw new Error(
+      `${body.message ?? body.error ?? `could not transpile (${response.status})`}${issues}`,
+    );
+  }
+  return (await response.json()) as TranspileResult;
+}
+
+
 /**
  * Picks up whatever has been pushed since. Civil edits against a pinned commit, so
  * advancing is something you ask for rather than something it does behind you.
