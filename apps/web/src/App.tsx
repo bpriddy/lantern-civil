@@ -24,6 +24,8 @@ import { AddNode } from './panes/AddNode.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
 import { RunPanel } from './panes/RunPanel.js';
 import { RunLog } from './panes/RunLog.js';
+import { PreviewPane, type AppSessionState } from './panes/PreviewPane.js';
+import { SessionLog } from './panes/SessionLog.js';
 import { Inspector } from './panes/Inspector.js';
 import { ProjectTree } from './panes/ProjectTree.js';
 import { Settings } from './panes/Settings.js';
@@ -46,6 +48,9 @@ import {
   startRun,
   fetchRunEvents,
   cancelRun,
+  startSession,
+  getSession,
+  stopSession,
   syncProject,
   transpileProject,
   type ManifestOp,
@@ -161,6 +166,11 @@ function Workspace({ me }: { me: Me }) {
   const [runEvents, setRunEvents] = useState<RunEvent[]>([]);
   const [runLogOpen, setRunLogOpen] = useState(false);
 
+  /** The app session (docs/app-session.md): what composition Run starts. */
+  const [appSession, setAppSession] = useState<AppSessionState>({ phase: 'idle' });
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [sessionLogOpen, setSessionLogOpen] = useState(false);
+
   /**
    * The op history, most recent last. In a ref because pushing must not re-render;
    * undoDepth mirrors the length so `enabled(canUndo)` sees changes.
@@ -267,6 +277,11 @@ function Workspace({ me }: { me: Me }) {
         setDiffOpen(false);
         // History is per project; entries name files in the one being left.
         clearUndo();
+        // So is the app session — sessionId IS the project id. The probe below
+        // re-attaches if this project has one running.
+        setAppSession({ phase: 'idle' });
+        setPreviewOpen(false);
+        setSessionLogOpen(false);
       })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
@@ -350,9 +365,14 @@ function Workspace({ me }: { me: Me }) {
     [bundle],
   );
 
-  // PRD 4: Run has no meaning on the composition canvas. PRD 6.4: a flow cycle blocks
-  // Run without failing the save. Both are expressed here rather than hidden.
-  const runDisabled = current.kind !== 'graph' || runBlockedCount > 0 || fatalCount > 0;
+  // docs/app-session.md supersedes PRD 4's "Run has no meaning on the composition
+  // canvas": composition Run runs the APP — the session — while graph Run keeps the
+  // module loop untouched. PRD 6.4 still holds on a graph: a flow cycle blocks Run
+  // without failing the save, and validation errors block both altitudes.
+  const sessionReady = current.kind === 'composition' && load.status === 'ready' && fatalCount === 0;
+  const sessionActive = appSession.phase === 'starting' || appSession.phase === 'live';
+  const runDisabled =
+    current.kind === 'graph' ? runBlockedCount > 0 || fatalCount > 0 : !sessionReady;
 
   /**
    * The keyboard dispatches into the command registry, and an agent will dispatch
@@ -371,6 +391,8 @@ function Workspace({ me }: { me: Me }) {
       canUndo: undoDepth > 0,
       canRun: current.kind === 'graph' && !runDisabled,
       runActive: activeRun?.status === 'queued' || activeRun?.status === 'running',
+      canSession: sessionReady,
+      sessionActive,
       depth: stack.length - 1,
     },
     {
@@ -446,6 +468,17 @@ function Workspace({ me }: { me: Me }) {
         void cancelRun(activeId, activeRun.id).catch(() => undefined);
         return 'Cancellation requested — the run stops at the next node boundary.';
       },
+      'session.start': () => {
+        void beginSession();
+        return sessionActive
+          ? 'Attached — the app session is already up.'
+          : 'Starting the app session…';
+      },
+      'session.stop': () => {
+        if (!sessionActive) return undefined;
+        void endSession();
+        return 'Stopping the app session.';
+      },
       'project.diff': () => {
         if (pendingCount === 0) return undefined;
         setDiffOpen(true);
@@ -498,14 +531,18 @@ function Workspace({ me }: { me: Me }) {
 
   const runTitle =
     current.kind === 'composition'
-      ? 'Run has no meaning on the composition canvas'
+      ? fatalCount > 0
+        ? `${fatalCount} validation error${fatalCount === 1 ? '' : 's'}`
+        : sessionActive
+          ? 'The app session is up — Run reopens the preview'
+          : 'Run the app: transpile, start every process, open the preview'
       : current.kind === 'code'
-        ? 'Run belongs to a graph, not to a file'
+        ? 'Run belongs to a canvas, not to a file'
         : fatalCount > 0
         ? `${fatalCount} validation error${fatalCount === 1 ? '' : 's'}`
         : runBlockedCount > 0
           ? 'A flow cycle blocks Run until it is broken'
-          : 'Runtime arrives with M4';
+          : 'Run this graph';
 
   /**
    * PRD 7.1: the client posts ops and the server applies them. The same call is what
@@ -603,6 +640,114 @@ function Workspace({ me }: { me: Me }) {
     // runEvents deliberately absent: lastSeq advances inside the closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRun?.id, activeRun?.status, activeId]);
+
+  /**
+   * A session may already be running — started before a reload, or from another
+   * tab. Attaching is reading the same status the poll reads; a 404 or an
+   * unconfigured service leaves the phase at idle, silently, because there is
+   * nothing to attach to and nothing has gone wrong.
+   */
+  useEffect(() => {
+    if (!activeId) return;
+    const controller = new AbortController();
+    void getSession(activeId, controller.signal)
+      .then((status) => {
+        if (!status || controller.signal.aborted) return;
+        setAppSession({
+          phase: status.processes.some((p) => p.running) ? 'live' : 'starting',
+          previews: status.previews,
+          processes: status.processes,
+        });
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [activeId]);
+
+  /**
+   * Composition Run (docs/app-session.md): start the session, or attach to the one
+   * already up — Run on a live session brings the pane back, it does not knock the
+   * app over to start it again.
+   */
+  const beginSession = useCallback(async () => {
+    if (!activeId) return;
+    setPreviewOpen(true);
+    if (appSession.phase === 'starting' || appSession.phase === 'live') return;
+    setAppSession({ phase: 'starting', previews: [], processes: [] });
+    try {
+      const { previews } = await startSession(activeId);
+      // Still 'starting': live is what the status poll says, not what the POST
+      // hopes. Unless a stop raced the start — then the stop stands.
+      setAppSession((cur) => (cur.phase === 'starting' ? { ...cur, previews } : cur));
+    } catch (error) {
+      // A start that timed out on the wire may still have started the app; one
+      // probe settles it, and a session that answers is attached, not mourned.
+      const status = await getSession(activeId).catch(() => undefined);
+      if (status) {
+        setAppSession({
+          phase: status.processes.some((p) => p.running) ? 'live' : 'starting',
+          previews: status.previews,
+          processes: status.processes,
+        });
+        return;
+      }
+      // The pane is the surface for this failure (not just a toast): a transpile
+      // error arrives as a paragraph of validator issues, and it needs the room.
+      setAppSession({ phase: 'error', message: (error as Error).message });
+    }
+  }, [activeId, appSession.phase]);
+
+  const endSession = useCallback(async () => {
+    if (!activeId) return;
+    try {
+      await stopSession(activeId);
+      setAppSession({ phase: 'idle' });
+    } catch (error) {
+      report({ title: 'Stop app', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, report]);
+
+  /**
+   * The status strip's heartbeat: while the pane is open on a session, ask where
+   * every process stands. Watching is reading, the same rule as runs — the session
+   * never hears from the poll. 'starting' holds until something is actually
+   * running (or everything has already exited, which is also an answer).
+   */
+  useEffect(() => {
+    if (!activeId || !previewOpen || !sessionActive) return;
+    let stopped = false;
+
+    const tick = async () => {
+      try {
+        const status = await getSession(activeId);
+        if (stopped) return;
+        if (!status) {
+          // Gone: stopped elsewhere, or reaped idle. Idle is the honest state.
+          setAppSession({ phase: 'idle' });
+          return;
+        }
+        const someRunning = status.processes.some((p) => p.running);
+        const allExited =
+          status.processes.length > 0 && status.processes.every((p) => p.exitCode !== null);
+        setAppSession((cur) => {
+          if (cur.phase !== 'starting' && cur.phase !== 'live') return cur;
+          return {
+            phase: cur.phase === 'live' || someRunning || allExited ? 'live' : 'starting',
+            previews: status.previews.length > 0 ? status.previews : cur.previews,
+            processes: status.processes,
+          };
+        });
+      } catch {
+        /* a missed poll is not a dead session; the next tick reads on */
+      }
+    };
+
+    void tick();
+    const interval = window.setInterval(() => void tick(), 3000);
+    return () => {
+      stopped = true;
+      window.clearInterval(interval);
+    };
+  }, [activeId, previewOpen, sessionActive]);
 
   /** Node states for the canvas overlays, from the story so far. */
   const runStates = useMemo(() => {
@@ -831,7 +976,7 @@ function Workspace({ me }: { me: Me }) {
   }
 
   return (
-    <div className="shell">
+    <div className={`shell${previewOpen ? ' with-preview' : ''}`}>
       <Toast effect={effect} />
       {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
       {diffOpen && bundle ? (
@@ -969,12 +1114,27 @@ function Workspace({ me }: { me: Me }) {
             run · {activeRun.status}
           </button>
         ) : null}
+        {appSession.phase !== 'idle' ? (
+          <button
+            type="button"
+            className={`chip runchip appchip-${appSession.phase}`}
+            onClick={() => setPreviewOpen((v) => !v)}
+            title="Show or hide the app preview"
+          >
+            <span className="dot" />
+            app · {appSession.phase}
+          </button>
+        ) : null}
+        {/* One button, two meanings, split by altitude (docs/app-session.md):
+            composition Run runs the app; graph Run runs the graph. */}
         <button
           className="run"
           type="button"
           disabled={runDisabled}
           title={runTitle}
-          onClick={() => setRunPanelOpen(true)}
+          onClick={() =>
+            current.kind === 'composition' ? void beginSession() : setRunPanelOpen(true)
+          }
         >
           Run
         </button>
@@ -1049,6 +1209,8 @@ function Workspace({ me }: { me: Me }) {
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
           />
         )}
+        {/* One drawer at a time: they share the same strip of screen, and the run
+            log — the more momentary of the two — wins while both are open. */}
         {activeRun && runLogOpen && current.kind !== 'code' ? (
           <RunLog
             status={activeRun.status}
@@ -1056,8 +1218,25 @@ function Workspace({ me }: { me: Me }) {
             onCancel={() => activeId && void cancelRun(activeId, activeRun.id).catch(() => undefined)}
             onClose={() => setRunLogOpen(false)}
           />
+        ) : activeId && sessionLogOpen && appSession.phase !== 'idle' && current.kind !== 'code' ? (
+          <SessionLog
+            projectId={activeId}
+            live={sessionActive}
+            onClose={() => setSessionLogOpen(false)}
+          />
         ) : null}
       </main>
+
+      {previewOpen ? (
+        <PreviewPane
+          session={appSession}
+          logsOpen={sessionLogOpen}
+          onToggleLogs={() => setSessionLogOpen((v) => !v)}
+          onStart={() => void beginSession()}
+          onStop={() => void endSession()}
+          onClose={() => setPreviewOpen(false)}
+        />
+      ) : null}
 
       <aside className="pane inspector">
         {settingsOpen ? (

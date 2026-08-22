@@ -431,3 +431,84 @@ export async function cancelRun(projectId: string, runId: string): Promise<void>
   });
   if (!response.ok) throw new Error(await describeFailure(response, 'could not cancel'));
 }
+
+
+// ---- the app session (docs/app-session.md) ---------------------------------
+
+export interface SessionPreview {
+  /** The client node this process serves. */
+  name: string;
+  /** Locally reachable directly — proxying belongs to the deployed adapter. */
+  url: string;
+}
+
+export interface SessionProcess {
+  name: string;
+  running: boolean;
+  /** Null while the process has not exited — including before it has started. */
+  exitCode: number | null;
+  port: number | null;
+}
+
+export interface SessionStatus {
+  processes: SessionProcess[];
+  previews: SessionPreview[];
+}
+
+export interface SessionLogLine {
+  seq: number;
+  /** Which process said it — every process shares one log, tagged. */
+  proc: string;
+  line: string;
+}
+
+/**
+ * Composition Run: transpile, materialise, start every process. One session per
+ * project — asking again restarts rather than stacking.
+ */
+export async function startSession(projectId: string): Promise<{
+  sessionId: string;
+  previews: SessionPreview[];
+  boundaries: SessionPreview[];
+}> {
+  const response = await apiFetch(`/api/projects/${projectId}/session`, { method: 'POST' });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not start the app'));
+  return (await response.json()) as {
+    sessionId: string;
+    previews: SessionPreview[];
+    boundaries: SessionPreview[];
+  };
+}
+
+/** Undefined is "no session" — a state the poll meets routinely, not a failure. */
+export async function getSession(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<SessionStatus | undefined> {
+  const response = await apiFetch(`/api/projects/${projectId}/session`, signal ? { signal } : {});
+  if (response.status === 404) return undefined;
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not read the session'));
+  return (await response.json()) as SessionStatus;
+}
+
+/** Lines after a seq — the same range-read shape as run events (PRD 8.2). */
+export async function getSessionLogs(
+  projectId: string,
+  after: number,
+  signal?: AbortSignal,
+): Promise<{ lines: SessionLogLine[]; last: number }> {
+  const response = await apiFetch(
+    `/api/projects/${projectId}/session/logs?after=${after}`,
+    signal ? { signal } : {},
+  );
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not read the logs'));
+  return (await response.json()) as { lines: SessionLogLine[]; last: number };
+}
+
+export async function stopSession(projectId: string): Promise<void> {
+  const response = await apiFetch(`/api/projects/${projectId}/session`, { method: 'DELETE' });
+  // A 404 is a session already gone — which is what stopping wanted.
+  if (!response.ok && response.status !== 404) {
+    throw new Error(await describeFailure(response, 'could not stop the app'));
+  }
+}

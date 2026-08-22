@@ -47,6 +47,22 @@ Claude (invoice, 0.97, enriched). The emission is frozen as golden test #1
 (`runner/tests/golden/doc-pipeline/`). Next in the chapter: the app session
 and preview pane.
 
+**App session increment 1 is BUILT** (2026-08-21). Boundary-server emission
+(roles on emit_files, PROMPT_VERSION 3, FastAPI default per the strong-engineer
+test), the local session service (`session/server.py`: materialize, shared
+venv, curated child env — secrets never reach app processes, model key the one
+exception — process supervision, logs, idle reap), API session routes (one
+session per project, per-project port bases, process derivation from the
+composition), and the preview pane (composition Run starts/attaches the
+session; graph Run stays the module debugger). Proven live end-to-end:
+doc-pipeline's composition Run brought up vite + the emitted FastAPI boundary
+in the IDE preview, and POST /classify on the running boundary returned a real
+classification through the emitted stack. Known warts: superseded pending
+emissions from older prompt versions linger until reverted; npm installs past
+~5 min can mislabel as 502 (undici dependency is the full fix; the UI re-probe
+mitigates). Next: write-through editing + hot re-transpile, then commit-path
+integration with mine-or-theirs.
+
 **Transpiler hardening path** (owner's call, 2026-08-21): v1 emits
 generatively — LLM emission steered by the pattern helper prompt, input-hash
 memoized for stability, with the diff panel and mine-or-theirs as the review

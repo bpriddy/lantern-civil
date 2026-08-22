@@ -16,6 +16,7 @@ import {
   maintainedPaths,
   patternsState,
   setPatternsFresh,
+  shapeOutput,
   storeMemo,
   type TranspileMeta,
   type TranspileOutput,
@@ -36,7 +37,7 @@ interface TranspileDeps {
 }
 
 /** A runner answer the client should see as-is, with the status it arrived under. */
-class RunnerError extends Error {
+export class RunnerError extends Error {
   readonly status: number;
   readonly body: Record<string, unknown>;
   constructor(status: number, body: Record<string, unknown>) {
@@ -80,7 +81,7 @@ async function callRunner(
   return body;
 }
 
-const sendRunnerError = (reply: FastifyReply, error: unknown): FastifyReply => {
+export const sendRunnerError = (reply: FastifyReply, error: unknown): FastifyReply => {
   if (error instanceof RunnerError) return reply.code(error.status).send(error.body);
   throw error;
 };
@@ -116,6 +117,133 @@ async function transpileMeta(runnerUrl: string): Promise<TranspileMeta> {
   return cachedMeta.meta;
 }
 
+async function analyzePatterns(
+  deps: TranspileDeps,
+  ownerId: string,
+  project: ProjectRow,
+  source: ProjectSource,
+  files: Record<string, string>,
+  head: string | null,
+): Promise<string> {
+  const { config, pool } = deps;
+  const answer = await callRunner(config.runnerUrl!, '/analyze', { files });
+  const patterns = answer['patterns'];
+  if (typeof patterns !== 'string') {
+    throw new RunnerError(502, {
+      error: 'analyzer_answer_malformed',
+      message: 'The analyzer answered without a patterns string.',
+    });
+  }
+  // The helper prompt is itself a civil document: committed, diffed, hand-editable
+  // (docs/emitted-code.md) — so it lands as a pending change like everything else.
+  await savePending(pool, {
+    ownerId,
+    projectId: project.id,
+    branch: project.defaultBranch,
+    path: PATTERNS_PATH,
+    content: patterns,
+    existsAtHead: source.exists(PATTERNS_PATH),
+  });
+  await setPatternsFresh(pool, ownerId, project.id, head);
+  return patterns;
+}
+
+export interface TranspileFlow {
+  output: TranspileOutput;
+  cached: boolean;
+  patternsRefreshed: boolean;
+}
+
+/**
+ * The whole transpile flow — staleness, maybe analyze, memo, runner, and landing
+ * every emitted file as a pending change. One implementation on purpose: the
+ * session route materializes the same transpiled app the transpile route previews
+ * (docs/app-session.md), and two flows would drift on exactly the rules that make
+ * the memo honest. The caller has already checked config.runnerUrl and opened the
+ * project. Throws RunnerError and ContentTooLargeError; mapping them onto a reply
+ * stays with the route.
+ */
+export async function transpileProject(
+  deps: TranspileDeps,
+  ownerId: string,
+  project: ProjectRow,
+  source: ProjectSource,
+  overlay: OverlaySource,
+): Promise<TranspileFlow> {
+  const { config, pool } = deps;
+
+  const maintained = await maintainedPaths(pool, ownerId, project.id);
+  const inputs = await gatherInputs(overlay, maintained);
+
+  // Fetched before any model work: the fingerprint is part of the memo key, and
+  // a runner that cannot answer it fails the request the way an unreachable
+  // runner already does — never a hash without it.
+  const meta: TranspileMeta = await transpileMeta(config.runnerUrl!);
+
+  // Read after the source opened: opening resolves and pins head_sha for a
+  // repository seen for the first time, and this must compare against that.
+  const state = await patternsState(pool, ownerId, project.id);
+  const headSha = state?.headSha ?? null;
+
+  // The analyzer's two triggers, plus the cold start: a handwritten save set the
+  // flag, an inbound change moved the head, or no helper prompt exists at all.
+  const stale =
+    !state || state.stale || state.head !== headSha || inputs.patterns === null;
+
+  let patternsRefreshed = false;
+  if (stale) {
+    const analyzerFiles = await gatherAnalyzerFiles(overlay, maintained);
+    // An empty repo has no conventions to read: skip the analysis and emit under
+    // the default pattern (docs/emitted-code.md: no helper prompt → default).
+    if (Object.keys(analyzerFiles).length > 0) {
+      inputs.patterns = await analyzePatterns(
+        deps, ownerId, project, source, analyzerFiles, headSha,
+      );
+      patternsRefreshed = true;
+    }
+  }
+
+  const hash = inputHash(inputs, meta);
+  let output = await findMemo(pool, ownerId, project.id, hash);
+  const cached = output !== undefined;
+  if (!output) {
+    const answer = await callRunner(config.runnerUrl!, '/transpile', {
+      documents: inputs.documents,
+      patterns: inputs.patterns,
+      context: inputs.context,
+    });
+    const rawFiles = answer['files'];
+    if (typeof rawFiles !== 'object' || rawFiles === null || Array.isArray(rawFiles)) {
+      throw new RunnerError(502, {
+        error: 'transpiler_answer_malformed',
+        message: 'The transpiler answered without a files map.',
+      });
+    }
+    const files: Record<string, string> = {};
+    for (const [path, content] of Object.entries(rawFiles)) {
+      if (typeof content === 'string') files[path] = content;
+    }
+    output = shapeOutput(files, answer['roles'], answer['attempts']);
+    await storeMemo(pool, ownerId, project.id, hash, output);
+  }
+
+  // Every emitted file is a pending change — reviewed in the diff panel and
+  // committed explicitly, exactly like an edit a human made (PRD 7). Written on
+  // memo hits too: the memo remembers the answer, not whether it is still pending.
+  for (const path of Object.keys(output.files).sort()) {
+    await savePending(pool, {
+      ownerId,
+      projectId: project.id,
+      branch: project.defaultBranch,
+      path,
+      content: output.files[path]!,
+      existsAtHead: source.exists(path),
+    });
+  }
+
+  return { output, cached, patternsRefreshed };
+}
+
 export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDeps): void {
   const { config, pool } = deps;
 
@@ -131,35 +259,6 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
     const source = await openProjectSource({ pool, githubApp }, ownerId, project);
     const pending = await listPending(pool, ownerId, project.id, project.defaultBranch);
     return { source, overlay: new OverlaySource(source, pending) };
-  };
-
-  const analyze = async (
-    ownerId: string,
-    project: ProjectRow,
-    source: ProjectSource,
-    files: Record<string, string>,
-    head: string | null,
-  ): Promise<string> => {
-    const answer = await callRunner(config.runnerUrl!, '/analyze', { files });
-    const patterns = answer['patterns'];
-    if (typeof patterns !== 'string') {
-      throw new RunnerError(502, {
-        error: 'analyzer_answer_malformed',
-        message: 'The analyzer answered without a patterns string.',
-      });
-    }
-    // The helper prompt is itself a civil document: committed, diffed, hand-editable
-    // (docs/emitted-code.md) — so it lands as a pending change like everything else.
-    await savePending(pool, {
-      ownerId,
-      projectId: project.id,
-      branch: project.defaultBranch,
-      path: PATTERNS_PATH,
-      content: patterns,
-      existsAtHead: source.exists(PATTERNS_PATH),
-    });
-    await setPatternsFresh(pool, ownerId, project.id, head);
-    return patterns;
   };
 
   app.post('/api/projects/:id/transpile', async (request, reply) => {
@@ -187,105 +286,23 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
       throw error;
     }
 
-    const maintained = await maintainedPaths(pool, request.identity.id, project.id);
-    const inputs = await gatherInputs(overlay, maintained);
-
-    // Fetched before any model work: the fingerprint is part of the memo key, and
-    // a runner that cannot answer it fails the request the way an unreachable
-    // runner already does — never a hash without it.
-    let meta: TranspileMeta;
+    let flow: TranspileFlow;
     try {
-      meta = await transpileMeta(config.runnerUrl);
-    } catch (error) {
-      return sendRunnerError(reply, error);
-    }
-
-    // Read after the source opened: opening resolves and pins head_sha for a
-    // repository seen for the first time, and this must compare against that.
-    const state = await patternsState(pool, request.identity.id, project.id);
-    const headSha = state?.headSha ?? null;
-
-    // The analyzer's two triggers, plus the cold start: a handwritten save set the
-    // flag, an inbound change moved the head, or no helper prompt exists at all.
-    const stale =
-      !state || state.stale || state.head !== headSha || inputs.patterns === null;
-
-    let patternsRefreshed = false;
-    if (stale) {
-      const analyzerFiles = await gatherAnalyzerFiles(overlay, maintained);
-      // An empty repo has no conventions to read: skip the analysis and emit under
-      // the default pattern (docs/emitted-code.md: no helper prompt → default).
-      if (Object.keys(analyzerFiles).length > 0) {
-        try {
-          inputs.patterns = await analyze(
-            request.identity.id, project, source, analyzerFiles, headSha,
-          );
-        } catch (error) {
-          return sendRunnerError(reply, error);
-        }
-        patternsRefreshed = true;
-      }
-    }
-
-    const hash = inputHash(inputs, meta);
-    let output = await findMemo(pool, request.identity.id, project.id, hash);
-    const cached = output !== undefined;
-    if (!output) {
-      let answer: Record<string, unknown>;
-      try {
-        answer = await callRunner(config.runnerUrl, '/transpile', {
-          documents: inputs.documents,
-          patterns: inputs.patterns,
-          context: inputs.context,
-        });
-      } catch (error) {
-        return sendRunnerError(reply, error);
-      }
-      const rawFiles = answer['files'];
-      if (typeof rawFiles !== 'object' || rawFiles === null || Array.isArray(rawFiles)) {
-        return reply.code(502).send({
-          error: 'transpiler_answer_malformed',
-          message: 'The transpiler answered without a files map.',
-        });
-      }
-      const files: Record<string, string> = {};
-      for (const [path, content] of Object.entries(rawFiles)) {
-        if (typeof content === 'string') files[path] = content;
-      }
-      output = {
-        files,
-        attempts: typeof answer['attempts'] === 'number' ? answer['attempts'] : 1,
-      } satisfies TranspileOutput;
-      await storeMemo(pool, request.identity.id, project.id, hash, output);
-    }
-
-    // Every emitted file is a pending change — reviewed in the diff panel and
-    // committed explicitly, exactly like an edit a human made (PRD 7). Written on
-    // memo hits too: the memo remembers the answer, not whether it is still pending.
-    const emitted = Object.keys(output.files).sort();
-    try {
-      for (const path of emitted) {
-        await savePending(pool, {
-          ownerId: request.identity.id,
-          projectId: project.id,
-          branch: project.defaultBranch,
-          path,
-          content: output.files[path]!,
-          existsAtHead: source.exists(path),
-        });
-      }
+      flow = await transpileProject(deps, request.identity.id, project, source, overlay);
     } catch (error) {
       if (error instanceof ContentTooLargeError) {
         return reply.code(413).send({ error: 'content_too_large', message: error.message });
       }
-      throw error;
+      return sendRunnerError(reply, error);
     }
 
+    const { output, cached, patternsRefreshed } = flow;
+    const emitted = Object.keys(output.files).sort();
     request.log.info(
       { projectId: project.id, files: emitted.length, cached, patternsRefreshed },
       'transpiled',
     );
-    return { files: emitted, cached, patternsRefreshed };
+    return { files: emitted, roles: output.roles, cached, patternsRefreshed };
   });
 
   /** Re-analysis on demand — the owner's way of saying "the code moved, look again". */
@@ -322,8 +339,8 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
 
     const state = await patternsState(pool, request.identity.id, project.id);
     try {
-      await analyze(
-        request.identity.id, project, source, analyzerFiles, state?.headSha ?? null,
+      await analyzePatterns(
+        deps, request.identity.id, project, source, analyzerFiles, state?.headSha ?? null,
       );
     } catch (error) {
       return sendRunnerError(reply, error);

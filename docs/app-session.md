@@ -111,4 +111,8 @@ logs, destroy) and substrates are adapters behind it, the same move as
 - Session ⇄ pending write-through ordering and conflict with a concurrent
   editor elsewhere (same rule as everywhere: mine or theirs, no merging).
 - Dependency warm-up for fast rematerialisation (prebuilt images, cached
-  node_modules) — the local adapter's shared venv is the v1 shortcut.
+  node_modules) — the local adapter's shared venv is the v1 shortcut. Known
+  consequence: the shared venv pins fastapi/uvicorn, so rule 1's "the repo's
+  own server pattern wins" is emittable but not yet runnable in a session for
+  a repo whose pattern is another framework — per-project dependency install
+  (requirements.txt as a setup step) lifts this when the substrate grows it.

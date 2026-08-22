@@ -21,6 +21,8 @@ const zEnv = z.object({
   CIVIL_PUBLIC_URL: z.string().url().optional(),
   /** Where the credential-free runner listens (PRD 12). Absent = runs cannot execute. */
   CIVIL_RUNNER_URL: z.string().url().optional(),
+  /** Where the session substrate listens (docs/app-session.md). Absent = no app sessions. */
+  CIVIL_SESSION_URL: z.string().url().optional(),
 
   GOOGLE_CLIENT_ID: z.string().min(1).optional(),
   GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
@@ -56,6 +58,7 @@ export type Config = Readonly<{
   databaseUrl: string;
   publicUrl: string | undefined;
   runnerUrl: string | undefined;
+  sessionUrl: string | undefined;
   google: { clientId: string; clientSecret: string } | undefined;
   sessionSecret: string | undefined;
   github:
@@ -85,6 +88,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: e.DATABASE_URL,
     publicUrl: e.CIVIL_PUBLIC_URL,
     runnerUrl: e.CIVIL_RUNNER_URL,
+    // The local substrate adapter is part of the dev stack (docs/app-session.md), so
+    // development assumes it. Everywhere else the URL must be given explicitly, and
+    // the session routes answer 503 rather than pretending a substrate exists.
+    sessionUrl:
+      e.CIVIL_SESSION_URL ??
+      (e.NODE_ENV === 'development' ? 'http://127.0.0.1:8082' : undefined),
     google:
       e.GOOGLE_CLIENT_ID && e.GOOGLE_CLIENT_SECRET
         ? { clientId: e.GOOGLE_CLIENT_ID, clientSecret: e.GOOGLE_CLIENT_SECRET }

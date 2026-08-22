@@ -54,9 +54,14 @@ echo
 echo "  api     http://127.0.0.1:${PORT:-8080}"
 echo "  web     http://127.0.0.1:5173   <- open this"
 echo "  runner  http://127.0.0.1:8081"
+echo "  session http://127.0.0.1:8082"
 echo
 
-exec npx concurrently -k -n api,web,runner -c green,cyan,yellow \
+# The session service: the local substrate adapter (docs/app-session.md). Pure
+# stdlib, so plain python3; its shared venv for emitted boundary servers is
+# built on first start under $TMPDIR/civil-sessions.
+exec npx concurrently -k -n api,web,runner,session -c green,cyan,yellow,magenta \
   "npm run dev --workspace @civil/api" \
   "npm run dev --workspace @civil/web" \
-  "runner/.venv/bin/python runner/server.py"
+  "runner/.venv/bin/python runner/server.py" \
+  "python3 session/server.py"

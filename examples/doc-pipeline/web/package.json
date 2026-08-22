@@ -2,5 +2,6 @@
   "name": "doc-pipeline-web",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "vite" }
+  "scripts": { "dev": "vite" },
+  "devDependencies": { "vite": "^6.0.0" }
 }

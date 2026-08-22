@@ -25,6 +25,8 @@ export type CommandId =
   | 'file.save'
   | 'run.start'
   | 'run.cancel'
+  | 'session.start'
+  | 'session.stop'
   | 'project.diff'
   | 'project.commit'
   | 'project.sync'
@@ -46,6 +48,11 @@ export interface CommandContext {
   canRun: boolean;
   /** A run is queued or running right now. */
   runActive: boolean;
+  /** The composition canvas is on screen and valid, so Run means run the app —
+   *  the session of docs/app-session.md, not a graph. */
+  canSession: boolean;
+  /** An app session is starting or live right now. */
+  sessionActive: boolean;
   depth: number;
 }
 
@@ -198,11 +205,33 @@ export const COMMANDS: readonly Command[] = [
     enabled: (c) => c.canRun,
   },
   {
+    id: 'session.start',
+    title: 'Run app',
+    description:
+      'Run the application: start the app session — boundary server and every ' +
+      'client dev process — or attach to the one already running. The preview ' +
+      'pane opens on it.',
+    // The same chord as graph Run, deliberately: Run is one gesture whose meaning
+    // follows the altitude (docs/app-session.md). The enabled sets are disjoint,
+    // so the chord never has two meanings at once.
+    keys: ['shift+enter'],
+    enabled: (c) => c.canSession,
+  },
+  {
     id: 'run.cancel',
     title: 'Cancel run',
     description: 'Ask the running graph to stop. It stops at the next node boundary.',
     keys: ['shift+escape'],
     enabled: (c) => c.runActive,
+  },
+  {
+    id: 'session.stop',
+    title: 'Stop app',
+    description: 'Stop the app session: every process is stopped and its workspace removed.',
+    // After run.cancel on purpose: while a graph run is live the shared chord
+    // cancels the run — the session outlives moments, the run is one.
+    keys: ['shift+escape'],
+    enabled: (c) => c.sessionActive,
   },
   {
     id: 'project.diff',

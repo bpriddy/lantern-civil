@@ -4,7 +4,8 @@ Implements docs/emitted-code.md. Emission is structured output — one forced
 emit_files tool call per attempt, never text parsing — checked by deterministic
 validators whose complaints go back to the model for up to two retries. The
 validators hold the contract's hard lines (no vendor SDKs, Engine at module
-level, straight-line run() bodies, no collisions with files owned elsewhere);
+level, straight-line run() bodies, no collisions with files owned elsewhere,
+a boundary server whenever the composition declares an api boundary);
 everything softer rides in the prompt, where the pattern helper prompt speaks
 for the repo's own conventions.
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from typing import Any
 
 MAX_TOKENS = int(os.environ.get("CIVIL_TRANSPILE_MAX_TOKENS", "16384"))
@@ -24,6 +26,8 @@ MAX_ATTEMPTS = 3
 # Vendor lock at the call site is exactly what the Engine facade exists to
 # prevent (docs/emitted-code.md, "Agents"). Matched by module root, so
 # google.generativeai.types is google.generativeai's — but google.cloud is not.
+# fastapi and uvicorn stay off this list on purpose: the boundary server is
+# the app's own dependency, the strong-engineer default — not a vendor lock.
 VENDOR_MODULES = {
     "anthropic",
     "cohere",
@@ -36,6 +40,10 @@ VENDOR_MODULES = {
     "openai",
 }
 VENDOR_CLASS_NAMES = ("ClaudeEngine", "AnthropicEngine", "OpenAIEngine")
+
+# The role vocabulary the session derives processes from: boundary-server
+# files become supervised processes; everything else is classification only.
+ROLES = ("agent", "orchestration", "boundary-server", "other")
 
 EMIT_FILES_TOOL = {
     "name": "emit_files",
@@ -50,6 +58,11 @@ EMIT_FILES_TOOL = {
                     "properties": {
                         "path": {"type": "string", "description": "Repo-relative path."},
                         "content": {"type": "string", "description": "The complete file content."},
+                        "role": {
+                            "type": "string",
+                            "enum": list(ROLES),
+                            "description": "What the file is at the architecture's altitude; omitted means other.",
+                        },
                     },
                     "required": ["path", "content"],
                 },
@@ -62,7 +75,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -90,6 +103,15 @@ only surface.
 straight-line — assignments, calls, a return — mapping the graph's flow edges \
 in topological order. No conditionals or loops standing in for control flow \
 the graph does not express.
+- A composition document (app.yaml / civil.yaml) turns each boundary node of \
+the api kind into ONE boundary server file: a FastAPI app exposing every \
+entry in the node's exposes list as POST /<name> — JSON body in, JSON result \
+out — importing and calling the real service function or graph run() from \
+the other emitted and context files. The file ends with a __main__ block \
+running uvicorn on host 127.0.0.1 and port int(os.environ["PORT"]). fastapi \
+and uvicorn are the app's own dependencies — the strong-engineer default \
+when the repo shows no server pattern of its own; a pattern the repo does \
+show wins. mcp boundaries emit nothing today.
 - A capability edge becomes an entry in the agent's `tools=[...]` list, \
 importing the real function from the human-authored files shown to you as \
 context — use the actual names and signatures those files define.
@@ -104,6 +126,9 @@ inline prompt text.
 — no orchestration frameworks.
 - Comments only where they state a constraint the code cannot show; never \
 narration. Docstrings follow the repo's own habits.
+- Label every emitted file's role: "agent" for a function wrapping Engine, \
+"orchestration" for a graph's run() module, "boundary-server" for a boundary \
+server file, "other" for everything else.
 
 Choose emitted file paths yourself, guided by the repo layout visible in the \
 context files — put code where this repo's author would have. NEVER emit a \
@@ -202,12 +227,32 @@ def _is_graph_document(path: str) -> bool:
     return name.endswith((".yaml", ".yml")) and ("graphs/" in path or ".graph." in name)
 
 
+def _is_composition_document(path: str) -> bool:
+    return path.rsplit("/", 1)[-1] in ("app.yaml", "civil.yaml")
+
+
+# A string heuristic, deliberately: this module must run without PyYAML (the
+# test suite stubs it), and the composition schema puts the `boundary` key
+# nowhere but boundary nodes. Comments are stripped before the search — a
+# commented-out node declares nothing. Only the api kind demands a server —
+# mcp boundaries emit nothing today.
+_API_BOUNDARY = re.compile(r"\bboundary:\s*[\"']?api\b")
+
+
+def _declares_api_boundary(text: str) -> bool:
+    return bool(_API_BOUNDARY.search(re.sub(r"(?m)#.*$", "", text)))
+
+
 def validate(
-    files: dict[str, str], documents: dict[str, str], context: dict[str, str]
+    files: dict[str, str],
+    documents: dict[str, str],
+    context: dict[str, str],
+    roles: dict[str, str] | None = None,
 ) -> list[str]:
     """Every hard line of the contract, checked deterministically on every attempt."""
     issues: list[str] = []
     trees: dict[str, ast.Module] = {}
+    roles = roles or {}
 
     for path in sorted(files):
         content = files[path]
@@ -238,6 +283,11 @@ def validate(
                 f"{path}: uses Engine but never constructs Engine(...) at "
                 "module level with literal kwargs"
             )
+        if roles.get(path, "other") == "boundary-server":
+            # Transport, not orchestration: the boundary file has no run(),
+            # so the straight-line rule has nothing to hold it to — and a
+            # run() it did define would not be a graph's.
+            continue
         runs = [
             node
             for node in tree.body
@@ -261,6 +311,20 @@ def validate(
             "module with a run() entrypoint"
         )
 
+    declares_api_boundary = any(
+        _declares_api_boundary(documents[path])
+        for path in documents
+        if _is_composition_document(path)
+    )
+    if declares_api_boundary and not any(
+        roles.get(path, "other") == "boundary-server" for path in files
+    ):
+        issues.append(
+            "the composition declares an api boundary but no emitted file "
+            'carries role "boundary-server" — the boundary server is part '
+            "of the emission"
+        )
+
     return issues
 
 
@@ -271,10 +335,11 @@ def _section(title: str, files: dict[str, str]) -> str:
     return "\n\n".join(parts)
 
 
-def _parse_emission(tool_input: Any) -> tuple[dict[str, str], list[str]]:
+def _parse_emission(tool_input: Any) -> tuple[dict[str, str], dict[str, str], list[str]]:
     if not isinstance(tool_input, dict) or not isinstance(tool_input.get("files"), list):
-        return {}, ['emit_files input must be {"files": [{"path", "content"}, ...]}']
+        return {}, {}, ['emit_files input must be {"files": [{"path", "content"}, ...]}']
     files: dict[str, str] = {}
+    roles: dict[str, str] = {}
     issues: list[str] = []
     for entry in tool_input["files"]:
         if (
@@ -287,8 +352,15 @@ def _parse_emission(tool_input: Any) -> tuple[dict[str, str], list[str]]:
         if entry["path"] in files:
             issues.append(f"{entry['path']}: emitted twice — emit each file once, complete")
             continue
+        # The schema holds the enum, but the schema is advisory to a model:
+        # an unknown role goes back as an issue, an absent one means other.
+        role = entry.get("role", "other")
+        if role not in ROLES:
+            issues.append(f"{entry['path']}: role {role!r} is not one of {', '.join(ROLES)}")
+            continue
         files[entry["path"]] = entry["content"]
-    return files, issues
+        roles[entry["path"]] = role
+    return files, roles, issues
 
 
 def transpile(
@@ -330,11 +402,11 @@ def transpile(
             # the emission failing validation.
             raise ValueError("the model reply carried no emit_files call")
 
-        files, issues = _parse_emission(block.input)
+        files, roles, issues = _parse_emission(block.input)
         if not issues:
-            issues = validate(files, documents, context)
+            issues = validate(files, documents, context, roles)
         if not issues:
-            return {"files": files, "attempts": attempt}
+            return {"files": files, "roles": roles, "attempts": attempt}
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({

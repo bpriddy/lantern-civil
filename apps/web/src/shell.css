@@ -1374,3 +1374,107 @@ select.field { cursor: pointer; }
 .runlog-node-failed .runlog-type, .runlog-node-failed .runlog-detail { color: var(--danger); }
 .runlog-run-finished .runlog-type { color: var(--ok); }
 .runlog-node-tool_call .runlog-type, .runlog-node-tool_result .runlog-type { color: #c792ea; }
+
+/* ---- the app session (docs/app-session.md) -------------------------------- */
+
+/* The preview joins the shell as a fourth column rather than an overlay: the app is
+   part of development, not a viewing gallery, so the canvas and inspector stay. The
+   wider floor scrolls on a 1280 screen instead of crushing the canvas to a sliver. */
+.shell.with-preview {
+  grid-template-columns: 260px 1fr 440px 320px;
+  grid-template-areas:
+    "top    top     top      top"
+    "tree   centre  preview  inspector";
+  min-width: 1440px;
+}
+
+.preview {
+  grid-area: preview;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.preview-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.preview-pick { width: 130px; }
+.preview-stop:hover { color: var(--danger); }
+
+.preview-frame {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  /* Most dev servers paint their own page; until they do, white reads as "a page
+     is coming" where the IDE's dark would read as "nothing is". */
+  background: #fff;
+}
+
+.preview-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.preview-error {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger);
+  border-radius: 4px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+  max-width: 360px;
+  word-break: break-word;
+}
+
+/* The status strip: every process, by name, and whether it is still with us. */
+.preview-status {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.preview-proc { display: inline-flex; align-items: center; gap: 5px; }
+.preview-proc .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint); }
+.preview-proc .dot.ok { background: var(--ok); }
+.preview-proc .dot.danger { background: var(--danger); }
+.preview-proc-state { color: var(--text-faint); }
+
+/* The header chip, mirroring the run chip's vocabulary. */
+.appchip-starting .dot { background: var(--accent); animation: run-pulse 1.2s ease-in-out infinite; }
+.appchip-live .dot { background: var(--ok); }
+.appchip-error .dot { background: var(--danger); }
+
+/* The session log rides the runlog drawer's frame with its own row shape:
+   seq | process | line, and lines wrap — dev-server output truncated is useless. */
+.sessionlog-row { grid-template-columns: 40px 120px 1fr; }
+.sessionlog-proc { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessionlog-line { color: var(--text-dim); white-space: pre-wrap; word-break: break-word; }

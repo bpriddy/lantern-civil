@@ -80,8 +80,16 @@ class FakeClient:
         self.messages = FakeMessages(list(responses))
 
 
-def emission(*entries: tuple[str, str], id: str = "call_1") -> Response:
-    return Response([ToolUse([{"path": p, "content": c} for p, c in entries], id=id)])
+def emission(*entries: tuple, id: str = "call_1") -> Response:
+    """Entries are (path, content) or (path, content, role) — role optional,
+    exactly as the emit_files schema has it."""
+    files = []
+    for entry in entries:
+        item = {"path": entry[0], "content": entry[1]}
+        if len(entry) > 2:
+            item["role"] = entry[2]
+        files.append(item)
+    return Response([ToolUse(files, id=id)])
 
 
 DOCUMENTS = {
@@ -112,17 +120,68 @@ def run(value):
     return category
 """
 
+# A composition document the way apps/schema shapes one: the api boundary is
+# what obliges a boundary server; the mcp boundary obliges nothing today.
+COMPOSITION = """\
+kind: Composition
+spec:
+  nodes:
+    - id: web
+      type: client
+      client: web
+      path: web
+      dev: "npm run dev"
+    - id: public-api
+      type: boundary
+      boundary: api
+      exposes: [classify]
+    - id: classify
+      type: service
+      impl: { graph: civil/graphs/classify.yaml }
+"""
+
+BOUNDARY = """\
+import os
+
+from fastapi import FastAPI
+
+from src.classify import run as classify_run
+
+app = FastAPI()
+
+
+@app.post("/classify")
+def classify(body: dict) -> dict:
+    return {"result": classify_run(body["text"])}
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ["PORT"]))
+"""
+
 
 def test_transpile_parses_the_forced_tool_call() -> None:
     print("test_transpile_parses_the_forced_tool_call")
     client = FakeClient(emission(("src/classify.py", GOOD)))
     result = transpile(DOCUMENTS, "## repo patterns", CONTEXT, client, "model-x")
 
-    ok(result == {"files": {"src/classify.py": GOOD}, "attempts": 1}, "files and attempts come back")
+    ok(
+        result
+        == {
+            "files": {"src/classify.py": GOOD},
+            "roles": {"src/classify.py": "other"},
+            "attempts": 1,
+        },
+        "files, roles, and attempts come back",
+    )
     call = client.messages.calls[0]
     ok(call["model"] == "model-x", "the caller's model is used")
     ok(call["tool_choice"] == {"type": "tool", "name": "emit_files"}, "emit_files is forced")
     ok([t["name"] for t in call["tools"]] == ["emit_files"], "emit_files is the only tool")
+    ok("boundary-server" in call["system"] and "FastAPI" in call["system"], "the boundary rule rides the system prompt")
+    ok('int(os.environ["PORT"])' in call["system"], "the PORT convention rides the system prompt")
     prompt = call["messages"][0]["content"]
     ok("## repo patterns" in prompt, "the patterns markdown rides verbatim")
     ok("The repo's own conventions — follow them" in prompt, "and is marked as the repo's own")
@@ -138,9 +197,79 @@ def test_transpile_without_patterns_says_so() -> None:
     ok("No pattern analysis exists" in prompt, "absent patterns fall back to defaults")
 
 
+def test_roles_ride_back_defaulting_other() -> None:
+    print("test_roles_ride_back_defaulting_other")
+    client = FakeClient(emission(
+        ("src/classify.py", GOOD, "orchestration"),
+        ("docs/notes.md", "notes\n"),
+    ))
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m")
+    ok(
+        result["roles"] == {"src/classify.py": "orchestration", "docs/notes.md": "other"},
+        "a stated role rides back; an omitted one defaults to other",
+    )
+
+
+def test_unknown_role_is_an_issue_not_a_crash() -> None:
+    print("test_unknown_role_is_an_issue_not_a_crash")
+    client = FakeClient(
+        emission(("src/classify.py", GOOD, "poetry"), id="call_1"),
+        emission(("src/classify.py", GOOD, "orchestration"), id="call_2"),
+    )
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m")
+    ok(result["attempts"] == 2, "an unknown role is fed back like any issue")
+    feedback = client.messages.calls[1]["messages"][2]["content"][0]
+    ok("'poetry'" in feedback["content"], "the unknown role is named in the complaint")
+
+
 def test_validators_pass_a_lawful_emission() -> None:
     print("test_validators_pass_a_lawful_emission")
     ok(validate({"src/classify.py": GOOD}, DOCUMENTS, CONTEXT) == [], "a lawful emission has no issues")
+
+
+def test_validators_pass_a_lawful_boundary_emission() -> None:
+    print("test_validators_pass_a_lawful_boundary_emission")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": COMPOSITION})
+    files = {"src/classify.py": GOOD, "src/server.py": BOUNDARY}
+    roles = {"src/classify.py": "orchestration", "src/server.py": "boundary-server"}
+    issues = validate(files, documents, CONTEXT, roles)
+    ok(issues == [], f"a lawful boundary emission has no issues: {issues}")
+
+
+def test_validator_requires_a_boundary_server() -> None:
+    print("test_validator_requires_a_boundary_server")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": COMPOSITION})
+    issues = validate({"src/classify.py": GOOD}, documents, CONTEXT, {"src/classify.py": "orchestration"})
+    ok(any("boundary-server" in i for i in issues), "an api boundary without a boundary server is caught")
+
+    issues = validate({"src/classify.py": GOOD}, DOCUMENTS, CONTEXT, {"src/classify.py": "orchestration"})
+    ok(not any("boundary-server" in i for i in issues), "no api boundary declared, no demand")
+
+    mcp_only = COMPOSITION.replace("boundary: api", "boundary: mcp")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": mcp_only})
+    issues = validate({"src/classify.py": GOOD}, documents, CONTEXT, {"src/classify.py": "orchestration"})
+    ok(not any("boundary-server" in i for i in issues), "an mcp boundary obliges no server today")
+
+    commented_out = COMPOSITION.replace("boundary: api", "#   boundary: api")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": commented_out})
+    issues = validate({"src/classify.py": GOOD}, documents, CONTEXT, {"src/classify.py": "orchestration"})
+    ok(not any("boundary-server" in i for i in issues), "a commented-out boundary declares nothing")
+
+    # The basename is the composition test: a graph document mentioning the
+    # word proves nothing about the architecture.
+    documents = dict(DOCUMENTS)
+    documents["civil/graphs/classify.yaml"] += "# boundary: api\n"
+    issues = validate({"src/classify.py": GOOD}, documents, CONTEXT, {"src/classify.py": "orchestration"})
+    ok(not any("boundary-server" in i for i in issues), "only app.yaml / civil.yaml count as compositions")
+
+
+def test_boundary_file_is_exempt_from_run_rules() -> None:
+    print("test_boundary_file_is_exempt_from_run_rules")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": COMPOSITION})
+    branchy = "def run(value):\n    if value:\n        return value\n    return None\n"
+    issues = validate({"src/server.py": branchy}, documents, CONTEXT, {"src/server.py": "boundary-server"})
+    ok(not any("straight-line" in i for i in issues), "the boundary file escapes the straight-line rule")
+    ok(any("define run()" in i for i in issues), "a boundary run() does not stand in for a graph's")
 
 
 def test_validator_catches_a_syntax_error() -> None:
@@ -274,7 +403,11 @@ def test_analyze_without_skips_has_no_skip_note() -> None:
 def test_golden_doc_pipeline_emission_stays_lawful() -> None:
     """The frozen live emission (2026-08-21, one attempt, executed end-to-end
     against real Claude) must clear every validator against the real example's
-    documents and context — the contract's regression net, no network needed."""
+    documents and context — the contract's regression net, no network needed.
+    It predates boundary emission (PROMPT_VERSION 3), so the graph altitude is
+    validated in full and the composition document is exercised the other way:
+    the real app.yaml must make the validator demand the boundary server the
+    frozen emission does not have."""
     print("test_golden_doc_pipeline_emission_stays_lawful")
     repo = Path(__file__).resolve().parents[2]
     pipeline = repo / "examples" / "doc-pipeline"
@@ -293,13 +426,48 @@ def test_golden_doc_pipeline_emission_stays_lawful() -> None:
         for p in golden.rglob("*.py")
     }
 
+    graph_altitude = {
+        p: c for p, c in documents.items() if Path(p).name not in ("app.yaml", "civil.yaml")
+    }
+    ok(len(graph_altitude) < len(documents), "the real example carries composition documents")
     ok(len(files) == 3, "the golden emission is three modules")
-    issues = validate(files, documents, context)
+    issues = validate(files, graph_altitude, context)
     ok(issues == [], f"the golden emission clears every validator: {issues}")
+
+    issues = validate(files, documents, context)
+    ok(
+        any("boundary-server" in i for i in issues),
+        "the real app.yaml demands the boundary server the frozen emission predates",
+    )
     agent_file = files["agents/classifier/agent.py"]
     ok("from civil_runtime.engines import Engine" in agent_file, "the agent imports the facade")
     ok('Engine(model="claude-' in agent_file, "the engine literal carries a real model id")
     ok("anthropic" not in agent_file, "no vendor SDK in the golden agent")
+
+
+def test_transpile_meta_carries_the_prompt_version() -> None:
+    """The wire shape of the memo-hash seam, over a real socket, no model: a
+    prompt edit must reach the API's cache key, or memoized emissions outlive
+    the prompt that shaped them."""
+    print("test_transpile_meta_carries_the_prompt_version")
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_address[1])
+        connection.request("GET", "/transpile/meta")
+        response = connection.getresponse()
+        meta = json.loads(response.read())
+        ok(response.status == 200, "meta answers 200")
+        ok(
+            meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
+            "the memo hash inputs ride the meta seam",
+        )
+        ok(meta["promptVersion"] == "3", "boundary emission bumped the prompt version")
+        connection.close()
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 def main() -> int:

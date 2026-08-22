@@ -215,10 +215,44 @@ export function inputHash(inputs: TranspileInputs, meta: TranspileMeta): string 
   return hash.digest('hex');
 }
 
+/**
+ * What each emitted file is, as the transpiler declared it. The session layer keys
+ * off "boundary-server" — those files become supervised processes — and everything
+ * the runner has not classified is "other", which no process derivation touches.
+ */
+export const FILE_ROLES = ['agent', 'orchestration', 'boundary-server', 'other'] as const;
+export type FileRole = (typeof FILE_ROLES)[number];
+
 /** The runner's answer, stored whole so a memo hit replays it byte for byte. */
 export interface TranspileOutput {
   files: Record<string, string>;
+  roles: Record<string, FileRole>;
   attempts: number;
+}
+
+/**
+ * Shapes a runner answer — or a memo row written before roles existed — into a
+ * complete output: every file carries a role, and anything missing or unrecognized
+ * reads as "other" rather than failing a project that transpiled fine last month.
+ */
+export function shapeOutput(
+  files: Record<string, string>,
+  roles: unknown,
+  attempts: unknown,
+): TranspileOutput {
+  const given =
+    typeof roles === 'object' && roles !== null && !Array.isArray(roles)
+      ? (roles as Record<string, unknown>)
+      : {};
+  const shaped: Record<string, FileRole> = {};
+  for (const path of Object.keys(files)) {
+    const role = given[path];
+    shaped[path] =
+      typeof role === 'string' && (FILE_ROLES as readonly string[]).includes(role)
+        ? (role as FileRole)
+        : 'other';
+  }
+  return { files, roles: shaped, attempts: typeof attempts === 'number' ? attempts : 1 };
 }
 
 export async function findMemo(
@@ -227,12 +261,16 @@ export async function findMemo(
   projectId: string,
   hash: string,
 ): Promise<TranspileOutput | undefined> {
-  const { rows } = await pool.query<{ output: TranspileOutput }>(
+  // Typed loosely on purpose: rows stored before the roles map existed have none.
+  const { rows } = await pool.query<{
+    output: { files: Record<string, string>; roles?: unknown; attempts?: unknown };
+  }>(
     `SELECT output FROM transpilations
       WHERE owner_id = $1 AND project_id = $2 AND input_hash = $3`,
     [ownerId, projectId, hash],
   );
-  return rows[0]?.output;
+  const row = rows[0];
+  return row ? shapeOutput(row.output.files, row.output.roles, row.output.attempts) : undefined;
 }
 
 /**
@@ -249,7 +287,7 @@ export async function maintainedPaths(
   ownerId: string,
   projectId: string,
 ): Promise<Set<string>> {
-  const { rows } = await pool.query<{ output: TranspileOutput }>(
+  const { rows } = await pool.query<{ output: { files: Record<string, string> } }>(
     `SELECT output FROM transpilations WHERE owner_id = $1 AND project_id = $2`,
     [ownerId, projectId],
   );
