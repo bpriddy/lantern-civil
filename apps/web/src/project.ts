@@ -100,6 +100,8 @@ export interface ProjectBundle {
   diagnostics: Diagnostic[];
   files: string[];
   pending: PendingChange[];
+  /** Files Civil transpiles and owns — read-only in the editor (edit the graph). */
+  maintained: string[];
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
   contracts: Record<string, ContractResult>;
 }

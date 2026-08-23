@@ -432,6 +432,9 @@ function Workspace({ me }: { me: Me }) {
   const current = stack[stack.length - 1]!;
   const pendingCount = bundle?.pending.length ?? 0;
   const canCommit = bundle?.project.sourceKind === 'github';
+  // Generated files, as a Set for the editor's read-only check. Recomputed when the
+  // bundle refreshes, so a fresh transpile's new outputs become read-only at once.
+  const maintainedSet = useMemo(() => new Set(bundle?.maintained ?? []), [bundle?.maintained]);
 
   const fatalCount = useMemo(
     () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
@@ -1293,6 +1296,7 @@ function Workspace({ me }: { me: Me }) {
               projectId={load.bundle.project.id}
               files={current.files}
               active={current.active}
+              maintained={maintainedSet}
               onActiveChange={reportActiveFile}
               onPendingChanged={(saved) => {
                 if (saved) {

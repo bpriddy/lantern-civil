@@ -25,7 +25,7 @@ import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
 import { sessionIsLive, transpileAndSync, writeThroughToSession } from './session-routes.js';
 import { RunnerError, transpileProject } from './transpile-routes.js';
-import { markPatternsStale } from '../project/transpile.js';
+import { maintainedPaths, markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -169,6 +169,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       ...(await loadBundle(overlay)),
       // PRD 7: the commit indicator shows a count, and the tree badges what changed.
       pending: pending.map((c) => ({ path: c.path, kind: c.kind, updatedAt: c.updatedAt })),
+      // Files Civil transpiles and owns (docs/transpilation.md's ownership map). The
+      // editor renders these read-only: you change generated code by editing the
+      // graph, not the file. Union of every emission this project has produced.
+      maintained: [...(await maintainedPaths(pool, request.identity.id, project.id))],
     };
   });
 
@@ -241,6 +245,18 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
     const project = await getProject(pool, request.identity.id, id);
     if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    // A generated file is not hand-editable: it is regenerated from the graph, so a
+    // save here would be lost on the next transpile (docs/mine-or-theirs.md). Refuse
+    // it rather than accept an edit doomed to vanish — the editor already renders it
+    // read-only, and this is the guard behind that for any other caller.
+    const maintained = await maintainedPaths(pool, request.identity.id, project.id);
+    if (maintained.has(body.path)) {
+      return reply.code(409).send({
+        error: 'file_generated',
+        message: `${body.path} is generated from the graph. Edit the graph, not the file.`,
+      });
+    }
 
     // The source decides add versus modify: a file absent at HEAD is an add, and
     // getting that wrong tells the committer to expect a blob that was never there.

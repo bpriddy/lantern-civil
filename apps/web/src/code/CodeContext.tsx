@@ -29,6 +29,8 @@ export interface CodeContextProps {
   /** Which file is in front, so the breadcrumb names what you are looking at. */
   onActiveChange?: (path: string) => void;
   onPendingChanged: (savedPath?: string) => void;
+  /** Paths Civil transpiles and owns: read-only here — the graph is their source. */
+  maintained?: ReadonlySet<string>;
 }
 
 export function CodeContext({
@@ -37,6 +39,7 @@ export function CodeContext({
   active,
   onActiveChange,
   onPendingChanged,
+  maintained,
 }: CodeContextProps) {
   const [openPath, setOpenPath] = useState<string | undefined>(active ?? files[0]);
   const [tabs, setTabs] = useState<Map<string, OpenFile>>(new Map());
@@ -60,8 +63,8 @@ export function CodeContext({
   const dirty = current ? current.draft !== current.saved : false;
 
   // Held in a ref so the keyboard handler does not need re-binding on every keystroke.
-  const state = useRef({ projectId, openPath, tabs });
-  state.current = { projectId, openPath, tabs };
+  const state = useRef({ projectId, openPath, tabs, maintained });
+  state.current = { projectId, openPath, tabs, maintained };
 
   // Follow the file the shell asked for. Opening one from the tree while this is
   // already mounted has to bring it forward, or the tab appears and nothing changes.
@@ -148,7 +151,12 @@ export function CodeContext({
   }, [save]);
 
   const onMount = useCallback<OnMount>((editor, monaco) => {
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => void save());
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+      // Cmd+S on a generated file is a no-op — nothing to save that would survive.
+      if (!(state.current.openPath && state.current.maintained?.has(state.current.openPath))) {
+        void save();
+      }
+    });
   }, [save]);
 
   const openTabs = useMemo(() => [...tabs.keys()], [tabs]);
@@ -160,6 +168,10 @@ export function CodeContext({
    * and an extra click.
    */
   const showFileList = files.length > 1;
+
+  // The open file is generated when Civil maintains its path: read-only, because a
+  // save would be overwritten by the next transpile (docs/mine-or-theirs.md).
+  const isGenerated = openPath !== undefined && (maintained?.has(openPath) ?? false);
 
   return (
     <div className={`code-context${showFileList ? '' : ' is-single'}`}>
@@ -187,7 +199,7 @@ export function CodeContext({
       </aside>
       ) : null}
 
-      <div className="code-main">
+      <div className={`code-main${isGenerated ? ' has-banner' : ''}`}>
         <div className="code-tabs">
           {openTabs.map((path) => {
             const entry = tabs.get(path)!;
@@ -218,10 +230,21 @@ export function CodeContext({
           })}
           <span className="code-tabs-spacer" />
           {error ? <span className="code-error">{error}</span> : null}
-          <button type="button" className="code-save" onClick={() => void save()} disabled={!dirty || saving}>
-            {saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
+          <button
+            type="button"
+            className="code-save"
+            onClick={() => void save()}
+            disabled={isGenerated || !dirty || saving}
+          >
+            {isGenerated ? 'Generated' : saving ? 'Saving…' : dirty ? 'Save' : 'Saved'}
           </button>
         </div>
+
+        {isGenerated ? (
+          <div className="code-generated-banner">
+            Generated from the graph — edit the graph to change this file.
+          </div>
+        ) : null}
 
         {current ? (
           <Editor
@@ -247,6 +270,7 @@ export function CodeContext({
               tabSize: 4,
               automaticLayout: true,
               padding: { top: 12 },
+              readOnly: isGenerated,
             }}
           />
         ) : (

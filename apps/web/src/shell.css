@@ -628,6 +628,10 @@ body {
 .code-file.is-open { color: var(--accent); background: var(--bg-inset); }
 
 .code-main { display: grid; grid-template-rows: 30px 1fr; min-width: 0; background: var(--bg-inset); }
+/* The generated-file banner is a third row between the tabs and the editor; without
+   its own track the editor would collapse to zero height (grid maps children to
+   rows in order). */
+.code-main.has-banner { grid-template-rows: 30px auto 1fr; }
 
 .code-tabs {
   display: flex;
@@ -1492,3 +1496,13 @@ select.field { cursor: pointer; }
 .sessionlog-row { grid-template-columns: 40px 120px 1fr; }
 .sessionlog-proc { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sessionlog-line { color: var(--text-dim); white-space: pre-wrap; word-break: break-word; }
+
+/* A generated file is read-only: the graph is its source. The banner says why,
+   in the accent used elsewhere for "Civil maintains this", not an error red. */
+.code-generated-banner {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--bg-inset);
+  border-bottom: 1px solid var(--border);
+}
