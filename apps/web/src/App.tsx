@@ -176,6 +176,10 @@ function Workspace({ me }: { me: Me }) {
   const [committing, setCommitting] = useState(false);
   const [commitNote, setCommitNote] = useState<string | null>(null);
   const [diffOpen, setDiffOpen] = useState(false);
+  // Bumped when a pre-commit transpile lands emitted files under the open diff,
+  // so the panel re-fetches and the review shows exactly what will commit.
+  const [diffRevision, setDiffRevision] = useState(0);
+  const [preparingReview, setPreparingReview] = useState(false);
 
   /** The run being watched: its identity, where it stands, and its story so far. */
   const [runPanelOpen, setRunPanelOpen] = useState(false);
@@ -554,7 +558,10 @@ function Workspace({ me }: { me: Me }) {
       },
       'project.diff': () => {
         if (pendingCount === 0) return undefined;
-        setDiffOpen(true);
+        // Same review as the commit path: transpile first so the emitted code is in
+        // the diff, since this panel carries the commit control too. reviewBeforeCommit
+        // no-ops the transpile for a non-committable project.
+        reviewBeforeCommit();
         return 'Every pending change, as a diff, before it commits.';
       },
       'project.sync': () => {
@@ -595,8 +602,9 @@ function Workspace({ me }: { me: Me }) {
         setPickerOpen(false);
         // Committing needs a message and deserves the diff in front of it, so the
         // shortcut opens the review panel rather than committing silently — PRD 7
-        // makes commits explicit and gives the indicator a diff preview.
-        setDiffOpen(true);
+        // makes commits explicit and gives the indicator a diff preview. Auto, then
+        // review: the emitted code lands in that diff too, not just the intent edits.
+        reviewBeforeCommit();
         return `${pendingCount} pending change${pendingCount === 1 ? '' : 's'}. Review, add a message, commit.`;
       },
     },
@@ -675,6 +683,34 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Transpile', detail: (error as Error).message, refused: true });
     }
   }, [activeId, refresh, report]);
+
+  /**
+   * Auto, then review (docs/transpilation.md): opening the commit review lands a
+   * fresh transpile in the diff, so intent changes and the emitted code they cause
+   * are seen together before confirming. The server re-transpiles at commit (the
+   * memo makes it identical), so this is a faithful preview of exactly what lands.
+   * Quiet — no success toast, because it fires whenever the review opens; only a
+   * failure is worth interrupting for. A non-committable project just shows pending.
+   */
+  const reviewBeforeCommit = useCallback(() => {
+    setDiffOpen(true);
+    if (!canCommit || !activeId) return;
+    // The panel is open on the pre-transpile set; mark it preparing so the commit
+    // button waits, then transpile, refresh, and bump the revision so the panel
+    // re-fetches the post-transpile set. Only then is what is shown what commits.
+    setPreparingReview(true);
+    void (async () => {
+      try {
+        await transpileProject(activeId);
+        await refresh();
+        setDiffRevision((n) => n + 1);
+      } catch (error) {
+        report({ title: 'Prepare commit', detail: (error as Error).message, refused: true });
+      } finally {
+        setPreparingReview(false);
+      }
+    })();
+  }, [canCommit, activeId, refresh, report]);
 
   /**
    * Watching is reading (PRD 8.2): poll the event log from the last seq while the
@@ -1069,6 +1105,8 @@ function Workspace({ me }: { me: Me }) {
             // commit something with no repository behind it.
             committable={bundle.project.sourceKind === 'github'}
             committing={committing}
+            revision={diffRevision}
+            preparing={preparingReview}
             onCommit={(message) => void commit(message)}
             onClose={() => setDiffOpen(false)}
           />
@@ -1181,7 +1219,7 @@ function Workspace({ me }: { me: Me }) {
         <CommitBar
           count={pendingCount}
           note={commitNote}
-          onReview={() => setDiffOpen(true)}
+          onReview={reviewBeforeCommit}
           onDismissNote={() => setCommitNote(null)}
         />
         {activeRun ? (

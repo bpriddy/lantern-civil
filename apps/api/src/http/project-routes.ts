@@ -24,6 +24,7 @@ import {
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
 import { sessionIsLive, transpileAndSync, writeThroughToSession } from './session-routes.js';
+import { RunnerError, transpileProject } from './transpile-routes.js';
 import { markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
@@ -311,6 +312,46 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const changes = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     if (changes.length === 0) return reply.code(409).send({ error: 'nothing_to_commit' });
 
+    // Auto, then review (owner's call): the emitted code that lands in the repo must
+    // match the documents landing with it, so commit runs a fresh transpile first —
+    // landing its files and retiring stale ones into pending — then commits the
+    // result. The memo makes this identical to the transpile the author reviewed in
+    // the diff, so what they saw is what commits. A transpile failure fails the
+    // commit rather than writing an inconsistent HEAD. Skipped with no runner
+    // configured (examples, a runner-less deploy): the raw pending set commits as before.
+    let toCommit = changes;
+    if (config.runnerUrl) {
+      try {
+        const source = await openSource(request.identity.id, project);
+        const overlay = new OverlaySource(source, changes);
+        await transpileProject({ config, pool }, request.identity.id, project, source, overlay);
+      } catch (error) {
+        if (error instanceof RunnerError) return reply.code(error.status).send(error.body);
+        if (error instanceof ContentTooLargeError) {
+          return reply.code(413).send({ error: 'content_too_large', message: error.message });
+        }
+        if (error instanceof SourceError) {
+          return reply.code(error.status).send({ error: error.code, message: error.message });
+        }
+        throw error;
+      }
+      // Transpilation may have added emitted files and retired stale ones — re-read.
+      // Single-user note: the transpile ran against the `changes` snapshot; `toCommit`
+      // is re-read fresh, so a document edit landing in this window (another tab, a
+      // retry) could pair a new document with code from the old one. Accepted for the
+      // one-editor-per-project model (docs/roadmap.md); a per-project commit lock is
+      // the fix if that ever stops holding.
+      toCommit = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+      if (toCommit.length === 0) {
+        // The pending set existed but transpilation retired all of it (stale emissions
+        // with no surviving edit) — a different answer than "you changed nothing".
+        return reply.code(409).send({
+          error: 'nothing_to_commit',
+          message: 'Your pending changes were superseded by transpilation; nothing remains to commit.',
+        });
+      }
+    }
+
     try {
       const result = await commitPendingChanges(githubApp, {
         installationId: connection.installationId,
@@ -318,7 +359,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         repo: project.repoName,
         branch: project.defaultBranch,
         message,
-        changes,
+        changes: toCommit,
         // The owner's rule: the Civil UI is canon. A branch that moved is re-parented
         // rather than refused, which keeps Civil's version of the files it touched
         // without discarding anything that landed in between.
@@ -334,13 +375,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       await setHeadSha(pool, request.identity.id, project.id, result.commitSha);
 
       request.log.info(
-        { projectId: project.id, commit: result.commitSha, files: changes.length },
+        { projectId: project.id, commit: result.commitSha, files: toCommit.length },
         'committed',
       );
       return {
         commit: result.commitSha,
         url: result.url,
-        files: changes.length,
+        files: toCommit.length,
         // Surfaced rather than silent: the author should know their commit landed on
         // top of work that arrived while they were editing.
         reparentedOnto: result.reparentedOnto ?? null,

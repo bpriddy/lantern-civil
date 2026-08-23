@@ -17,12 +17,20 @@ export function DiffPanel({
   projectId,
   committable,
   committing,
+  revision,
+  preparing,
   onCommit,
   onClose,
 }: {
   projectId: string;
   committable: boolean;
   committing: boolean;
+  /** Bumped when the pending set changes underneath an open panel (a pre-commit
+   *  transpile lands emitted files); the fetch re-runs so the review shows them. */
+  revision?: number;
+  /** A pre-commit transpile is in flight — the diff is not yet the final set, so
+   *  committing must wait or it would land more than what is shown. */
+  preparing?: boolean;
   onCommit: (message: string) => void;
   onClose: () => void;
 }) {
@@ -42,7 +50,7 @@ export function DiffPanel({
         if (!isAbortError(err)) setError((err as Error).message);
       });
     return () => controller.abort();
-  }, [projectId]);
+  }, [projectId, revision]);
 
   // The topmost surface owns Escape while it is open. Capture phase, so the global
   // command listener never sees the keystroke and cannot also clear the selection.
@@ -60,7 +68,7 @@ export function DiffPanel({
   const file = useMemo(() => files?.find((f) => f.path === active), [files, active]);
 
   const commit = () => {
-    if (message.trim() && committable && !committing) {
+    if (message.trim() && committable && !committing && !preparing) {
       onCommit(message.trim());
       setMessage('');
       onClose();
@@ -89,10 +97,14 @@ export function DiffPanel({
               <button
                 type="button"
                 className="connect"
-                disabled={committing || !message.trim()}
+                disabled={committing || preparing || !message.trim()}
                 onClick={commit}
               >
-                {committing ? 'Committing…' : `Commit ${files?.length ?? ''} file${files?.length === 1 ? '' : 's'}`}
+                {committing
+                  ? 'Committing…'
+                  : preparing
+                    ? 'Preparing…'
+                    : `Commit ${files?.length ?? ''} file${files?.length === 1 ? '' : 's'}`}
               </button>
             </>
           ) : (

@@ -223,8 +223,18 @@ export async function commitProject(projectId: string, message: string): Promise
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ message }),
   });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error((body as { message?: string }).message ?? `commit failed (${response.status})`);
+  const body = (await response.json().catch(() => ({}))) as {
+    message?: string;
+    error?: string;
+    issues?: string[];
+  };
+  if (!response.ok) {
+    // Commit now transpiles first, so a transpiler 422 can surface here too — carry
+    // its issues, the actionable half, exactly as transpileProject does.
+    const issues =
+      Array.isArray(body.issues) && body.issues.length > 0 ? ` — ${body.issues.join('; ')}` : '';
+    throw new Error(`${body.message ?? body.error ?? `commit failed (${response.status})`}${issues}`);
+  }
   return body as CommitResult;
 }
 
