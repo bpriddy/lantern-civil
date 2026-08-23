@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { test } from 'node:test';
+import { once } from 'node:events';
 import {
   gatherAnalyzerFiles,
   gatherInputs,
   inputHash,
 } from '../dist/project/transpile.js';
+import { transpileProject } from '../dist/http/transpile-routes.js';
 
 /**
  * What the transpiler sees decides what the model emits and what the memo replays.
@@ -110,4 +113,99 @@ test('the runner fingerprint is part of the memo key', () => {
   assert.equal(inputHash(inputs, base), inputHash(inputs, { ...base }));
   assert.notEqual(inputHash(inputs, base), inputHash(inputs, { ...base, model: 'claude-6' }));
   assert.notEqual(inputHash(inputs, base), inputHash(inputs, { ...base, promptVersion: '2' }));
+});
+
+// --- retirement --------------------------------------------------------------
+
+/**
+ * A stale emission left running beside a fresh one is the exact crash retirement
+ * fixes (docs/app-session.md): a path a past emission produced and this one does
+ * not is a delete when it exists at HEAD (so a commit removes it from the repo too)
+ * and a plain revert when it was only ever pending.
+ */
+
+/** The runner, faked to answer just the two calls transpileProject makes. */
+const fakeRunner = async (emitted: Record<string, string>) => {
+  const service = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/transpile/meta') {
+        res.end(JSON.stringify({ model: 'claude-sonnet-5', promptVersion: '1' }));
+      } else if (req.url === '/transpile') {
+        res.end(JSON.stringify({ files: emitted, roles: {}, attempts: 1 }));
+      } else {
+        res.statusCode = 404;
+        res.end('{}');
+      }
+    });
+  });
+  service.listen(0, '127.0.0.1');
+  await once(service, 'listening');
+  const { port } = service.address() as { port: number };
+  return { url: `http://127.0.0.1:${port}`, close: () => service.close() };
+};
+
+test('a path a prior emission produced and this one drops is retired from pending', async () => {
+  const runner = await fakeRunner({ 'app/main.py': 'the new emission' });
+
+  // The prior emission's union, as maintainedPaths reads it: main survives, legacy
+  // and only_pending do not.
+  const maintainedFiles = {
+    'app/main.py': 'old',
+    'app/legacy.py': 'old',
+    'src/only_pending.py': 'old',
+  };
+
+  const deleted: string[] = [];
+  const reverted: string[] = [];
+  const pool = {
+    query: async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO transpilations')) return { rows: [] }; // storeMemo
+      if (sql.includes('INSERT INTO pending_changes') && sql.includes('RETURNING')) {
+        return {
+          rows: [{ path: params[3], kind: 'add', content: params[5], updatedAt: 'now' }],
+        }; // savePending
+      }
+      if (sql.includes('INSERT INTO pending_changes')) {
+        deleted.push(params[3] as string); // deletePending, path is $4
+        return { rows: [] };
+      }
+      if (sql.includes('DELETE FROM pending_changes')) {
+        reverted.push(params[3] as string); // revertPending, path is $4
+        return { rowCount: 1 };
+      }
+      if (sql.includes('FROM transpilations') && sql.includes('input_hash')) {
+        return { rows: [] }; // findMemo miss — a genuine transpile
+      }
+      if (sql.includes('FROM transpilations')) {
+        return { rows: [{ output: { files: maintainedFiles } }] }; // maintainedPaths
+      }
+      if (sql.includes('FROM projects') && sql.includes('patterns_stale')) {
+        return { rows: [{ stale: false, head: null, headSha: null }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  // Only legacy.py exists at HEAD; only_pending.py was never committed.
+  const source = { exists: (p: string) => p === 'app/legacy.py' };
+  const overlay = sourceOf(project);
+  const deps = { config: { runnerUrl: runner.url }, pool };
+
+  const flow = await transpileProject(
+    deps as never,
+    'owner',
+    { id: 'proj', defaultBranch: 'main' } as never,
+    source as never,
+    overlay as never,
+  );
+
+  runner.close();
+
+  assert.ok('app/main.py' in flow.output.files, 'the surviving file is still emitted');
+  assert.deepEqual(flow.retired, ['app/legacy.py', 'src/only_pending.py']);
+  assert.deepEqual(deleted, ['app/legacy.py'], 'a HEAD file is retired as a delete');
+  assert.deepEqual(reverted, ['src/only_pending.py'], 'a pending-only file is reverted');
 });

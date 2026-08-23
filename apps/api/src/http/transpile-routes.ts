@@ -4,7 +4,13 @@ import type { Config } from '../config.js';
 import { GitHubApp } from '../github/app.js';
 import { SourceError, openProjectSource } from '../project/open.js';
 import { OverlaySource } from '../project/overlay.js';
-import { ContentTooLargeError, listPending, savePending } from '../project/pending.js';
+import {
+  ContentTooLargeError,
+  deletePending,
+  listPending,
+  revertPending,
+  savePending,
+} from '../project/pending.js';
 import { getProject, type ProjectRow } from '../project/repository.js';
 import type { ProjectSource } from '../project/source.js';
 import {
@@ -22,6 +28,7 @@ import {
   type TranspileOutput,
 } from '../project/transpile.js';
 import { idTokenFor } from './runner-auth.js';
+import { transpileAndSync } from './session-routes.js';
 
 /**
  * docs/emitted-code.md: model access lives only in the runner (PRD 12), so both the
@@ -152,6 +159,8 @@ export interface TranspileFlow {
   output: TranspileOutput;
   cached: boolean;
   patternsRefreshed: boolean;
+  /** Paths a past emission produced that this one does not — retired from pending. */
+  retired: string[];
 }
 
 /**
@@ -241,7 +250,22 @@ export async function transpileProject(
     });
   }
 
-  return { output, cached, patternsRefreshed };
+  // Retirement: a path a past emission produced (maintainedPaths, the union over
+  // the memo) that this emission does not is stale, and a session materialising
+  // HEAD+pending would run it beside the new file (docs/app-session.md). Retire it
+  // — a delete change when it exists at HEAD so a commit removes it from the repo
+  // too, a plain revert when it was only ever pending. Runs after the writes above,
+  // and the filter keeps a path this emission still owns from ever being retired.
+  const retired = [...maintained].filter((path) => !(path in output.files)).sort();
+  for (const path of retired) {
+    if (source.exists(path)) {
+      await deletePending(pool, ownerId, project.id, project.defaultBranch, path);
+    } else {
+      await revertPending(pool, ownerId, project.id, project.defaultBranch, path);
+    }
+  }
+
+  return { output, cached, patternsRefreshed, retired };
 }
 
 export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDeps): void {
@@ -286,9 +310,11 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
       throw error;
     }
 
+    // Transpile, then push to a live session best-effort (docs/app-session.md): a
+    // session catches the edit without a manual Run, and "no session" is silence.
     let flow: TranspileFlow;
     try {
-      flow = await transpileProject(deps, request.identity.id, project, source, overlay);
+      flow = await transpileAndSync(deps, request.identity.id, project, source, overlay);
     } catch (error) {
       if (error instanceof ContentTooLargeError) {
         return reply.code(413).send({ error: 'content_too_large', message: error.message });

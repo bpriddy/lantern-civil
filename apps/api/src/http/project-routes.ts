@@ -23,7 +23,7 @@ import {
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
-import { writeThroughToSession } from './session-routes.js';
+import { sessionIsLive, transpileAndSync, writeThroughToSession } from './session-routes.js';
 import { markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
@@ -537,6 +537,28 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       existsAtHead: base.exists(body.path),
     });
 
+    // A structural op changes what the app IS, so a live session hot re-transpiles
+    // to track the canvas (docs/app-session.md). Layout-only batches — node drags,
+    // the high-frequency case — are position, not emission, and never transpile.
+    // Fire-and-forget: the op response never waits on model latency, and the task
+    // opens its own overlay because this route's predates the op's pending write.
+    if (config.sessionUrl && config.runnerUrl && batchNeedsTranspile(body.ops as ManifestOp[])) {
+      const sessionUrl = config.sessionUrl;
+      const ownerId = request.identity.id;
+      void (async () => {
+        try {
+          // Nothing is listening: skip the model round trip a re-transpile costs.
+          if (!(await sessionIsLive(sessionUrl, project.id))) return;
+          const freshBase = await openSource(ownerId, project);
+          const freshPending = await listPending(pool, ownerId, project.id, project.defaultBranch);
+          const freshOverlay = new OverlaySource(freshBase, freshPending);
+          await transpileAndSync(deps, ownerId, project, freshBase, freshOverlay);
+        } catch (error) {
+          request.log.error({ err: error, projectId: project.id }, 're-transpile after op failed');
+        }
+      })();
+    }
+
     return {
       path: change.path,
       kind: change.kind,
@@ -617,6 +639,16 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     await deletePending(pool, request.identity.id, project.id, project.defaultBranch, body.path);
     return reply.code(204).send();
   });
+}
+
+/**
+ * Whether an op batch changes what the app emits, and so warrants a re-transpile.
+ * Layout-only batches (every op a setLayout — a node drag) move position, which is
+ * not emission, so they do not; anything else in the batch does. Extracted so the
+ * decision is unit-testable without spawning the background task it gates.
+ */
+export function batchNeedsTranspile(ops: readonly { op?: unknown }[]): boolean {
+  return ops.some((op) => op.op !== 'setLayout');
 }
 
 /** Enough for Monaco to pick a grammar. PRD 15 makes Python the only parsed one. */

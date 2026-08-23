@@ -94,13 +94,18 @@ def _signal_group(popen: subprocess.Popen, sig: int) -> None:
 
 class Proc:
     """One supervised process: no Popen until its setup succeeds; a failed
-    setup is recorded as the exit code so status stays honest."""
+    setup is recorded as the exit code so status stays honest. The resolved
+    cmd/cwd/env of the long-lived spawn are retained so a restart replays
+    exactly what start() ran — never the one-shot setup, which does not re-run."""
 
     def __init__(self, name: str, port: int | None) -> None:
         self.name = name
         self.port = port
         self.popen: subprocess.Popen | None = None
         self.setup_code: int | None = None
+        self.cmd: list | None = None
+        self.cwd: Path | None = None
+        self.env: dict | None = None
 
     def status(self) -> dict:
         if self.popen is None:
@@ -158,6 +163,27 @@ class Session:
             self.files_version += 1
         return len(files)
 
+    def delete_files(self, paths: list) -> int:
+        # The same workspace guard the write path enforces, raised as the write's
+        # own error so do_PATCH answers 400. All paths clear the guard before any
+        # unlink, so a bad path deletes nothing. A missing file is fine — a
+        # retirement is idempotent, and the emission may never have reached disk.
+        for rel in paths:
+            if not _inside_workspace(rel):
+                raise WorkspaceWriteError(f"{rel}: does not stay inside the workspace")
+        deleted = 0
+        for rel in paths:
+            try:
+                (self.workspace / rel).unlink()
+                deleted += 1
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                raise WorkspaceWriteError(f"{rel}: {error}") from error
+        if deleted:
+            self.files_version += 1
+        return deleted
+
     def start(self, spec: dict) -> None:
         """Setup commands sequentially, then the long-lived cmd — all in the
         caller's thread, so the POST answers once the app is actually started."""
@@ -176,6 +202,8 @@ class Session:
         argv = list(spec["cmd"])
         if argv[0] == "$CIVIL_PYTHON":
             argv[0] = str(venv_python())
+        # Retained so restart() replays this exact spawn, setup already done.
+        proc.cmd, proc.cwd, proc.env = argv, cwd, env
         try:
             proc.popen = self._spawn(argv, cwd, env)
         except OSError as error:
@@ -225,6 +253,41 @@ class Session:
         for line in popen.stdout:
             self.log(name, line.rstrip("\n"))
         popen.stdout.close()
+
+    def restart(self, name: str) -> bool:
+        """Re-spawn a named process's stored cmd without re-running setup: a
+        graph edit changed the orchestration the boundary imported at start, not
+        its deps. Kill the group as destroy() does, then replay cmd/cwd/env and
+        a fresh pump. False for an unknown name or one that never started (setup
+        failed) — the caller ignores those."""
+        if self.stopped:
+            return False
+        proc = next((p for p in self.procs if p.name == name), None)
+        if proc is None or proc.popen is None:
+            return False
+        self.log(name, "restarting")
+        _signal_group(proc.popen, signal.SIGTERM)
+        try:
+            proc.popen.wait(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            _signal_group(proc.popen, signal.SIGKILL)
+            proc.popen.wait()
+        try:
+            proc.popen = self._spawn(proc.cmd, proc.cwd, proc.env)
+        except OSError as error:
+            proc.popen = None
+            proc.setup_code = 127
+            self.log(name, f"failed to start {proc.cmd[0]}: {error}")
+            return False
+        if self.stopped:  # destroyed underneath us mid-restart; do not leak the child
+            _signal_group(proc.popen, signal.SIGKILL)
+            proc.popen.wait()
+            return False
+        threading.Thread(
+            target=self._pump, args=(proc.name, proc.popen),
+            daemon=True, name=f"session-{self.id}-{proc.name}",
+        ).start()
+        return True
 
     def _env(self, extra: dict, port: int | None) -> dict:
         # A curated base, never dict(os.environ): the service's environment
@@ -310,6 +373,10 @@ def _string_map(value: object) -> bool:
     return isinstance(value, dict) and all(
         isinstance(k, str) and isinstance(v, str) for k, v in value.items()
     )
+
+
+def _string_list(value: object) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def _inside_workspace(rel: str) -> bool:
@@ -430,16 +497,27 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body()
             if body is None:
                 return
-            issue = _files_issue(body.get("files"))
+            files = body.get("files") if body.get("files") is not None else {}
+            deletions = body.get("deletions") if body.get("deletions") is not None else []
+            restart = body.get("restart") if body.get("restart") is not None else []
+            issue = _files_issue(files)
+            if issue is None and not _string_list(deletions):
+                issue = '"deletions" must be a list of workspace paths'
+            if issue is None and not _string_list(restart):
+                issue = '"restart" must be a list of process names'
             if issue is not None:
                 self._json(400, {"error": issue})
                 return
+            # Writes, then deletions, then restarts — a boundary re-spawns after
+            # its new orchestration is on disk, not before.
             try:
-                written = session.write_files(body["files"])
+                written = session.write_files(files)
+                deleted = session.delete_files(deletions)
             except WorkspaceWriteError as error:
                 self._json(400, {"error": str(error)})
                 return
-            self._json(200, {"written": written})
+            restarted = [name for name in restart if session.restart(name)]
+            self._json(200, {"written": written, "deleted": deleted, "restarted": restarted})
             return
         self.send_response(404)
         self.end_headers()

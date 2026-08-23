@@ -11,6 +11,7 @@ import { ContentTooLargeError, listPending } from '../project/pending.js';
 import { getProject, type ProjectRow } from '../project/repository.js';
 import { deriveProcesses, gatherSessionFiles } from '../project/session.js';
 import type { ProjectSource } from '../project/source.js';
+import type { TranspileOutput } from '../project/transpile.js';
 import { sendRunnerError, transpileProject, type TranspileFlow } from './transpile-routes.js';
 
 /**
@@ -106,6 +107,115 @@ export async function writeThroughToSession(
   }
 }
 
+/**
+ * The composition the boundary derivation reads, resolved through the overlay so a
+ * pending edit to civil.yaml or the composition is what Run sees. A broken document
+ * derives no processes; the validator owns reporting it.
+ */
+async function readComposition(overlay: OverlaySource): Promise<Composition | undefined> {
+  await overlay.ensure?.(['civil.yaml']);
+  const path = compositionPathFor(overlay);
+  await overlay.ensure?.([path]);
+  const raw = overlay.read(path);
+  if (raw === undefined) return undefined;
+  try {
+    const parsed = zComposition.safeParse(parse(raw));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The session live-sync (docs/app-session.md): after a transpile, push the emitted
+ * files, the retired deletions, and a restart of the boundary processes to the
+ * running session. Boundaries restart because a graph edit changes orchestration
+ * the Python server imported at start; clients never do — vite's HMR delivers a file
+ * write. Best-effort like writeThroughToSession — "no session" (404), "no service",
+ * and "unreachable" are all silence, never a failed transpile.
+ */
+export async function syncTranspileToSession(
+  sessionUrl: string,
+  projectId: string,
+  boundaryNames: string[],
+  output: TranspileOutput,
+  retired: string[],
+): Promise<void> {
+  try {
+    await callSession(sessionUrl, 'PATCH', `/sessions/${projectId}/files`, {
+      files: output.files,
+      deletions: retired,
+      restart: boundaryNames,
+    });
+  } catch {
+    /* the session catches up at the next Run's rematerialisation */
+  }
+}
+
+/**
+ * Transpile the project, then sync the result to a live session. One seam behind
+ * both the explicit Transpile and the auto re-transpile a structural op triggers,
+ * so Run never disagrees with the diff panel about what the app is. Transpilation
+ * always runs; the sync is best-effort and only when a session service is
+ * configured, so a project with no session transpiles exactly as before. Throws
+ * whatever transpileProject throws (RunnerError, ContentTooLargeError); the sync
+ * itself never throws.
+ */
+/**
+ * The file set a fresh session materialises: HEAD-plus-pending, the emitted app
+ * merged on top, and the flow's retirements removed — the cold-start twin of the
+ * deletions the hot PATCH path sends, so a rematerialise never resurrects a stale
+ * emission (retired can never name a current output; the flow guarantees it).
+ */
+export function assembleSessionFiles(
+  base: Record<string, string>,
+  flow: TranspileFlow,
+): Record<string, string> {
+  const files = { ...base, ...flow.output.files };
+  for (const path of flow.retired) delete files[path];
+  return files;
+}
+
+export async function transpileAndSync(
+  deps: SessionDeps,
+  ownerId: string,
+  project: ProjectRow,
+  source: ProjectSource,
+  overlay: OverlaySource,
+): Promise<TranspileFlow> {
+  const flow = await transpileProject(deps, ownerId, project, source, overlay);
+  if (deps.config.sessionUrl) {
+    const composition = await readComposition(overlay);
+    // Boundary names depend on roles and the composition, not the file bodies, so
+    // the emitted files stand in for the full set the session derivation uses.
+    const { boundaries } = deriveProcesses(
+      project.id, composition, flow.output.files, flow.output.roles,
+    );
+    await syncTranspileToSession(
+      deps.config.sessionUrl,
+      project.id,
+      boundaries.map((b) => b.name),
+      flow.output,
+      flow.retired,
+    );
+  }
+  return flow;
+}
+
+/**
+ * Whether a session is up right now — a cheap GET the ops auto-trigger uses to
+ * decide against spending model latency on a re-transpile no running app will hear.
+ * Any failure (404 no-session, unreachable) reads as "not live".
+ */
+export async function sessionIsLive(sessionUrl: string, projectId: string): Promise<boolean> {
+  try {
+    await callSession(sessionUrl, 'GET', `/sessions/${projectId}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const previewUrl = (port: number): string => `http://127.0.0.1:${port}`;
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionDeps): void {
@@ -123,21 +233,6 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionDeps): 
     const source = await openProjectSource({ pool, githubApp }, ownerId, project);
     const pending = await listPending(pool, ownerId, project.id, project.defaultBranch);
     return { source, overlay: new OverlaySource(source, pending) };
-  };
-
-  const readComposition = async (overlay: OverlaySource): Promise<Composition | undefined> => {
-    await overlay.ensure?.(['civil.yaml']);
-    const path = compositionPathFor(overlay);
-    await overlay.ensure?.([path]);
-    const raw = overlay.read(path);
-    if (raw === undefined) return undefined;
-    try {
-      const parsed = zComposition.safeParse(parse(raw));
-      return parsed.success ? parsed.data : undefined;
-    } catch {
-      // A broken composition derives no processes; the validator owns reporting it.
-      return undefined;
-    }
   };
 
   /** Both preconditions of every session route, resolved in one place. */
@@ -202,10 +297,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionDeps): 
       return sendRunnerError(reply, error);
     }
 
-    // HEAD plus pending, with the emitted app merged on top: the overlay predates
-    // the pending rows the flow just wrote, so the merge is explicit.
-    const files = await gatherSessionFiles(overlay);
-    Object.assign(files, flow.output.files);
+    // HEAD plus pending, with the emitted app merged on top and retirements
+    // dropped — see assembleSessionFiles: a stale emission must not land beside
+    // the fresh one on the workspace (the bug retirement exists to prevent).
+    const files = assembleSessionFiles(await gatherSessionFiles(overlay), flow);
 
     const composition = await readComposition(overlay);
     const derived = deriveProcesses(project.id, composition, files, flow.output.roles);

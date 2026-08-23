@@ -102,7 +102,48 @@ logs, destroy) and substrates are adapters behind it, the same move as
   session hands it in `$PORT` (the Heroku convention). This is the one thing
   Civil asks of a frontend's tooling.
 
+## Hot re-transpile and the emission lifecycle — built 2026-08-22
+
+The two-tier rule's second tier and the fix for stale emissions, in one seam.
+
+**Retirement.** `transpileProject` computed the app's current file set every run
+but never retired the files a past emission produced and the current one does
+not — they lingered as pending changes, and a session materialising HEAD+pending
+ran the stale file beside the new one (civil-project-test's boundary crashed
+exit 3 this way). The union of paths across the project's memo rows
+(`maintainedPaths`) minus the current `output.files` is exactly the stale set:
+each is retired from pending — a `delete` change when it exists at HEAD (so a
+commit removes it from the repo too), a plain revert when it was only ever
+pending. `transpileProject` now returns `retired` alongside `output`.
+
+**The session gains delete and restart.** `PATCH /sessions/{id}/files` accepts
+`{files?, deletions?, restart?}`: writes as before, deletes the listed
+workspace paths (guarded to the workspace, missing is fine), and restarts the
+named processes — kill the group, re-spawn the stored `cmd` without re-running
+setup (deps did not change on a code edit). A `Proc` now retains its spec so a
+restart can replay it. Clients are never in `restart`: vite's own HMR delivers
+a file write. Boundaries are, because a graph edit changes orchestration the
+Python server imported at start and holds until it is restarted.
+
+**Sync on transpile.** After a transpile with a live session, the API pushes
+the emitted files, the retired deletions, and a restart of the boundary
+processes — best-effort, so "no session" is silence, exactly like write-through.
+
+**Auto on structural ops.** An op batch that changes what the app *is* — any op
+that is not layout-only — triggers a background re-transpile-and-sync when a
+session is live, so the running app tracks the canvas without a manual Transpile
+(docs/app-session.md's "graph edits ... hot re-transpile"). Layout-only batches
+(node drags, the high-frequency case) never transpile — position is not
+emission. The trigger is fire-and-forget: the op response never waits on model
+latency, and the memo dedups a batch that changed nothing emittable.
+
 ## Open items, recorded not resolved
+
+- Hot re-transpile restarts boundary processes that already exist; it does not
+  bring up a boundary a structural op just *added* or *renamed* (restart of an
+  unknown name is a silent no-op). The running app tracks such a change only on
+  the next full Run. A fresh Run reconciles it; auto-detecting the process-set
+  delta and forcing a re-materialise is the fix when it earns priority.
 
 - Deployed-adapter proxying: session URLs, auth (the session is the owner's
   only), websocket passthrough for HMR. Local sidesteps all three.

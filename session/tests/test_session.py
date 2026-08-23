@@ -137,7 +137,7 @@ def test_patch_writes_through_to_disk() -> None:
     status, body = request("PATCH", "/sessions/proj-1/files", {
         "files": {"app/extra.txt": "patched\n", "deep/nested/file.txt": "x"},
     })
-    ok(status == 200 and body == {"written": 2}, "PATCH answers the count")
+    ok(status == 200 and body == {"written": 2, "deleted": 0, "restarted": []}, "PATCH answers the counts")
     workspace = server.SESSIONS_ROOT / "proj-1"
     ok((workspace / "app" / "extra.txt").read_text() == "patched\n", "the edit lands on disk")
     ok((workspace / "deep" / "nested" / "file.txt").exists(), "parents are created")
@@ -333,6 +333,99 @@ def test_idle_sessions_are_reaped() -> None:
     ok(status == 404, "and the API says 404")
 
 
+def test_restart_replaces_pid_without_rerunning_setup() -> None:
+    # Setup APPENDS a marker line; a restart that wrongly re-ran setup would
+    # append a second — deps do not change on a code edit, so setup must not.
+    status, _ = create("proj-restart", processes=[{
+        "name": "app",
+        "cwd": ".",
+        "setup": [[PY, "-c", "open('marker.txt', 'a').write('once\\n')"]],
+        "cmd": [PY, "-u", "app/main.py"],
+        "port": 43998,
+    }])
+    ok(status == 201, "a session with a marker-writing setup starts")
+    session = server.SESSIONS["proj-restart"]
+    marker = session.workspace / "marker.txt"
+    old = session.procs[0].popen
+    ok(old is not None and marker.read_text() == "once\n", "setup ran once at start")
+
+    status, body = request("PATCH", "/sessions/proj-restart/files", {"restart": ["app"]})
+    ok(status == 200 and body["restarted"] == ["app"], "PATCH restart names the process")
+    ok(until(lambda: old.poll() is not None), "the old process is dead")
+    new = session.procs[0].popen
+    ok(new is not old and new.pid != old.pid and new.poll() is None, "a fresh pid is running")
+    ok(marker.read_text() == "once\n", "setup did not re-run on restart")
+    ok(("app", "restarting") in logged("proj-restart"), "the restart is logged")
+    request("DELETE", "/sessions/proj-restart")
+
+
+def test_delete_files_removes_and_bumps_version() -> None:
+    status, _ = create("proj-del")
+    ok(status == 201, "a session to delete from starts")
+    workspace = server.SESSIONS_ROOT / "proj-del"
+    ok((workspace / "app" / "data.txt").exists(), "the file to delete is present")
+    _, before = request("GET", "/sessions/proj-del")
+
+    status, body = request("PATCH", "/sessions/proj-del/files", {"deletions": ["app/data.txt"]})
+    ok(status == 200 and body == {"written": 0, "deleted": 1, "restarted": []}, "PATCH answers one deleted")
+    ok(not (workspace / "app" / "data.txt").exists(), "the file is gone from disk")
+    _, after = request("GET", "/sessions/proj-del")
+    ok(after["filesVersion"] == before["filesVersion"] + 1, "a deletion bumps filesVersion")
+
+    status, body = request("PATCH", "/sessions/proj-del/files", {"deletions": ["app/data.txt"]})
+    ok(status == 200 and body["deleted"] == 0, "deleting a missing file is fine, not an error")
+    _, again = request("GET", "/sessions/proj-del")
+    ok(again["filesVersion"] == after["filesVersion"], "a no-op deletion never moves the version")
+    request("DELETE", "/sessions/proj-del")
+
+
+def test_deletion_escaping_the_workspace_400() -> None:
+    status, _ = create("proj-esc")
+    ok(status == 201, "a session for the escape probe starts")
+    workspace = server.SESSIONS_ROOT / "proj-esc"
+    (workspace / "keep.txt").write_text("keep\n")
+    status, body = request("PATCH", "/sessions/proj-esc/files", {
+        "deletions": ["keep.txt", "../escape.txt"],
+    })
+    ok(status == 400 and "error" in body, "a '..' deletion answers 400")
+    ok((workspace / "keep.txt").read_text() == "keep\n", "and no path in the batch was deleted")
+    request("DELETE", "/sessions/proj-esc")
+
+
+def test_patch_with_all_three_keys() -> None:
+    status, _ = create("proj-triple", processes=[{
+        "name": "app",
+        "cwd": ".",
+        "cmd": [PY, "-u", "app/main.py"],
+        "port": 43997,
+    }])
+    ok(status == 201, "a session with a restartable process starts")
+    session = server.SESSIONS["proj-triple"]
+    old = session.procs[0].popen
+    workspace = session.workspace
+    (workspace / "stale.txt").write_text("gone soon\n")
+
+    status, body = request("PATCH", "/sessions/proj-triple/files", {
+        "files": {"fresh.txt": "new\n"},
+        "deletions": ["stale.txt"],
+        "restart": ["app"],
+    })
+    ok(status == 200, "the three-key PATCH answers 200")
+    ok(body == {"written": 1, "deleted": 1, "restarted": ["app"]}, "each key reports its count")
+    ok((workspace / "fresh.txt").read_text() == "new\n", "the write landed")
+    ok(not (workspace / "stale.txt").exists(), "the deletion landed")
+    ok(until(lambda: old.poll() is not None), "the restart replaced the process")
+    request("DELETE", "/sessions/proj-triple")
+
+
+def test_restart_of_unknown_name_ignored() -> None:
+    status, _ = create("proj-ghost")
+    ok(status == 201, "a session for the unknown-restart probe starts")
+    status, body = request("PATCH", "/sessions/proj-ghost/files", {"restart": ["ghost"]})
+    ok(status == 200 and body["restarted"] == [], "an unknown name restarts nothing, not a 500")
+    request("DELETE", "/sessions/proj-ghost")
+
+
 def main() -> int:
     # In order, not sorted: the middle tests lean on proj-1 from the first, and
     # the reaper runs last because once armed its half-second clock stays armed.
@@ -350,6 +443,11 @@ def main() -> int:
         test_child_env_is_curated_not_inherited,
         test_civil_python_resolves_to_the_shared_venv,
         test_ensure_venv_skips_on_the_marker,
+        test_restart_replaces_pid_without_rerunning_setup,
+        test_delete_files_removes_and_bumps_version,
+        test_deletion_escaping_the_workspace_400,
+        test_patch_with_all_three_keys,
+        test_restart_of_unknown_name_ignored,
         test_idle_sessions_are_reaped,
     ]
     for test in tests:
