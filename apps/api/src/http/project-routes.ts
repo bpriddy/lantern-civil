@@ -28,6 +28,7 @@ import { RunnerError, transpileProject } from './transpile-routes.js';
 import { createHash } from 'node:crypto';
 import { emittedHistory, maintainedPaths, markPatternsStale } from '../project/transpile.js';
 import { CIVIL_DIR } from '../project/bundle.js';
+import { migrationInputs, planMigration } from '../project/migrate.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -552,6 +553,69 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     }
 
     return { files: written, summary: `Added ${written.join(', ')} as pending changes.` };
+  });
+
+  /**
+   * Move a legacy project's documents into civil/ (delta 19), as reviewable pending
+   * changes: the civil/ documents are added with their graph refs rewritten, and the
+   * root originals marked deleted, so the diff shows the whole move before it commits.
+   * A project already under civil/, or one with no civil.yaml at all, has nothing to
+   * migrate and says so.
+   */
+  app.post('/api/projects/:id/migrate', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+
+    let base: ProjectSource;
+    try {
+      base = await openSource(request.identity.id, project);
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
+
+    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const overlay = new OverlaySource(base, pending);
+    await overlay.ensure?.(migrationInputs(overlay));
+
+    const plan = planMigration(overlay);
+    if (!plan) {
+      return reply.code(409).send({
+        error: 'nothing_to_migrate',
+        message: overlay.exists(`${CIVIL_DIR}/civil.yaml`)
+          ? 'This project already keeps its documents in civil/.'
+          : 'This repository is not a Civil project (no civil.yaml).',
+      });
+    }
+
+    const moved: { from: string; to: string }[] = [];
+    for (const move of plan.moves) {
+      await savePending(pool, {
+        ownerId: request.identity.id,
+        projectId: project.id,
+        branch: project.defaultBranch,
+        path: move.to,
+        content: move.content,
+        existsAtHead: base.exists(move.to),
+      });
+      // Retire the root original: a delete when it is committed, a dropped pending
+      // row when it was only ever pending (revert leaves nothing behind at the root).
+      if (base.exists(move.from)) {
+        await deletePending(pool, request.identity.id, project.id, project.defaultBranch, move.from);
+      } else {
+        await revertPending(pool, request.identity.id, project.id, project.defaultBranch, move.from);
+      }
+      moved.push({ from: move.from, to: move.to });
+    }
+
+    request.log.info({ projectId: project.id, moved: moved.length }, 'migrated to civil/');
+    return {
+      moved,
+      summary: `Moved ${moved.length} document(s) into civil/ as pending changes.`,
+    };
   });
 
   /**

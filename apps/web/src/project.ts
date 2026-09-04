@@ -277,6 +277,21 @@ export async function liftGraph(projectId: string, graphPath: string): Promise<L
   };
 }
 
+/** Move a legacy project's documents into civil/ (delta 19), as pending changes. */
+export async function migrateProject(
+  projectId: string,
+): Promise<{ moved: { from: string; to: string }[]; summary: string }> {
+  const response = await apiFetch(`/api/projects/${projectId}/migrate`, { method: 'POST' });
+  const body = (await response.json().catch(() => ({}))) as {
+    moved?: { from: string; to: string }[];
+    summary?: string;
+    message?: string;
+    error?: string;
+  };
+  if (!response.ok) throw new Error(body.message ?? body.error ?? `could not migrate (${response.status})`);
+  return { moved: body.moved ?? [], summary: body.summary ?? 'Migrated.' };
+}
+
 /** Repositories the connected installation can reach — GitHub decides, not Civil. */
 export async function fetchRepositories(
   signal?: AbortSignal,

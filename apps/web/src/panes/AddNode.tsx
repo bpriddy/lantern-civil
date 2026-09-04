@@ -17,10 +17,12 @@ export interface NodeKind {
   idBase?: string;
   /** Extra manifest fields this kind requires to be valid on arrival, derived from
    *  the id the node actually gets rather than a hardcoded name. */
-  defaults: (id: string) => Record<string, unknown>;
+  /** docDir is where civil documents live for this project: 'civil/' once migrated,
+   *  '' for a legacy root project. Only graph documents use it; code stays at src/. */
+  defaults: (id: string, docDir: string) => Record<string, unknown>;
   /** Files the node must reference to be valid, written as pending changes so the
    *  node arrives whole. Paths that already exist are left alone. */
-  scaffold?: (id: string) => { path: string; content: string }[];
+  scaffold?: (id: string, docDir: string) => { path: string; content: string }[];
 }
 
 export interface NodeFamily {
@@ -84,9 +86,9 @@ export function codeStub(id: string): string {
 }
 
 /** An empty canvas, for a graph-backed service or a subgraph to descend into. */
-function graphStub(id: string): { path: string; content: string } {
+function graphStub(id: string, docDir: string): { path: string; content: string } {
   return {
-    path: `graphs/${pyName(id)}.graph.yaml`,
+    path: `${docDir}graphs/${pyName(id)}.graph.yaml`,
     content: [
       'apiVersion: civil/v1',
       'kind: Graph',
@@ -234,8 +236,8 @@ const COMPOSITION: NodeFamily[] = [
         type: 'service',
         idBase: 'service',
         hint: 'Implemented as a dataflow graph you descend into.',
-        defaults: (id) => ({ impl: { graph: `graphs/${pyName(id)}.graph.yaml` } }),
-        scaffold: (id) => [graphStub(id)],
+        defaults: (id, docDir) => ({ impl: { graph: `${docDir}graphs/${pyName(id)}.graph.yaml` } }),
+        scaffold: (id, docDir) => [graphStub(id, docDir)],
       },
     ],
   },
@@ -334,8 +336,8 @@ const GRAPH: NodeFamily[] = [
         type: 'subgraph',
         idBase: 'subgraph',
         hint: 'Another graph, descended into as a canvas.',
-        defaults: (id) => ({ ref: `graphs/${pyName(id)}.graph.yaml` }),
-        scaffold: (id) => [graphStub(id)],
+        defaults: (id, docDir) => ({ ref: `${docDir}graphs/${pyName(id)}.graph.yaml` }),
+        scaffold: (id, docDir) => [graphStub(id, docDir)],
       },
     ],
   },
@@ -344,11 +346,14 @@ const GRAPH: NodeFamily[] = [
 export function AddNode({
   altitude,
   existingIds,
+  docDir,
   onAdd,
   onClose,
 }: {
   altitude: 'composition' | 'graph';
   existingIds: string[];
+  /** Where new civil documents land: 'civil/' migrated, '' legacy. */
+  docDir: string;
   onAdd: (node: Record<string, unknown>, scaffold: { path: string; content: string }[]) => void;
   onClose: () => void;
 }) {
@@ -360,7 +365,7 @@ export function AddNode({
 
   const choose = (kind: NodeKind) => {
     const id = uniqueId(kind.idBase ?? kind.label, existingIds);
-    onAdd({ id, type: kind.type, ...kind.defaults(id) }, kind.scaffold?.(id) ?? []);
+    onAdd({ id, type: kind.type, ...kind.defaults(id, docDir) }, kind.scaffold?.(id, docDir) ?? []);
     onClose();
   };
 

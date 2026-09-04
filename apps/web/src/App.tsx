@@ -55,6 +55,7 @@ import {
   syncProject,
   transpileProject,
   liftGraph,
+  migrateProject,
   type ManifestOp,
   type RunEvent,
   type RunSummary,
@@ -438,6 +439,13 @@ function Workspace({ me }: { me: Me }) {
   // Generated files, as a Set for the editor's read-only check. Recomputed when the
   // bundle refreshes, so a fresh transpile's new outputs become read-only at once.
   const maintainedSet = useMemo(() => new Set(bundle?.maintained ?? []), [bundle?.maintained]);
+  // Where new civil documents go: the directory the composition already lives in
+  // ('civil/' once migrated, '' for a legacy root project) — delta 19.
+  const docDir = useMemo(() => {
+    const cp = bundle?.compositionPath ?? '';
+    const slash = cp.lastIndexOf('/');
+    return slash >= 0 ? cp.slice(0, slash + 1) : '';
+  }, [bundle?.compositionPath]);
 
   const fatalCount = useMemo(
     () => bundle?.diagnostics.filter((d) => d.severity === 'error').length ?? 0,
@@ -731,6 +739,26 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Lift', detail: (error as Error).message, refused: true });
     }
   }, [activeId, current, refresh, report]);
+
+  const [migrateDismissed, setMigrateDismissed] = useState(false);
+  /**
+   * A legacy project keeps its documents at the repo root; migrating moves them into
+   * civil/ (delta 19). A project is legacy when it has a composition but that
+   * composition sits outside civil/ — docDir is then ''. Examples migrate in-repo,
+   * so this only ever prompts a real github project.
+   */
+  const isLegacy = bundle?.composition !== undefined && docDir === '' && !migrateDismissed;
+
+  const doMigrate = useCallback(async () => {
+    if (!activeId) return;
+    try {
+      const { moved, summary } = await migrateProject(activeId);
+      await refresh();
+      report({ title: 'Migrate', detail: summary || `Moved ${moved.length} document(s) into civil/.` });
+    } catch (error) {
+      report({ title: 'Migrate', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, refresh, report]);
 
   /**
    * Auto, then review (docs/transpilation.md): opening the commit review lands a
@@ -1187,6 +1215,7 @@ function Workspace({ me }: { me: Me }) {
       ) : null}
       {addNodeOpen && bundle ? (
         <AddNode
+          docDir={docDir}
           altitude={current.kind === 'graph' ? 'graph' : 'composition'}
           existingIds={
             current.kind === 'graph'
@@ -1358,7 +1387,22 @@ function Workspace({ me }: { me: Me }) {
           </Suspense>
         ) : (
           <>
-          {driftedOrchestration ? (
+          {isLegacy ? (
+            <div className="drift-banner">
+              <span>
+                This project keeps its documents at the repo root. Move them into <code>civil/</code>?
+              </span>
+              <span className="drift-actions">
+                <button type="button" className="connect" onClick={() => void doMigrate()}>
+                  Move into civil/
+                </button>
+                <button type="button" className="link" onClick={() => setMigrateDismissed(true)}>
+                  dismiss
+                </button>
+              </span>
+            </div>
+          ) : null}
+          {driftedOrchestration && !isLegacy ? (
             <div className="drift-banner">
               <span>
                 This graph's code (<code>{driftedOrchestration}</code>) was changed outside Civil.
