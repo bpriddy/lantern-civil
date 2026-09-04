@@ -23,10 +23,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const EXAMPLE = path.resolve(here, '../../../examples/doc-pipeline');
 
 const manifests = [
-  'civil.yaml',
-  'app.yaml',
-  'graphs/classify.graph.yaml',
-  'graphs/enrich.graph.yaml',
+  'civil/civil.yaml',
+  'civil/app.yaml',
+  'civil/graphs/classify.graph.yaml',
+  'civil/graphs/enrich.graph.yaml',
   'agents/classifier/agent.yaml',
 ];
 

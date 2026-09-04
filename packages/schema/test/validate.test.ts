@@ -15,12 +15,16 @@ import { DiskFiles, EXAMPLE_ROOT, codes, loadYaml } from './helpers.ts';
 // ---------------------------------------------------------------------------
 
 test('the example project validates with zero diagnostics', () => {
-  const result = validateProject('app.yaml', {
+  // Documents live under civil/ now (delta 19); refs are repo-root-relative.
+  const result = validateProject('civil/app.yaml', {
     files: new DiskFiles(EXAMPLE_ROOT),
     loadDoc: loadYaml(EXAMPLE_ROOT),
   });
   assert.deepEqual(result.diagnostics, [], 'example project should be clean');
-  assert.deepEqual(result.graphFiles, ['graphs/classify.graph.yaml', 'graphs/enrich.graph.yaml']);
+  assert.deepEqual(result.graphFiles, [
+    'civil/graphs/classify.graph.yaml',
+    'civil/graphs/enrich.graph.yaml',
+  ]);
 });
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import { parse } from 'yaml';
 import { zComposition, type Composition } from '@civil/schema';
 import type { Config } from '../config.js';
 import { GitHubApp } from '../github/app.js';
-import { compositionPathFor } from '../project/bundle.js';
+import { CIVIL_DIR, compositionPathFor } from '../project/bundle.js';
 import { SourceError, openProjectSource } from '../project/open.js';
 import { OverlaySource } from '../project/overlay.js';
 import { ContentTooLargeError, listPending } from '../project/pending.js';
@@ -113,7 +113,7 @@ export async function writeThroughToSession(
  * derives no processes; the validator owns reporting it.
  */
 async function readComposition(overlay: OverlaySource): Promise<Composition | undefined> {
-  await overlay.ensure?.(['civil.yaml']);
+  await overlay.ensure?.([`${CIVIL_DIR}/civil.yaml`, 'civil.yaml']);
   const path = compositionPathFor(overlay);
   await overlay.ensure?.([path]);
   const raw = overlay.read(path);

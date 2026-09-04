@@ -4,5 +4,5 @@ metadata:
   id: doc-pipeline
   name: Document Pipeline
 spec:
-  composition: app.yaml
+  composition: civil/app.yaml
   language: python

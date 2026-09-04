@@ -23,7 +23,7 @@ spec:
 
     - id: classify
       type: service
-      impl: { graph: graphs/classify.graph.yaml }
+      impl: { graph: civil/graphs/classify.graph.yaml }
 
     - id: save-record
       type: service

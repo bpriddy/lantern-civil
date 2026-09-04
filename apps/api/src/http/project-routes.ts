@@ -27,6 +27,7 @@ import { sessionIsLive, transpileAndSync, writeThroughToSession } from './sessio
 import { RunnerError, transpileProject } from './transpile-routes.js';
 import { createHash } from 'node:crypto';
 import { emittedHistory, maintainedPaths, markPatternsStale } from '../project/transpile.js';
+import { CIVIL_DIR } from '../project/bundle.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -524,9 +525,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     const overlay = new OverlaySource(base, pending);
 
-    // Refuse rather than overwrite. A repository that already has a civil.yaml is a
-    // Civil project, and replacing it would discard whatever it says.
-    if (overlay.exists('civil.yaml')) {
+    // Refuse rather than overwrite. A repository that already has a civil.yaml —
+    // under civil/ (the home now) or at the root (legacy) — is a Civil project, and
+    // replacing it would discard whatever it says.
+    if (overlay.exists(`${CIVIL_DIR}/civil.yaml`) || overlay.exists('civil.yaml')) {
       return reply.code(409).send({
         error: 'already_initialized',
         message: 'This repository already has a civil.yaml.',

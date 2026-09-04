@@ -431,3 +431,28 @@ determinism becomes "same documents + same repo patterns → same bytes";
 opinions only at the broadest level (language, framework), and anything
 conceivably configurable per project enters through a cleanly separated
 interface with identity as data, the Engine facade being the archetype.
+
+## 19. Documents live in civil/ — **owner's decision, executes docs/transpilation.md's shape**
+
+The transpilation design (docs/transpilation.md) put Civil's documents in a
+`civil/` folder — "Civil's entire private footprint" — but M0–M4 wrote them at
+the repo root (civil.yaml, app.yaml, graphs/, agents/). This migrates to the
+designed shape.
+
+**Ref model — uniform repo-root-relative (chosen over civil/-relative).** Every
+path in every civil document stays repo-root-relative, exactly as today and
+exactly as `civil/patterns.md` already is; migration moves the documents into
+`civil/` and rewrites their civil-document refs to carry the `civil/` prefix
+(civil/graphs/x.graph.yaml), while code refs (entrypoint, include, a client's
+path) stay root-relative because the code does not move. The alternative —
+refs relative to the civil/ directory — was rejected: it would give one
+document two ref bases (civil-relative for doc refs, root-relative for code
+refs) and force the resolver and the schema validator to learn a civil base,
+where the uniform model leaves both untouched. The cost accepted: a document's
+refs name where it lives; civil/ is a fixed convention, so that coupling is
+honest, and it keeps every path in the system meaning the same thing.
+
+**Reading is civil/-first with a legacy-root fallback**, so a project migrates
+when it is ready rather than all at once: Civil finds the entry document at
+civil/civil.yaml if present, else civil.yaml. New projects scaffold into
+civil/; existing ones migrate through a reviewed set of pending changes.

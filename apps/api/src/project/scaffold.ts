@@ -8,6 +8,9 @@
  *
  * The templates carry comments deliberately. PRD 6.5 keeps comments through every
  * edit, and a scaffold that explains itself is the first thing that proves it.
+ *
+ * The civil documents live under civil/ — Civil's private footprint (delta 19);
+ * CIVIL.md stays at the repo root, a project readme for humans, not a canvas doc.
  */
 
 export interface ScaffoldFile {
@@ -26,7 +29,7 @@ export function scaffoldFiles(projectName: string): ScaffoldFile[] {
 
   return [
     {
-      path: 'civil.yaml',
+      path: 'civil/civil.yaml',
       content: `apiVersion: civil/v1
 kind: Project
 metadata:
@@ -34,12 +37,12 @@ metadata:
   name: ${projectName}
 spec:
   # The composition canvas: the top level of this project.
-  composition: app.yaml
+  composition: civil/app.yaml
   language: python
 `,
     },
     {
-      path: 'app.yaml',
+      path: 'civil/app.yaml',
       content: `apiVersion: civil/v1
 kind: Composition
 metadata:

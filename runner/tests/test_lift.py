@@ -60,7 +60,7 @@ def run(document):
 def test_golden_round_trip_from_real_files() -> None:
     print("test_golden_round_trip_from_real_files")
     orch = (REPO / "runner/tests/golden/doc-pipeline/graphs/classify.py").read_text()
-    doc = (REPO / "examples/doc-pipeline/graphs/classify.graph.yaml").read_text()
+    doc = (REPO / "examples/doc-pipeline/civil/graphs/classify.graph.yaml").read_text()
     result = lift_graph("graphs/classify.graph.yaml", doc, orch)
     ok(result["unliftable"] is False, "the golden emission is liftable")
     ok(

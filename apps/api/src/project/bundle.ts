@@ -59,10 +59,23 @@ const parseYaml = (source: ProjectSource, path: string): unknown => {
   }
 };
 
+/**
+ * The project's entry document (PRD 6.1, docs/transpilation.md delta 19). It lives
+ * at civil/civil.yaml once a project is migrated into its civil/ folder, and at the
+ * repo root before that — civil/-first with a legacy-root fallback, so a project
+ * migrates when it is ready. Callers ensure both candidates before asking.
+ */
+export const CIVIL_DIR = 'civil';
+export function civilYamlPath(source: ProjectSource): string {
+  return source.exists(`${CIVIL_DIR}/civil.yaml`) ? `${CIVIL_DIR}/civil.yaml` : 'civil.yaml';
+}
+
 /** PRD 6.1 names civil.yaml as project config; it decides which file is the canvas. */
 export function compositionPathFor(source: ProjectSource): string {
-  const raw = parseYaml(source, 'civil.yaml');
+  const raw = parseYaml(source, civilYamlPath(source));
   const parsed = zProject.safeParse(raw);
+  // The composition ref is a full repo-root-relative path (delta 19), so a migrated
+  // project names civil/app.yaml and a legacy one app.yaml — both resolve as-is.
   return parsed.success ? parsed.data.spec.composition : 'app.yaml';
 }
 

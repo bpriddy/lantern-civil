@@ -427,7 +427,7 @@ def test_golden_doc_pipeline_emission_stays_lawful() -> None:
 
     documents = {
         str(p.relative_to(pipeline)): p.read_text()
-        for pattern in ("*.yaml", "graphs/*.yaml", "agents/*/agent.yaml", "agents/*/prompt.md")
+        for pattern in ("civil/*.yaml", "civil/graphs/*.yaml", "agents/*/agent.yaml", "agents/*/prompt.md")
         for p in pipeline.glob(pattern)
     }
     context = {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import { parse } from 'yaml';
 import { zAgent, zComposition, zGraph } from '@civil/schema';
-import { compositionPathFor } from './bundle.js';
+import { CIVIL_DIR, civilYamlPath, compositionPathFor } from './bundle.js';
 import type { ProjectSource } from './source.js';
 
 /**
@@ -86,18 +86,21 @@ export async function gatherInputs(
   const paths = source.list();
 
   // civil.yaml decides which file is the composition, so it must be readable
-  // before anything else is chosen.
-  await source.ensure?.(['civil.yaml', PATTERNS_PATH]);
+  // before anything else is chosen — both its civil/ home and the legacy root.
+  await source.ensure?.([`${CIVIL_DIR}/civil.yaml`, 'civil.yaml', PATTERNS_PATH]);
+  const civilYaml = civilYamlPath(source);
   const compositionPath = compositionPathFor(source);
 
   const documentPaths = new Set<string>();
-  if (source.exists('civil.yaml')) documentPaths.add('civil.yaml');
+  if (source.exists(civilYaml)) documentPaths.add(civilYaml);
   if (source.exists(compositionPath)) documentPaths.add(compositionPath);
+  // Civil documents by convention, whether under civil/ (migrated) or the repo root
+  // (legacy) — the (civil/)? prefix admits both; a project only ever has one.
   for (const path of paths) {
     if (
-      /^graphs\/[^/]+\.ya?ml$/.test(path) ||
-      /^agents\/[^/]+\/agent\.ya?ml$/.test(path) ||
-      /^agents\/[^/]+\/prompt\.md$/.test(path)
+      /^(civil\/)?graphs\/[^/]+\.ya?ml$/.test(path) ||
+      /^(civil\/)?agents\/[^/]+\/agent\.ya?ml$/.test(path) ||
+      /^(civil\/)?agents\/[^/]+\/prompt\.md$/.test(path)
     ) {
       documentPaths.add(path);
     }

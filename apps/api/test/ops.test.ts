@@ -38,7 +38,7 @@ function untouchedLinesSurvive(before: string, after: string): void {
 }
 
 test('adds a node to a block-style sequence in block style', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after, summary } = applyOps(before, [
     { op: 'addNode', node: { id: 'audit', type: 'service', impl: { entrypoint: 'src/services/audit.py' } } },
   ]);
@@ -50,7 +50,7 @@ test('adds a node to a block-style sequence in block style', () => {
 });
 
 test('adds a node to a flow-style sequence in flow style', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after } = applyOps(before, [
     { op: 'addNode', node: { id: 'summary', type: 'io', direction: 'out' } },
   ]);
@@ -63,7 +63,7 @@ test('adds a node to a flow-style sequence in flow style', () => {
 });
 
 test('comments and blank lines around the edit are left alone', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after } = applyOps(before, [
     { op: 'addNode', node: { id: 'audit', type: 'service', impl: { entrypoint: 'x.py' } } },
   ]);
@@ -78,7 +78,7 @@ test('comments and blank lines around the edit are left alone', () => {
 });
 
 test('layout is written as a sibling of spec, never inside it', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after } = applyOps(before, [
     { op: 'addNode', node: { id: 'audit', type: 'service', impl: { entrypoint: 'x.py' } } },
     { op: 'setLayout', id: 'audit', x: 720, y: 400 },
@@ -94,7 +94,7 @@ test('layout is written as a sibling of spec, never inside it', () => {
 });
 
 test('moving an existing node rewrites only its coordinates', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after, summary } = applyOps(before, [
     { op: 'setLayout', id: 'classify', x: 999, y: 111 },
   ]);
@@ -118,14 +118,14 @@ test('a sequence that does not exist is refused rather than invented', () => {
 
 test('a node with no id is refused', () => {
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'addNode', node: { type: 'service' } }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'addNode', node: { type: 'service' } }]),
     /needs an id/,
   );
 });
 
 
 test('an added node leaves the manifest parseable and valid', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after } = applyOps(before, [
     {
       op: 'addNode',
@@ -145,14 +145,14 @@ test('an added node leaves the manifest parseable and valid', () => {
   // rejects is as broken as one YAML rejects, just later.
   const files = MemoryFiles.from({
     'agents/classifier/agent.yaml': '',
-    'graphs/enrich.graph.yaml': '',
+    'civil/graphs/enrich.graph.yaml': '',
     'src/steps/normalize/main.py': '',
     'src/steps/summarize/main.py': '',
     'src/tools/search/search.py': '',
     'schemas/document.schema.json': '{}',
     'schemas/record.schema.json': '{}',
   });
-  const result = validateGraph(parsed, 'graphs/classify.graph.yaml', files);
+  const result = validateGraph(parsed, 'civil/graphs/classify.graph.yaml', files);
   assert.ok(result.doc, `validator rejected the edited manifest: ${JSON.stringify(result.diagnostics)}`);
 
   const added = result.doc.spec.nodes.find((n) => n.id === 'summarize');
@@ -163,7 +163,7 @@ test('an added node leaves the manifest parseable and valid', () => {
 });
 
 test('a nested object value survives as an object', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after } = applyOps(before, [
     { op: 'addNode', node: { id: 'audit', type: 'service', impl: { entrypoint: 'src/services/audit.py' } } },
   ]);
@@ -196,7 +196,7 @@ test('the first node in a scaffolded project lands correctly', () => {
   ].join('\n');
 
   const { source: after } = applyOps(scaffold, [
-    { op: 'addNode', node: { id: 'classify', type: 'service', impl: { graph: 'graphs/classify.graph.yaml' } } },
+    { op: 'addNode', node: { id: 'classify', type: 'service', impl: { graph: 'civil/graphs/classify.graph.yaml' } } },
     { op: 'setLayout', id: 'classify', x: 200, y: 120 },
   ]);
 
@@ -273,7 +273,7 @@ test('a scaffolded project survives more than one node', () => {
 
 
 test('an edge is added in the style of its neighbours and validates', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after, summary } = applyOps(before, [
     {
       op: 'addEdge',
@@ -291,7 +291,7 @@ test('an edge is added in the style of its neighbours and validates', () => {
 });
 
 test('removing an edge takes its whole line with it', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after, summary } = applyOps(before, [{ op: 'removeEdge', id: 'e5' }]);
 
   assert.match(summary, /Disconnected “e5”/);
@@ -341,7 +341,7 @@ test('an edge added to an empty list, then removed, returns the file to itself',
 
 test('removing an edge that is not there is refused', () => {
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'removeEdge', id: 'nope' }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'removeEdge', id: 'nope' }]),
     /no item with id "nope"/,
   );
 });
@@ -350,7 +350,7 @@ test('removing an edge that is not there is refused', () => {
 // removeNode
 
 test('removing a node takes its edges and its layout entry with it', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after, summary } = applyOps(before, [{ op: 'removeNode', id: 'classifier' }]);
 
   const parsed = stillParses(after, 'removeNode') as {
@@ -374,7 +374,7 @@ test('removing a node takes its edges and its layout entry with it', () => {
 
 test('cascadeEdges false refuses while edges remain, and names them', () => {
   assert.throws(
-    () => applyOps(read('graphs/classify.graph.yaml'), [
+    () => applyOps(read('civil/graphs/classify.graph.yaml'), [
       { op: 'removeNode', id: 'classifier', cascadeEdges: false },
     ]),
     /still has \d+ edges? \("e\d+"/,
@@ -464,7 +464,7 @@ test('an edge removed from an inline flow list takes its comma along', () => {
 // updateNode / updateEdge
 
 test('updating a field rewrites only its value', () => {
-  const before = read('app.yaml');
+  const before = read('civil/app.yaml');
   const { source: after, summary } = applyOps(before, [
     { op: 'updateNode', id: 'nightly-reindex', patch: { trigger: { kind: 'schedule', cron: '0 5 * * *' } } },
   ]);
@@ -478,7 +478,7 @@ test('updating a field rewrites only its value', () => {
 });
 
 test('a patch can add a field the node does not have, in its own style', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after } = applyOps(before, [
     { op: 'updateNode', id: 'document', patch: { name: 'Document in' } },
   ]);
@@ -496,7 +496,7 @@ test('a patch can add a field the node does not have, in its own style', () => {
 });
 
 test('a null in a patch removes the field', () => {
-  const withName = applyOps(read('graphs/classify.graph.yaml'), [
+  const withName = applyOps(read('civil/graphs/classify.graph.yaml'), [
     { op: 'updateNode', id: 'document', patch: { name: 'Document in' } },
   ]).source;
   const { source: after, summary } = applyOps(withName, [
@@ -511,17 +511,17 @@ test('a null in a patch removes the field', () => {
 
 test('id and type are refused in a patch', () => {
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'updateNode', id: 'classify', patch: { id: 'other' } }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'updateNode', id: 'classify', patch: { id: 'other' } }]),
     /renameNode/,
   );
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'updateNode', id: 'classify', patch: { type: 'process' } }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'updateNode', id: 'classify', patch: { type: 'process' } }]),
     /whole shape/,
   );
 });
 
 test('updateEdge rewires an endpoint in place', () => {
-  const before = read('graphs/classify.graph.yaml');
+  const before = read('civil/graphs/classify.graph.yaml');
   const { source: after } = applyOps(before, [
     { op: 'updateEdge', id: 'e1', patch: { to: { node: 'search_tools' } } },
   ]);
@@ -616,14 +616,14 @@ test('a rename does not touch strings that merely contain the id', () => {
 
 test('renaming onto an existing id is refused', () => {
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'renameNode', from: 'classify', to: 'save-record' }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'renameNode', from: 'classify', to: 'save-record' }]),
     /already a node called/,
   );
 });
 
 test('renaming to an invalid id is refused', () => {
   assert.throws(
-    () => applyOps(read('app.yaml'), [{ op: 'renameNode', from: 'classify', to: 'Not An Id' }]),
+    () => applyOps(read('civil/app.yaml'), [{ op: 'renameNode', from: 'classify', to: 'Not An Id' }]),
     /not a valid id/,
   );
 });
