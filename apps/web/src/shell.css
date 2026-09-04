@@ -1506,3 +1506,26 @@ select.field { cursor: pointer; }
   background: var(--bg-inset);
   border-bottom: 1px solid var(--border);
 }
+
+/* The graph's code changed outside Civil (docs/lift.md). A warm strip over the
+   canvas, not an error — reconciling is a choice (lift or regenerate), not a fault. */
+.drift-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: auto;  /* beat .centre > * { height: 100% } — this floats over the canvas */
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--warn);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.drift-banner code { font-family: var(--mono); color: var(--text); }
+.drift-actions { display: flex; align-items: center; gap: 8px; }
+.drift-actions .connect { margin-top: 0; height: 24px; }

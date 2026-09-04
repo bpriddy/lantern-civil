@@ -11,6 +11,10 @@ import {
   revertPending,
   savePending,
 } from '../project/pending.js';
+import { applyOps, type ManifestOp } from '../manifest/apply.js';
+import { ManifestEditError } from '../manifest/document.js';
+import { parse } from 'yaml';
+import { zGraph, type GraphEdge } from '@civil/schema';
 import { getProject, type ProjectRow } from '../project/repository.js';
 import type { ProjectSource } from '../project/source.js';
 import {
@@ -268,6 +272,48 @@ export async function transpileProject(
   return { output, cached, patternsRefreshed, retired };
 }
 
+/**
+ * The edge ops that make a graph's flow edges match a lifted set: remove the flow
+ * edges the code no longer expresses, add the ones it now does, and leave every
+ * capability edge untouched (lift's remit is flow only). Order-insensitive by
+ * {from,to}, so lifting an unchanged emission yields no ops — an open never churns
+ * the graph. New ids avoid every id already in the document.
+ */
+export function liftEdgesToOps(
+  edges: readonly GraphEdge[],
+  lifted: readonly { from: string; to: string }[],
+): { ops: ManifestOp[]; added: number; removed: number } {
+  const key = (from: string, to: string) => `${from}\u0000${to}`;
+  const flow = edges.filter((e) => e.kind === 'flow');
+  const liftedKeys = new Set(lifted.map((e) => key(e.from, e.to)));
+  const currentKeys = new Set(flow.map((e) => key(e.from.node, e.to.node)));
+
+  const ops: ManifestOp[] = [];
+  for (const e of flow) {
+    if (!liftedKeys.has(key(e.from.node, e.to.node))) ops.push({ op: 'removeEdge', id: e.id });
+  }
+  const taken = new Set(edges.map((e) => e.id));
+  let n = 1;
+  const mintId = (): string => {
+    for (;;) {
+      const candidate = `e${n++}`;
+      if (!taken.has(candidate)) {
+        taken.add(candidate);
+        return candidate;
+      }
+    }
+  };
+  let added = 0;
+  for (const e of lifted) {
+    if (!currentKeys.has(key(e.from, e.to))) {
+      ops.push({ op: 'addEdge', edge: { id: mintId(), kind: 'flow', from: { node: e.from }, to: { node: e.to } } });
+      added += 1;
+    }
+  }
+  const removed = ops.length - added;
+  return { ops, added, removed };
+}
+
 export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDeps): void {
   const { config, pool } = deps;
 
@@ -373,5 +419,125 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
     }
 
     return { path: PATTERNS_PATH };
+  });
+
+  // Lift: read a graph's hand-edited orchestration back into its flow edges
+  // (docs/lift.md). The runner parses the straight-line run(); this turns the
+  // recovered edge set into ops against the graph document — the theirs of
+  // mine-or-theirs for orchestration, and the round-trip's return leg.
+  app.post('/api/projects/:id/lift', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { graphPath?: unknown };
+    const graphPath = typeof body?.graphPath === 'string' ? body.graphPath : '';
+    if (!graphPath) return reply.code(400).send({ error: 'graph_path_required' });
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+    if (!config.runnerUrl) {
+      return reply.code(503).send({
+        error: 'runner_not_configured',
+        message: 'No runner is configured (CIVIL_RUNNER_URL).',
+      });
+    }
+
+    let source: ProjectSource;
+    let overlay: OverlaySource;
+    try {
+      ({ source, overlay } = await open(request.identity.id, project));
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
+    }
+
+    await overlay.ensure?.([graphPath]);
+    const graphDoc = overlay.read(graphPath);
+    if (graphDoc === undefined) {
+      return reply.code(404).send({ error: 'graph_not_found', message: `${graphPath} could not be read.` });
+    }
+    // Which emitted file is this graph's orchestration: the transpiler chooses the
+    // path (graphs/X.graph.yaml became src/graphs/X.py here, not graphs/X.py), so
+    // match on basename stem across the files Civil maintains rather than a
+    // same-directory guess. v1 heuristic; a persisted graph<->file map is the robust
+    // successor (docs/lift.md), and a stem collision across directories is its edge.
+    const stem = graphPath.split('/').pop()!.replace(/\.graph\.ya?ml$/, '');
+    const maintained = await maintainedPaths(pool, request.identity.id, project.id);
+    // maintainedPaths unions every emission this project ever produced, so a stem
+    // can match a path from an OLD layout that no longer exists (graphs/X.py before
+    // the emitter moved to src/graphs/X.py). Ensure the candidates, then take the
+    // one that actually reads — the file lift is meant to reconcile.
+    const candidates = [...maintained]
+      .filter((mp) => mp.endsWith('.py') && mp.split('/').pop() === `${stem}.py`);
+    await overlay.ensure?.(candidates);
+    let orchestrationPath: string | undefined;
+    let orchestration: string | undefined;
+    for (const candidate of candidates) {
+      const content = overlay.read(candidate);
+      if (content !== undefined) {
+        orchestrationPath = candidate;
+        orchestration = content;
+        break;
+      }
+    }
+    if (orchestrationPath === undefined || orchestration === undefined) {
+      return reply.code(404).send({
+        error: 'orchestration_not_found',
+        message: `No emitted orchestration matches ${graphPath} — nothing to lift from.`,
+      });
+    }
+
+    let answer: Record<string, unknown>;
+    try {
+      answer = await callRunner(config.runnerUrl, '/lift', { graphPath, graphDoc, orchestration });
+    } catch (error) {
+      return sendRunnerError(reply, error);
+    }
+    if (answer['unliftable']) {
+      // Not an error: the canvas cannot represent what the human wrote (control
+      // flow, an unknown symbol). Regenerate stays the only reconciliation.
+      return reply.code(422).send({ error: 'unliftable', reason: answer['reason'] ?? 'unliftable' });
+    }
+
+    const lifted = Array.isArray(answer['edges'])
+      ? (answer['edges'] as { from?: unknown; to?: unknown }[]).flatMap((e) =>
+          typeof e?.from === 'string' && typeof e?.to === 'string' ? [{ from: e.from, to: e.to }] : [],
+        )
+      : [];
+
+    // The document's current edges: flow edges reconcile against the lift; every
+    // capability edge is left exactly as it is (lift's remit is flow only).
+    const parsed = zGraph.safeParse(parse(graphDoc));
+    if (!parsed.success) {
+      return reply.code(422).send({ error: 'graph_unparseable', reason: 'the graph document does not parse' });
+    }
+    const { ops, added, removed } = liftEdgesToOps(parsed.data.spec.edges, lifted);
+
+    // Idempotent: the unchanged emission lifts to the current edge set, so nothing
+    // is written and an open never churns the graph.
+    if (ops.length === 0) {
+      return { graphPath, added: 0, removed: 0, unliftable: false };
+    }
+
+    let applied;
+    try {
+      applied = applyOps(graphDoc, ops);
+    } catch (error) {
+      if (error instanceof ManifestEditError) {
+        return reply.code(422).send({ error: 'lift_refused', reason: error.message });
+      }
+      throw error;
+    }
+    await savePending(pool, {
+      ownerId: request.identity.id,
+      projectId: project.id,
+      branch: project.defaultBranch,
+      path: graphPath,
+      content: applied.source,
+      existsAtHead: source.exists(graphPath),
+    });
+
+    request.log.info({ projectId: project.id, graphPath, added, removed }, 'lifted');
+    return { graphPath, added, removed, unliftable: false };
   });
 }

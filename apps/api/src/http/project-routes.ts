@@ -25,7 +25,8 @@ import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
 import { sessionIsLive, transpileAndSync, writeThroughToSession } from './session-routes.js';
 import { RunnerError, transpileProject } from './transpile-routes.js';
-import { maintainedPaths, markPatternsStale } from '../project/transpile.js';
+import { createHash } from 'node:crypto';
+import { emittedHistory, maintainedPaths, markPatternsStale } from '../project/transpile.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -158,6 +159,23 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     const overlay = new OverlaySource(source, pending);
 
+    // Ownership + drift, both keyed on what Civil has emitted for this project.
+    const maintained = await maintainedPaths(pool, request.identity.id, project.id);
+    const history = await emittedHistory(pool, request.identity.id, project.id);
+    await overlay.ensure?.([...maintained]);
+    const drifted: string[] = [];
+    for (const path of maintained) {
+      if (!path.endsWith('.py')) continue;
+      const known = history.get(path);
+      if (!known || known.size === 0) continue; // no emission on record is not drift
+      const content = overlay.read(path);
+      if (content === undefined) continue; // gone from the tree is retirement's concern
+      if (!/^def run\(/m.test(content)) continue; // only orchestration is lift's job
+      const hash = createHash('sha256').update(content).digest('hex');
+      if (!known.has(hash)) drifted.push(path);
+    }
+    drifted.sort();
+
     return {
       project: {
         id: project.id,
@@ -172,7 +190,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // Files Civil transpiles and owns (docs/transpilation.md's ownership map). The
       // editor renders these read-only: you change generated code by editing the
       // graph, not the file. Union of every emission this project has produced.
-      maintained: [...(await maintainedPaths(pool, request.identity.id, project.id))],
+      maintained: [...maintained],
+      // Maintained orchestration files whose current content is no emission Civil
+      // ever produced — edited outside Civil, and lift's to reconcile (docs/lift.md).
+      drifted,
     };
   });
 

@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from agent import DEFAULT_MODEL  # noqa: E402
 from execute import execute_bundle  # noqa: E402
 from patterns import analyze  # noqa: E402
+from lift import LiftError, lift_graph  # noqa: E402
 from transpile import PROMPT_VERSION, TranspileValidationError, transpile  # noqa: E402
 
 
@@ -64,6 +65,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/transpile":
             self._transpile()
+            return
+        if self.path == "/lift":
+            self._lift()
             return
         self.send_response(404)
         self.end_headers()
@@ -133,6 +137,28 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, {"error": str(error)})
             return
         self._json(200, result)
+
+
+    def _lift(self) -> None:
+        # Pure ast, no model: a graph's straight-line run() read back into flow
+        # edges (docs/lift.md). unliftable is a lawful 200 the canvas cannot
+        # represent, not an error; only a malformed request or unparseable code 400s.
+        body = self._body()
+        if body is None:
+            return
+        graph_path = body.get("graphPath")
+        graph_doc = body.get("graphDoc")
+        orchestration = body.get("orchestration")
+        if not isinstance(graph_path, str) or not graph_path:
+            self._json(400, {"error": '"graphPath" must be a repo path'})
+            return
+        if not isinstance(graph_doc, str) or not isinstance(orchestration, str):
+            self._json(400, {"error": '"graphDoc" and "orchestration" must be strings'})
+            return
+        try:
+            self._json(200, lift_graph(graph_path, graph_doc, orchestration))
+        except LiftError as error:
+            self._json(400, {"error": str(error)})
 
     def _body(self) -> dict | None:
         """The parsed JSON object, or None with the 400 already sent."""

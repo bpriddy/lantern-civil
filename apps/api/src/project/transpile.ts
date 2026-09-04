@@ -282,6 +282,33 @@ export async function findMemo(
  * regeneration over a hand-edited maintained file is accepted for now;
  * mine-or-theirs arrives with commit integration.
  */
+/**
+ * Every content Civil has ever emitted for each path, as sha256 hex — the
+ * provenance mine-or-theirs and lift need (docs/mine-or-theirs.md, docs/lift.md).
+ * Not the latest emission alone: documents cycle (A -> B -> back to A), so a
+ * current file matching an OLD emission is still Civil's own, not a hand edit.
+ * A path's current content whose hash is in its set is Civil-authored; a hash in
+ * none of the set was written by someone else, outside Civil.
+ */
+export async function emittedHistory(
+  pool: pg.Pool,
+  ownerId: string,
+  projectId: string,
+): Promise<Map<string, Set<string>>> {
+  const { rows } = await pool.query<{ output: { files: Record<string, string> } }>(
+    `SELECT output FROM transpilations WHERE owner_id = $1 AND project_id = $2`,
+    [ownerId, projectId],
+  );
+  const history = new Map<string, Set<string>>();
+  for (const { output } of rows) {
+    for (const [path, content] of Object.entries(output.files)) {
+      const hash = createHash('sha256').update(content).digest('hex');
+      (history.get(path) ?? history.set(path, new Set()).get(path)!).add(hash);
+    }
+  }
+  return history;
+}
+
 export async function maintainedPaths(
   pool: pg.Pool,
   ownerId: string,

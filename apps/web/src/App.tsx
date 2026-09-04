@@ -54,6 +54,7 @@ import {
   stopSession,
   syncProject,
   transpileProject,
+  liftGraph,
   type ManifestOp,
   type RunEvent,
   type RunSummary,
@@ -180,6 +181,8 @@ function Workspace({ me }: { me: Me }) {
   // so the panel re-fetches and the review shows exactly what will commit.
   const [diffRevision, setDiffRevision] = useState(0);
   const [preparingReview, setPreparingReview] = useState(false);
+  // Drift banners the user waved off this session, by orchestration path.
+  const [driftDismissed, setDriftDismissed] = useState<Set<string>>(new Set());
 
   /** The run being watched: its identity, where it stands, and its story so far. */
   const [runPanelOpen, setRunPanelOpen] = useState(false);
@@ -686,6 +689,48 @@ function Workspace({ me }: { me: Me }) {
       report({ title: 'Transpile', detail: (error as Error).message, refused: true });
     }
   }, [activeId, refresh, report]);
+
+  /**
+   * The open graph's orchestration, when Civil emitted it and it was then changed
+   * outside Civil — the drift lift reconciles (docs/lift.md). Naming convention:
+   * graphs/X.graph.yaml is emitted to graphs/X.py.
+   */
+  const driftedOrchestration = useMemo(() => {
+    if (current.kind !== 'graph' || !bundle) return undefined;
+    // The transpiler chooses the orchestration's path, so match a drifted file to
+    // this graph by basename stem (classify.graph.yaml <-> .../classify.py) rather
+    // than a same-directory guess (docs/lift.md).
+    const stem = current.path.split('/').pop()?.replace(/\.graph\.ya?ml$/, '');
+    const orchestration = bundle.drifted.find((d) => d.split('/').pop() === `${stem}.py`);
+    if (!orchestration || driftDismissed.has(orchestration)) return undefined;
+    return orchestration;
+  }, [current, bundle, driftDismissed]);
+
+  const doLift = useCallback(async () => {
+    if (!activeId || current.kind !== 'graph') return;
+    const graphPath = current.path;
+    try {
+      const result = await liftGraph(activeId, graphPath);
+      if (result.unliftable) {
+        report({
+          title: 'Lift',
+          detail: `Can't update the graph from this code: ${result.reason ?? 'unliftable'}. Regenerate to reconcile.`,
+          refused: true,
+        });
+        return;
+      }
+      await refresh();
+      report({
+        title: 'Lift',
+        detail:
+          result.added + result.removed === 0
+            ? 'The graph already matches the code.'
+            : `Graph updated from the code: +${result.added} / -${result.removed} edge(s).`,
+      });
+    } catch (error) {
+      report({ title: 'Lift', detail: (error as Error).message, refused: true });
+    }
+  }, [activeId, current, refresh, report]);
 
   /**
    * Auto, then review (docs/transpilation.md): opening the commit review lands a
@@ -1312,6 +1357,31 @@ function Workspace({ me }: { me: Me }) {
             />
           </Suspense>
         ) : (
+          <>
+          {driftedOrchestration ? (
+            <div className="drift-banner">
+              <span>
+                This graph's code (<code>{driftedOrchestration}</code>) was changed outside Civil.
+              </span>
+              <span className="drift-actions">
+                <button type="button" className="connect" onClick={() => void doLift()}>
+                  Update graph from code
+                </button>
+                <button type="button" className="connect" onClick={() => void doTranspile()}>
+                  Regenerate code from graph
+                </button>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() =>
+                    setDriftDismissed((prev) => new Set(prev).add(driftedOrchestration))
+                  }
+                >
+                  dismiss
+                </button>
+              </span>
+            </div>
+          ) : null}
           <Editor
             bundle={load.bundle}
             stack={stack}
@@ -1331,6 +1401,7 @@ function Workspace({ me }: { me: Me }) {
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
             onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
           />
+          </>
         )}
         {/* One drawer at a time: they share the same strip of screen, and the run
             log — the more momentary of the two — wins while both are open. */}

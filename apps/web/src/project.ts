@@ -102,6 +102,8 @@ export interface ProjectBundle {
   pending: PendingChange[];
   /** Files Civil transpiles and owns — read-only in the editor (edit the graph). */
   maintained: string[];
+  /** Maintained orchestration files changed outside Civil — lift's to reconcile. */
+  drifted: string[];
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
   contracts: Record<string, ContractResult>;
 }
@@ -240,6 +242,40 @@ export async function commitProject(projectId: string, message: string): Promise
   return body as CommitResult;
 }
 
+
+export interface LiftResult {
+  graphPath: string;
+  added: number;
+  removed: number;
+  unliftable: boolean;
+  reason?: string | undefined;
+}
+
+/** Read a graph's hand-edited orchestration back into its flow edges (docs/lift.md). */
+export async function liftGraph(projectId: string, graphPath: string): Promise<LiftResult> {
+  const response = await apiFetch(`/api/projects/${projectId}/lift`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ graphPath }),
+  });
+  const body = (await response.json().catch(() => ({}))) as {
+    graphPath?: string; added?: number; removed?: number; error?: string; reason?: string;
+  };
+  if (!response.ok) {
+    // 422 unliftable carries the reason the canvas cannot swallow (control flow, an
+    // unknown symbol) — the actionable half; surface it, do not bury it as a status.
+    if (response.status === 422) {
+      return { graphPath, added: 0, removed: 0, unliftable: true, reason: body.reason ?? body.error };
+    }
+    throw new Error(body.reason ?? body.error ?? `could not lift (${response.status})`);
+  }
+  return {
+    graphPath,
+    added: body.added ?? 0,
+    removed: body.removed ?? 0,
+    unliftable: false,
+  };
+}
 
 /** Repositories the connected installation can reach — GitHub decides, not Civil. */
 export async function fetchRepositories(
