@@ -31,6 +31,11 @@ import {
   type TranspileMeta,
   type TranspileOutput,
 } from '../project/transpile.js';
+import {
+  clientSignature,
+  generateBoundaryClient,
+  planBoundaryClient,
+} from '../project/boundary-client.js';
 import { idTokenFor } from './runner-auth.js';
 import { transpileAndSync } from './session-routes.js';
 
@@ -216,7 +221,12 @@ export async function transpileProject(
     }
   }
 
-  const hash = inputHash(inputs, meta);
+  // Boundary type-sync: the web client's types, generated deterministically from the
+  // boundary schema (docs/boundary-type-sync.md) — the runner never sees this. Its
+  // signature joins the memo hash so a schema edit regenerates the client; a project
+  // with no web client yields no plan and leaves the hash (and its emission) untouched.
+  const clientPlan = await planBoundaryClient(overlay);
+  const hash = inputHash(inputs, meta, clientPlan ? clientSignature(clientPlan) : '');
   let output = await findMemo(pool, ownerId, project.id, hash);
   const cached = output !== undefined;
   if (!output) {
@@ -237,6 +247,16 @@ export async function transpileProject(
       if (typeof content === 'string') files[path] = content;
     }
     output = shapeOutput(files, answer['roles'], answer['attempts']);
+    // Merge the generated client BEFORE the memo is stored, so it is a first-class
+    // member of the emission — memoized, provenance-tracked, retired, and materialized
+    // into the session — with no special-casing anywhere downstream.
+    if (clientPlan) {
+      const client = generateBoundaryClient(clientPlan);
+      for (const path of Object.keys(client.files)) {
+        output.files[path] = client.files[path]!;
+        output.roles[path] = client.roles[path]!;
+      }
+    }
     await storeMemo(pool, ownerId, project.id, hash, output);
   }
 

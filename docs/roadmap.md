@@ -73,21 +73,28 @@ templates, prompt refinement narrows the generative surface, and the
 generative path remains for whatever templates don't yet cover. Direction of
 travel: judgment first, determinism earned.
 
-**Boundary type-sync** (renamed from "the typed web SDK", 2026-09-16, after the
-owner caught the earlier framing smuggling in an opinion). The value is narrow
-and honest: **keep the frontend's understanding of the boundary from silently
-drifting from the backend's.** The boundary schema is the source of truth; when
-it changes, the frontend's types for that boundary update, so drift surfaces in
-the editor and at build. That is all Civil owns here — propagating a fact, not
-imposing a style. It is *not* a prescribed client: Civil does not mandate a
-`client.analyze()` house shape. How call sites are written follows first-class
-rule 1 — the pattern analyzer reads how the repo already calls its boundary
-(raw `fetch`, a hand-rolled `api.ts`, react-query, tRPC, ...) and the
-transpiler emits typed calls in *that* idiom. Where no calling pattern exists
-yet (the per-surface seed case), Civil emits the most vanilla thing — thin
-typed fetch wrappers — as a disposable default the first hand-written call
-supersedes. "SDK" oversold it; the feature is type-sync in the project's own
-voice.
+**Boundary type-sync is BUILT** (2026-09-16; renamed from "the typed web SDK"
+after the owner caught the earlier framing smuggling in an opinion). The value
+is narrow and honest: **keep the frontend's understanding of the boundary from
+silently drifting from the backend's.** The boundary schema is the source of
+truth; when it changes, the web client's types for that boundary update, so
+drift surfaces in the editor and at build. That is all Civil owns here —
+propagating a fact, not imposing a style. It is *not* a prescribed client.
+`docs/boundary-type-sync.md` is the design. What shipped: a deterministic,
+API-side generator (`apps/api/src/project/boundary-client.ts`) — faithful types,
+never LLM-paraphrased, because drift-prevention is only as good as the types
+being exact — that resolves the composition's api boundary to its exposed
+services' io schemas, renders JSON Schema to TypeScript, and emits a client into
+`web/src/civil/client.ts` under the new `boundary-client` role. It merges into
+the transpile output before the memo is stored, so it inherits pending → diff →
+provenance → retirement → session with no special-casing, and a client signature
+folds into the input hash so a schema edit regenerates while a project with no
+web client hashes exactly as before. v1 seeds the greenfield case (thin typed
+fetch wrappers); reading a call-site convention out of `civil/patterns.md` and
+emitting into it (rule 1), function-backed types via contract discovery, and the
+progress/SSE channel are the recorded next increments. Proven: the doc-pipeline
+client generates faithful `ClassifyInput`/`ClassifyOutput` types and type-checks
+clean under strict TS.
 
 ## The horizon after the chapter — owner's additions, 2026-08-22
 

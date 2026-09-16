@@ -204,8 +204,18 @@ export async function gatherAnalyzerFiles(
  * prompt, and the runner's fingerprint — the resolved model id and prompt version,
  * as GET /transpile/meta reports them. NUL separators keep "ab"+"c" and "a"+"bc"
  * distinct.
+ *
+ * `clientSig` is the boundary type-sync fingerprint (boundary-client.ts): the schemas
+ * and layout that decide the generated web client, which the runner never sees. It is
+ * folded in ONLY when non-empty, so a project with no web client hashes exactly as it
+ * did before this feature — no gratuitous memo bust — while a schema edit under an api
+ * boundary regenerates the client.
  */
-export function inputHash(inputs: TranspileInputs, meta: TranspileMeta): string {
+export function inputHash(
+  inputs: TranspileInputs,
+  meta: TranspileMeta,
+  clientSig = '',
+): string {
   const hash = createHash('sha256');
   const pairs = [...Object.entries(inputs.documents), ...Object.entries(inputs.context)].sort(
     ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
@@ -215,6 +225,7 @@ export function inputHash(inputs: TranspileInputs, meta: TranspileMeta): string 
   }
   hash.update(inputs.patterns ?? '').update('\0');
   hash.update(meta.model).update('\0').update(meta.promptVersion);
+  if (clientSig) hash.update('\0boundary-client\0').update(clientSig);
   return hash.digest('hex');
 }
 
@@ -222,8 +233,17 @@ export function inputHash(inputs: TranspileInputs, meta: TranspileMeta): string 
  * What each emitted file is, as the transpiler declared it. The session layer keys
  * off "boundary-server" — those files become supervised processes — and everything
  * the runner has not classified is "other", which no process derivation touches.
+ * "boundary-client" is the one role the runner never emits: it marks the web client
+ * that boundary type-sync generates deterministically, API-side (boundary-client.ts),
+ * and it derives no process — it is source the web dev server already serves.
  */
-export const FILE_ROLES = ['agent', 'orchestration', 'boundary-server', 'other'] as const;
+export const FILE_ROLES = [
+  'agent',
+  'orchestration',
+  'boundary-server',
+  'boundary-client',
+  'other',
+] as const;
 export type FileRole = (typeof FILE_ROLES)[number];
 
 /** The runner's answer, stored whole so a memo hit replays it byte for byte. */
