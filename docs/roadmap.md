@@ -19,8 +19,8 @@ orchestration are transpiled into the repo, not hosted by the platform. Build
 order sketch: the transpiler (graph → orchestration, composition → boundary
 server) → the app session and preview pane (`docs/app-session.md`: Run runs the
 app; write-through editing; session logs) → commit-path integration with
-mine-or-theirs → document migration into `civil/` → lift-on-open → the typed
-web SDK → the testing ladder.
+mine-or-theirs → document migration into `civil/` → lift-on-open → boundary
+type-sync → the testing ladder.
 
 **What the transpiler writes is settled** (`docs/emitted-code.md`, 2026-08-21):
 two first-class rules (the user's pattern IS the pattern; composed and
@@ -72,6 +72,22 @@ that harden them: recurring emissions crystallize into deterministic
 templates, prompt refinement narrows the generative surface, and the
 generative path remains for whatever templates don't yet cover. Direction of
 travel: judgment first, determinism earned.
+
+**Boundary type-sync** (renamed from "the typed web SDK", 2026-09-16, after the
+owner caught the earlier framing smuggling in an opinion). The value is narrow
+and honest: **keep the frontend's understanding of the boundary from silently
+drifting from the backend's.** The boundary schema is the source of truth; when
+it changes, the frontend's types for that boundary update, so drift surfaces in
+the editor and at build. That is all Civil owns here — propagating a fact, not
+imposing a style. It is *not* a prescribed client: Civil does not mandate a
+`client.analyze()` house shape. How call sites are written follows first-class
+rule 1 — the pattern analyzer reads how the repo already calls its boundary
+(raw `fetch`, a hand-rolled `api.ts`, react-query, tRPC, ...) and the
+transpiler emits typed calls in *that* idiom. Where no calling pattern exists
+yet (the per-surface seed case), Civil emits the most vanilla thing — thin
+typed fetch wrappers — as a disposable default the first hand-written call
+supersedes. "SDK" oversold it; the feature is type-sync in the project's own
+voice.
 
 ## The horizon after the chapter — owner's additions, 2026-08-22
 

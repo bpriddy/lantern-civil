@@ -14,12 +14,22 @@ else in this contract serves these two.
 the code already in the repo — naming, module layout, sync or async style,
 type-hint density, docstring habits, import style. Emission consults the
 repo's own conventions (via the pattern analyzer, below) and writes code that
-reads as if the repo's author wrote it. Civil's own style exists only as the
-seed for an empty repo, and it is a default, not a doctrine: the moment the
-user's code establishes a pattern, the pattern wins. Two consequences:
-determinism is redefined as *same documents + same pattern prompt → same
-bytes* (golden tests fix both inputs), and the outer wall is re-liftability —
-emission follows the user's pattern as far as lift can still read it back.
+reads as if the repo's author wrote it. Civil's own style is only ever a
+**seed where no pattern yet exists**, and it is a default, not a doctrine: the
+moment the user's code establishes a pattern, the pattern wins.
+
+**"No pattern exists" is judged per surface, not per project.** A from-scratch
+repo is the obvious case, but a mature repo can still have no precedent for a
+*specific* concern — its first background job, its first boundary client — and
+Civil seeds a minimal default there too, which the first hand-written instance
+supersedes. So the rule is never "greenfield vs. brownfield"; it is "does a
+pattern for *this thing* exist yet." Civil never overrides an existing
+convention, and is never stuck for lack of one.
+
+Two consequences: determinism is redefined as *same documents + same pattern
+prompt → same bytes* (golden tests fix both inputs), and the outer wall is
+re-liftability — emission follows the user's pattern as far as lift can still
+read it back.
 
 **2. Composed and modularized; opinions only at the broadest level.** Emitted
 code is modules implemented by plain functions, never by library opinion.
