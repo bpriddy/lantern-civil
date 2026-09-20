@@ -9,6 +9,69 @@ become now.
 
 ---
 
+## The value prop, and the burn-down that serves it
+
+Settled with the owner on 2026-09-16, deconstructing an earlier feature-shaped list.
+
+**The value prop, in one line:** Civil is a new, higher layer of abstraction for
+building applications — the graph altitude — that is **backwards compatible**: you can
+start at the top and transpile down into a whole ordinary application, or bring
+existing code up into the graph, and neither the layer below nor the code you already
+have is ever broken or locked away.
+
+The techniques we build (transpilation, lift, the engine interface, seed-where-none-
+exists, boundary type-sync) are not the point. They are the machinery that keeps a
+higher abstraction layer backwards compatible — which is the thing no prior attempt at
+raising app-building altitude (low-code, visual builders, framework-as-platform) has
+done. Those are one-way doors; Civil is not. The layer is **symmetric and reversible**:
+either end is a first-class entry point, and neither altitude is ever severed.
+
+Two framing calls that set the priority order below:
+- **Top-down devex is the center of gravity.** "I graph an application and get real
+  application code back," that loop being tight and propulsive, matters most.
+  Bottom-end ingestion is required for the story to be *complete*, but it is later.
+- **Agents are normal, not a tout.** Agent code analysis, testing, orchestration are
+  the ambient mechanism of the coding experience, woven through the tiers where they
+  belong — not a feature category. Agent *piloting* (an agent operating the whole
+  layer) is a different, higher-order context, so it sequences last.
+
+The invariants the value prop demands, each an axis the burn-down is measured on:
+A — down-transpile is whole and idiomatic (graph → an app you own); B — up-lift is
+faithful (code → graph, lossless within conventions); C — either end is a valid start;
+D — the layer below is never severed; E — the two layers never silently diverge;
+F — the app actually runs and is trustworthy at both altitudes.
+
+**The burn-down, in priority order:**
+
+- **P1 — The graph → code loop is tight, trustworthy, propulsive** *(A + E).*
+  Emission reliability (kill the transient malformed-`emit_files` flakiness — the loop
+  randomly fails until this is fixed); transpiler hardening (generative → templates,
+  tighten determinism); agent code analysis always-on and seamless (normal, not a
+  special trigger); complete the emission surfaces (agent.yaml dissolution, multi-vendor
+  engines, boundary type-sync follow-ups — function-backed/composite/progress typing,
+  call-site adoption); hot re-transpile + stale/superseded-emission cleanup.
+- **P2 — Building & running at altitude is rich and end-to-end** *(F + top-down
+  authorship).* Harness authoring / attaching; app testing (project's own tests
+  in-session, agent testing as normal); observability in dev end-to-end (trace viewer,
+  replay, node result cache, progress wiring); substrate hardening (incl. npm-install
+  >5min → 502).
+- **P3 — You're never trapped; the altitudes round-trip** *(B + D).* Lift maturation
+  (node / capability / composition lift, a persisted node↔file map, orphan handling);
+  full mine-or-theirs reconciliation (hand-edit vs regenerate). Real, but the ownership
+  safety net is less urgent day-to-day than P1/P2.
+- **P4 — Bottom-end ingestion** *(C — completes the value prop, explicitly later).*
+  Existing repo → induced graph (the macro of lift); harness import.
+- **P5 — Agent piloting** *(operating the layer autonomously — a different context).*
+  Intent in, agent edits graph + code through the same diff/commit path. Depends on P1
+  (loop) and P3 (lossless reconciliation) being solid.
+
+Housekeeping: consolidate the (now very long) project memory.
+
+The chapter detail below predates this reframing and remains accurate as a record of
+what shipped; the tiers above are how the remaining work is now prioritized.
+
+---
+
 ## The next chapter: transpilation
 
 `docs/transpilation.md` (2026-08-21) redefines what Civil produces: the canvas
