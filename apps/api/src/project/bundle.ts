@@ -1,9 +1,7 @@
 import {
   validateProject,
-  zAgent,
   zGraph,
   zProject,
-  type Agent,
   type Composition,
   type Diagnostic,
   type Graph,
@@ -25,9 +23,19 @@ import { discoverContracts, type ContractRequest, type ContractResult } from './
  * a project ever gets big enough for this to hurt, the seam to make it lazy is the
  * graphs map, not the shape of the response.
  */
+/**
+ * An agent node's resolved runtime asset. agent.yaml has dissolved
+ * (docs/emitted-code.md): model, turn budget, and engine are literal kwargs in the
+ * emitted code, so the only thing left to resolve for the canvas is the prompt, which
+ * lives at prompts/<node-id>.md by convention. Keyed `graphPath#nodeId` in the bundle,
+ * because a node id is unique only within its graph.
+ */
 export interface AgentEntry {
-  ref: string;
-  agent: Agent;
+  graphPath: string;
+  id: string;
+  name?: string;
+  /** prompts/<node-id>.md — where the prompt lives, and where the inspector saves it. */
+  promptPath: string;
   /** Resolved so the inspector and semantic zoom (PRD 7) do not each refetch it. */
   prompt: string | undefined;
 }
@@ -102,17 +110,29 @@ export async function loadBundle(source: ProjectSource): Promise<ProjectBundle> 
     const parsed = zGraph.safeParse(parseYaml(source, path));
     if (!parsed.success) continue;
     graphs[path] = parsed.data;
+  }
 
-    for (const node of parsed.data.spec.nodes) {
-      if (node.type !== 'agent' || agents[node.ref]) continue;
-      const agentDoc = zAgent.safeParse(parseYaml(source, node.ref));
-      if (!agentDoc.success) continue;
-      agents[node.ref] = {
-        ref: node.ref,
-        agent: agentDoc.data,
-        prompt: source.read(agentDoc.data.spec.promptFile),
-      };
+  // Agents resolve to one asset: the prompt at prompts/<node-id>.md (the raw id).
+  // Node ids repeat across graphs, so the map is keyed graphPath#nodeId. Hydrate the
+  // prompt paths in one batch before the sync reads, for lazy (github) sources.
+  const promptPathFor = (id: string) => `prompts/${id}.md`;
+  const agentNodes: { graphPath: string; id: string; name?: string }[] = [];
+  for (const [graphPath, graph] of Object.entries(graphs)) {
+    for (const node of graph.spec.nodes) {
+      if (node.type !== 'agent') continue;
+      agentNodes.push({ graphPath, id: node.id, ...(node.name ? { name: node.name } : {}) });
     }
+  }
+  await source.ensure?.(agentNodes.map((n) => promptPathFor(n.id)));
+  for (const n of agentNodes) {
+    const promptPath = promptPathFor(n.id);
+    agents[`${n.graphPath}#${n.id}`] = {
+      graphPath: n.graphPath,
+      id: n.id,
+      ...(n.name ? { name: n.name } : {}),
+      promptPath,
+      prompt: source.read(promptPath),
+    };
   }
 
   return {

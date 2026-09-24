@@ -192,3 +192,233 @@ test('a flat client (no src dir) lands the client beside its path', async () => 
   const plan = await planBoundaryClient(source(flat));
   assert.equal(plan!.clientPath, 'web/civil/client.ts');
 });
+
+// ---- follow-ups: composite I/O, function-backed types, progress -------------------
+
+/** The classify graph with the given io node lines, so a test states only what varies. */
+function classifyGraph(...nodeLines: string[]): string {
+  return `apiVersion: civil/v1
+kind: Graph
+metadata: { id: classify, name: Classify }
+spec:
+  nodes:
+${nodeLines.map((l) => `    - ${l}`).join('\n')}
+`;
+}
+
+const DOCUMENT = 'schemas/document.schema.json';
+const RECORD = 'schemas/record.schema.json';
+
+test('composite in: several typed io synthesize an ordered object, keyed name ?? id', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'civil/graphs/classify.graph.yaml': classifyGraph(
+          `{ id: document, type: io, direction: in, schema: ${DOCUMENT} }`,
+          `{ id: options, type: io, direction: in, name: opts, schema: ${RECORD} }`,
+          `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+        ),
+      }),
+    ),
+  );
+  const classify = plan!.endpoints[0]!;
+  // One field per in node in declaration order; document has no name (id), options is opts.
+  assert.deepEqual(classify.inputSchema, {
+    type: 'object',
+    properties: { document: JSON.parse(DOCUMENT_SCHEMA), opts: JSON.parse(RECORD_SCHEMA) },
+    required: ['document', 'opts'],
+  });
+  // The single out still maps directly, not synthesized.
+  assert.deepEqual(classify.outputSchema, JSON.parse(RECORD_SCHEMA));
+
+  // And it flows through the existing tsType/renderType pipeline into an interface.
+  const code = generateBoundaryClient(plan!).files['web/src/civil/client.ts']!;
+  assert.match(code, /export interface ClassifyInput \{/);
+  assert.match(code, /document: \{/);
+  assert.match(code, /opts: \{/);
+});
+
+test('composite in: colliding names fall back to node ids for every field', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'civil/graphs/classify.graph.yaml': classifyGraph(
+          `{ id: first, type: io, direction: in, name: payload, schema: ${DOCUMENT} }`,
+          `{ id: second, type: io, direction: in, name: payload, schema: ${RECORD} }`,
+          `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+        ),
+      }),
+    ),
+  );
+  const classify = plan!.endpoints[0]!;
+  assert.deepEqual(classify.inputSchema, {
+    type: 'object',
+    properties: { first: JSON.parse(DOCUMENT_SCHEMA), second: JSON.parse(RECORD_SCHEMA) },
+    required: ['first', 'second'],
+  });
+});
+
+test('function-backed: contract discovery recovers a TypedDict handler’s types', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'src/services/save_record.py': `from typing import TypedDict
+
+
+class Record(TypedDict):
+    id: str
+    category: str
+
+
+class SaveResult(TypedDict):
+    ok: bool
+
+
+def handler(record: Record) -> SaveResult:
+    """Persist a classified record."""
+    return {"ok": True}
+`,
+      }),
+    ),
+  );
+  const save = plan!.endpoints[1]!;
+  // A single input param maps directly to its schema (not wrapped in an object).
+  assert.deepEqual(save.inputSchema, {
+    type: 'object',
+    properties: { id: { type: 'string' }, category: { type: 'string' } },
+    required: ['id', 'category'],
+  });
+  assert.deepEqual(save.outputSchema, {
+    type: 'object',
+    properties: { ok: { type: 'boolean' } },
+    required: ['ok'],
+  });
+
+  const code = generateBoundaryClient(plan!).files['web/src/civil/client.ts']!;
+  assert.match(code, /export interface SaveRecordInput \{/);
+  assert.match(code, /ok: boolean;/);
+});
+
+test('function-backed: several params synthesize an object, a default param optional', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'src/services/save_record.py': `def handler(query: str, limit: int = 5) -> list[str]:
+    return []
+`,
+      }),
+    ),
+  );
+  const save = plan!.endpoints[1]!;
+  assert.deepEqual(save.inputSchema, {
+    type: 'object',
+    properties: { query: { type: 'string' }, limit: { type: 'integer' } },
+    required: ['query'], // the defaulted param is not required
+  });
+  assert.deepEqual(save.outputSchema, { type: 'array', items: { type: 'string' } });
+});
+
+test('function-backed: a bare dict/list annotation falls back to its container kind', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'src/services/save_record.py': `def handler(payload: dict) -> list:
+    return []
+`,
+      }),
+    ),
+  );
+  const save = plan!.endpoints[1]!;
+  assert.deepEqual(save.inputSchema, { type: 'object' });
+  assert.deepEqual(save.outputSchema, { type: 'array' });
+});
+
+test('function-backed: an unresolvable custom annotation stays unknown, never a guess', async () => {
+  const plan = await planBoundaryClient(
+    source(
+      docPipeline({
+        'src/services/save_record.py': `def handler(known: str, payload: CustomThing) -> CustomThing:
+    return payload
+`,
+      }),
+    ),
+  );
+  const save = plan!.endpoints[1]!;
+  // Positive precondition: the KNOWN param must resolve, so a host without python3
+  // fails this loudly instead of false-passing on the all-null degraded result. The
+  // custom param and custom return stay unknown ({} for a field, null for the output).
+  assert.deepEqual(save.inputSchema, {
+    type: 'object',
+    properties: { known: { type: 'string' }, payload: {} },
+    required: ['known', 'payload'],
+  });
+  assert.equal(save.outputSchema, null);
+  const code = generateBoundaryClient(plan!).files['web/src/civil/client.ts']!;
+  assert.match(code, /export type SaveRecordOutput = unknown;/);
+});
+
+test('progress: a typed progress out emits a caveated SSE type; schema-less emits none', async () => {
+  // Default fixture: thinking is a schema-less progress out -> no type, stays null.
+  const bare = await planBoundaryClient(source(docPipeline()));
+  assert.equal(bare!.endpoints[0]!.progressSchema, null);
+  const bareCode = generateBoundaryClient(bare!).files['web/src/civil/client.ts']!;
+  assert.doesNotMatch(bareCode, /ClassifyProgress/);
+
+  // Declare a schema on the progress out and it resolves + emits a Progress type.
+  const typed = await planBoundaryClient(
+    source(
+      docPipeline({
+        'civil/graphs/classify.graph.yaml': classifyGraph(
+          `{ id: document, type: io, direction: in, schema: ${DOCUMENT} }`,
+          `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+          `{ id: thinking, type: io, direction: out, kind: progress, schema: ${RECORD} }`,
+        ),
+      }),
+    ),
+  );
+  assert.deepEqual(typed!.endpoints[0]!.progressSchema, JSON.parse(RECORD_SCHEMA));
+  // The response body still excludes the progress out.
+  assert.deepEqual(typed!.endpoints[0]!.outputSchema, JSON.parse(RECORD_SCHEMA));
+  const typedCode = generateBoundaryClient(typed!).files['web/src/civil/client.ts']!;
+  assert.match(typedCode, /export interface ClassifyProgress \{/);
+  assert.match(typedCode, /SSE progress-payload shape only/);
+  assert.match(typedCode, /stream it yet \(docs\/boundary-type-sync\.md/);
+});
+
+test('progress: folds into the signature only when a schema is declared', async () => {
+  const sig = async (files: Record<string, string>) =>
+    clientSignature((await planBoundaryClient(source(files)))!);
+
+  const schemaless = docPipeline(); // thinking progress, no schema
+  const noProgressNode = docPipeline({
+    'civil/graphs/classify.graph.yaml': classifyGraph(
+      `{ id: document, type: io, direction: in, schema: ${DOCUMENT} }`,
+      `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+    ),
+  });
+  // A schema-less progress channel types nothing, so it contributes nothing to the hash:
+  // a project with it fingerprints identically to one with no progress node at all.
+  assert.equal(await sig(schemaless), await sig(noProgressNode), 'no progress -> unchanged hash');
+
+  const progressRecord = docPipeline({
+    'civil/graphs/classify.graph.yaml': classifyGraph(
+      `{ id: document, type: io, direction: in, schema: ${DOCUMENT} }`,
+      `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+      `{ id: thinking, type: io, direction: out, kind: progress, schema: ${RECORD} }`,
+    ),
+  });
+  const progressDocument = docPipeline({
+    'civil/graphs/classify.graph.yaml': classifyGraph(
+      `{ id: document, type: io, direction: in, schema: ${DOCUMENT} }`,
+      `{ id: record, type: io, direction: out, schema: ${RECORD} }`,
+      `{ id: thinking, type: io, direction: out, kind: progress, schema: ${DOCUMENT} }`,
+    ),
+  });
+  // Declaring a progress schema moves the signature, and changing it moves it again.
+  assert.notEqual(await sig(schemaless), await sig(progressRecord), 'a progress schema moves it');
+  assert.notEqual(
+    await sig(progressRecord),
+    await sig(progressDocument),
+    'a progress schema change moves it',
+  );
+});

@@ -47,9 +47,10 @@ F — the app actually runs and is trustworthy at both altitudes.
   Emission reliability (kill the transient malformed-`emit_files` flakiness — the loop
   randomly fails until this is fixed); transpiler hardening (generative → templates,
   tighten determinism); agent code analysis always-on and seamless (normal, not a
-  special trigger); complete the emission surfaces (agent.yaml dissolution, multi-vendor
-  engines, boundary type-sync follow-ups — function-backed/composite/progress typing,
-  call-site adoption); hot re-transpile + stale/superseded-emission cleanup.
+  special trigger); complete the emission surfaces (multi-vendor engines, boundary
+  type-sync follow-ups — function-backed/composite/progress typing, call-site
+  adoption); hot re-transpile + stale/superseded-emission cleanup. (agent.yaml
+  dissolution has landed: config is code kwargs, prompts are prompts/<node-id>.md.)
 - **P2 — Building & running at altitude is rich and end-to-end** *(F + top-down
   authorship).* Harness authoring / attaching; app testing (project's own tests
   in-session, agent testing as normal); observability in dev end-to-end (trace viewer,
@@ -90,7 +91,7 @@ two first-class rules (the user's pattern IS the pattern; composed and
 modularized, interfaces for anything per-project configurable), proportional
 emission (vanilla → stdlib asyncio → an earned civil-runtime import, judged by
 the strong-engineer test), agents as plain functions calling one `Engine`
-facade (vendor identity as data, Claude default), agent.yaml dissolving into
+facade (vendor identity as data, Claude default), agent.yaml dissolved into
 code kwargs and prompt assets, instrumentation observer-side. The transpiler
 is two components: the **pattern analyzer** (LLM code analysis, triggered by
 inbound or hand-written changes, writing the `civil/patterns.md` helper

@@ -1,7 +1,6 @@
 export * from './manifest/common.js';
 export * from './manifest/composition.js';
 export * from './manifest/graph.js';
-export * from './manifest/agent.js';
 export * from './manifest/project.js';
 export * from './diagnostics.js';
 export * from './files.js';

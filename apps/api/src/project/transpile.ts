@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type pg from 'pg';
 import { parse } from 'yaml';
-import { zAgent, zComposition, zGraph } from '@civil/schema';
+import { zComposition, zGraph } from '@civil/schema';
 import { CIVIL_DIR, civilYamlPath, compositionPathFor } from './bundle.js';
 import type { ProjectSource } from './source.js';
 
@@ -97,11 +97,10 @@ export async function gatherInputs(
   // Civil documents by convention, whether under civil/ (migrated) or the repo root
   // (legacy) — the (civil/)? prefix admits both; a project only ever has one.
   for (const path of paths) {
-    if (
-      /^(civil\/)?graphs\/[^/]+\.ya?ml$/.test(path) ||
-      /^(civil\/)?agents\/[^/]+\/agent\.ya?ml$/.test(path) ||
-      /^(civil\/)?agents\/[^/]+\/prompt\.md$/.test(path)
-    ) {
+    // agent.yaml has dissolved (docs/emitted-code.md): agents contribute no civil
+    // documents. Their prompt is a runtime asset (prompts/<id>.md), gathered as
+    // context if referenced, never as a document.
+    if (/^(civil\/)?graphs\/[^/]+\.ya?ml$/.test(path)) {
       documentPaths.add(path);
     }
   }
@@ -140,11 +139,6 @@ export async function gatherInputs(
             const dir = globPrefix(pattern);
             if (dir) referencedDirs.add(dir);
           }
-        } else if (node.type === 'agent') {
-          documentPaths.add(node.ref);
-          await source.ensure?.([node.ref]);
-          const agent = zAgent.safeParse(parseDoc(source, node.ref));
-          if (agent.success) documentPaths.add(agent.data.spec.promptFile);
         } else if (node.type === 'subgraph') {
           queue.push(node.ref);
         }

@@ -429,7 +429,6 @@ export function validateGraph(raw: unknown, file: string, files: ProjectFiles): 
         }
         break;
       }
-      case 'agent':
       case 'subgraph': {
         if (!files.exists(node.ref)) {
           s.push({
@@ -439,6 +438,12 @@ export function validateGraph(raw: unknown, file: string, files: ProjectFiles): 
             nodeId: node.id,
           });
         }
+        break;
+      }
+      case 'agent': {
+        // agent.yaml has dissolved (docs/emitted-code.md): the node carries no ref,
+        // and its prompt is an app asset at prompts/<id>.md loaded at runtime, not a
+        // civil document — so a missing prompt file is not a manifest error here.
         break;
       }
       case 'code': {

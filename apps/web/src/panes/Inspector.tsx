@@ -50,6 +50,7 @@ export function Inspector({
           <NodeDetail
             node={node}
             bundle={bundle}
+            graphPath={altitude.kind === 'graph' ? altitude.path : undefined}
             onPatch={(patch) => onPatch(node.id, patch)}
             onRename={(to) => onRename(node.id, to)}
             onRemove={() => onRemoveNode(node.id)}
@@ -223,6 +224,7 @@ const parseList = (text: string): string[] =>
 function NodeDetail({
   node,
   bundle,
+  graphPath,
   onPatch,
   onRename,
   onRemove,
@@ -230,6 +232,8 @@ function NodeDetail({
 }: {
   node: CompositionNode | GraphNode;
   bundle: ProjectBundle | undefined;
+  /** The graph the node lives in, so its agent entry resolves by graphPath#nodeId. */
+  graphPath: string | undefined;
   onPatch: (patch: Record<string, unknown>) => void;
   onRename: (to: string) => void;
   onRemove: () => void;
@@ -353,12 +357,19 @@ function NodeDetail({
       );
       break;
     case 'subgraph':
-    case 'agent':
       fields.push(<Field key="ref" label="ref" value={node.ref} onCommit={required('ref')} />);
+      break;
+    case 'agent':
+      // agent.yaml has dissolved (docs/emitted-code.md): no ref. The node carries
+      // only identity, wiring, and an optional display name.
+      fields.push(
+        <Field key="name" label="name" value={node.name ?? ''} onCommit={optional('name')} />,
+      );
       break;
   }
 
-  const agent = node.type === 'agent' ? bundle?.agents[node.ref] : undefined;
+  const agent =
+    node.type === 'agent' && graphPath ? bundle?.agents[`${graphPath}#${node.id}`] : undefined;
 
   return (
     <>
@@ -379,21 +390,18 @@ function NodeDetail({
       {agent ? (
         <>
           <h3 className="section">Agent</h3>
-          <dl className="kv">
-            <dt>model</dt>
-            {/* PRD 12: model ids are never hardcoded. Absent means the project default. */}
-            <dd>{agent.agent.spec.model ?? '(project default)'}</dd>
-            <dt>maxTurns</dt>
-            <dd>{agent.agent.spec.maxTurns ?? '(unset)'}</dd>
-          </dl>
+          {/* agent.yaml has dissolved (docs/emitted-code.md): model and turn budget
+              are literal kwargs in the emitted agent module — edit them in code, the
+              established rule for statically-liftable config. */}
+          <p className="muted">Model and turn budget are literal kwargs in the emitted agent code.</p>
           <h3 className="section">Objective</h3>
-          {/* The prompt is a file, and this edits that file — the inspector's rule
-              for agents: prompts and params map to the actual files in the repo.
-              Keyed by ref so switching agents replaces the draft, never leaks it. */}
+          {/* The prompt is a file at prompts/<node-id>.md, and this edits that file —
+              the inspector's rule for agents: the objective maps to a real repo file.
+              Keyed by the prompt path so switching agents replaces the draft. */}
           <PromptEditor
-            key={agent.ref}
+            key={agent.promptPath}
             value={agent.prompt}
-            onSave={(content) => onSavePrompt(agent.agent.spec.promptFile, content)}
+            onSave={(content) => onSavePrompt(agent.promptPath, content)}
           />
         </>
       ) : null}

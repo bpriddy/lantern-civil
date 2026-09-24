@@ -144,7 +144,6 @@ test('an added node leaves the manifest parseable and valid', () => {
   // And it must survive the validator, not merely the parser: a node the schema
   // rejects is as broken as one YAML rejects, just later.
   const files = MemoryFiles.from({
-    'agents/classifier/agent.yaml': '',
     'civil/graphs/enrich.graph.yaml': '',
     'src/steps/normalize/main.py': '',
     'src/steps/summarize/main.py': '',

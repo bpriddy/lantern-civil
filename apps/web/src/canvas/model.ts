@@ -165,8 +165,9 @@ export function graphToFlow(
         break;
       case 'agent': {
         // PRD 7's semantic zoom shows the first lines of an agent's objective. The
-        // prompt is already in the bundle, so the face can say something true.
-        const entry = context.agents[node.ref];
+        // prompt is already in the bundle, keyed graphPath#nodeId because a node id
+        // is unique only within its graph.
+        const entry = context.agents[`${file}#${node.id}`];
         detail = entry?.prompt?.split('\n').find((line) => line.trim().length > 0)?.slice(0, 80);
         break;
       }

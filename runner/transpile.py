@@ -13,6 +13,7 @@ for the repo's own conventions.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 from typing import Any
@@ -78,7 +79,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -92,16 +93,16 @@ The emitted code contract:
 `from civil_runtime.engines import Engine`. The engine is constructed at \
 module level with literal kwargs — today always \
 `engine = Engine(model="{default_model}")`, the resolved model id (Claude, \
-the default; other vendor kinds arrive in the library later), unless the \
-agent document pins a different model id — so the configuration is data on \
-one line. The function invokes it as \
+the default; other vendor kinds arrive in the library later) — so the \
+configuration is data on one line the user edits afterward. The function \
+invokes it as \
 `engine.run(system=..., user=..., tools=[...], max_turns=<n>)`, where \
-max_turns is the agent's turn budget (agent.yaml maxTurns) written as a \
-literal int, and gets back a Reply: `.text` is the final text, `.json()` the \
-conclusion parsed as data. Serialize structured user content with \
-json.dumps, not str(). NEVER import anthropic, openai, or any other vendor \
-SDK in emitted files, and never invent vendor-named classes — Engine is the \
-only surface.
+max_turns is the agent's turn budget, a literal int defaulting to 8 (edit \
+the literal to change it), and gets back a Reply: `.text` is the final text, \
+`.json()` the conclusion parsed as data. Serialize structured user content \
+with json.dumps, not str(). NEVER import anthropic, openai, or any other \
+vendor SDK in emitted files, and never invent vendor-named classes — Engine \
+is the only surface.
 - Each graph document becomes an orchestration module whose `run()` body is \
 straight-line — assignments, calls, a return — mapping the graph's flow edges \
 in topological order. No conditionals or loops standing in for control flow \
@@ -122,9 +123,12 @@ context — use the actual names and signatures those files define.
 other step.
 - io progress nodes emit nothing; instrumentation lives in the observer, not \
 the code.
-- Prompts are ordinary application assets: load each prompt file from the \
-repo path it already has (the application runs from the repo root). Do not \
-inline prompt text.
+- Prompts are ordinary application assets: each agent's prompt lives at \
+`prompts/<agent-node-id>.md` by convention (the raw node id). Define a \
+module-level `_PROMPT_FILE = "prompts/<agent-node-id>.md"` and load the \
+system prompt from it (the application runs from the repo root). Do not \
+inline prompt text, and NEVER emit the prompt file itself — it is a \
+human-authored asset that already exists; reference it, never overwrite it.
 - Concurrency, when the graph demands it, uses the standard library (asyncio) \
 — no orchestration frameworks.
 - Comments only where they state a constraint the code cannot show; never \
@@ -338,13 +342,41 @@ def _section(title: str, files: dict[str, str]) -> str:
     return "\n\n".join(parts)
 
 
+def _files_list(tool_input: Any) -> list[Any] | None:
+    """The emit_files `files` array, tolerating the model's occasional
+    double-encoding. Roughly half the forced calls arrive with `files` as a JSON
+    *string* — the array serialized a second time, sometimes trailed by a leaked
+    tool-call scaffold token (`</invoke>`) — instead of the array the schema asks
+    for. It shows up on the create and stream paths at the same rate (measured
+    2026-09-23), so it is the model, not accumulation, and the data is all there
+    and valid: recover it rather than spend a retry on what is already a complete
+    emission. raw_decode reads the first complete JSON value and drops any
+    trailing junk; a re-encoded whole object unwraps to its files."""
+    if not isinstance(tool_input, dict):
+        return None
+    files = tool_input.get("files")
+    if isinstance(files, list):
+        return files
+    if isinstance(files, str):
+        try:
+            decoded, _ = json.JSONDecoder().raw_decode(files.lstrip())
+        except ValueError:
+            return None
+        if isinstance(decoded, dict):
+            decoded = decoded.get("files")
+        if isinstance(decoded, list):
+            return decoded
+    return None
+
+
 def _parse_emission(tool_input: Any) -> tuple[dict[str, str], dict[str, str], list[str]]:
-    if not isinstance(tool_input, dict) or not isinstance(tool_input.get("files"), list):
+    entries = _files_list(tool_input)
+    if entries is None:
         return {}, {}, ['emit_files input must be {"files": [{"path", "content"}, ...]}']
     files: dict[str, str] = {}
     roles: dict[str, str] = {}
     issues: list[str] = []
-    for entry in tool_input["files"]:
+    for entry in entries:
         if (
             not isinstance(entry, dict)
             or not isinstance(entry.get("path"), str)

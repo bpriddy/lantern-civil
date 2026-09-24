@@ -19,6 +19,7 @@ reads ANTHROPIC_API_KEY itself); nothing here holds or logs a secret.
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import json
 import os
@@ -125,6 +126,21 @@ def _tool_schema(fn: Callable[..., Any]) -> dict[str, Any]:
     }
 
 
+def _openai_tool_schema(fn: Callable[..., Any]) -> dict[str, Any]:
+    """The same signature-derived declaration in the OpenAI idiom: the schema
+    nests under a ``function`` envelope and ``input_schema`` becomes
+    ``parameters``. Derived from `_tool_schema` so there is one source, not two."""
+    schema = _tool_schema(fn)
+    return {
+        "type": "function",
+        "function": {
+            "name": schema["name"],
+            "description": schema["description"],
+            "parameters": schema["input_schema"],
+        },
+    }
+
+
 def _call_tool(fn: Callable[..., Any], args: dict[str, Any]) -> Any:
     """Sync or async, arguments keyed by parameter name — the signature the
     schema was read from is the signature the call mirrors."""
@@ -209,10 +225,181 @@ class _ClaudeAdapter:
         raise RuntimeError(f"the engine hit its turn budget ({max_turns}) without concluding")
 
 
+#: The OpenAI chat-completions dialect is spoken by OpenAI itself and by the
+#: local/OSS servers that emulate it (Ollama, vLLM). One adapter serves them
+#: all; the kind selects only where to reach the server and whether a missing
+#: key is fatal — never how the loop runs. Base URLs and keys are the
+#: environment's concern: each kind names the variable that points at its
+#: server, and a local kind keeps a conventional localhost default (still
+#: overridable) so it works out of the box, with a throwaway key for servers
+#: that ignore auth. Nothing here is a secret and nothing is logged.
+_OPENAI_COMPATIBLE: dict[str, dict[str, Any]] = {
+    "openai": {
+        "base_url_env": "OPENAI_BASE_URL",
+        "default_base_url": None,
+        "key_env": "OPENAI_API_KEY",
+        # OpenAI's current models (the reasoning family included) take
+        # max_completion_tokens; max_tokens 400s on them.
+        "token_field": "max_completion_tokens",
+        "local": False,
+    },
+    "ollama": {
+        "base_url_env": "OLLAMA_BASE_URL",
+        "default_base_url": "http://localhost:11434/v1",
+        "key_env": "OLLAMA_API_KEY",
+        "token_field": "max_tokens",
+        "local": True,
+    },
+    "vllm": {
+        "base_url_env": "VLLM_BASE_URL",
+        "default_base_url": "http://localhost:8000/v1",
+        "key_env": "VLLM_API_KEY",
+        "token_field": "max_tokens",
+        "local": True,
+    },
+}
+
+
+class _OpenAIAdapter:
+    """The OpenAI dialect: chat.completions.create with a tool-call loop.
+
+    The same construction as the Claude adapter in a different idiom — the
+    system prompt is the first message rather than a top-level field, tool
+    schemas nest under a ``function`` envelope, tool-call arguments arrive as a
+    JSON string, and results go back as ``role: tool`` messages. All of it is
+    internal; the public surface and the Reply it returns are identical.
+    """
+
+    def __init__(self, kind: str = "openai", *, client: Any | None = None):
+        if kind not in _OPENAI_COMPATIBLE:
+            raise ValueError(f"{kind!r} is not an OpenAI-compatible kind")
+        self._kind = kind
+        self._client = client
+
+    def _make_client(self, openai: Any) -> Any:
+        """Construct the SDK client for this kind, reading endpoint and key
+        from the environment (the SDK reads OPENAI_* on its own; a kind-named
+        override and a localhost default cover the local servers)."""
+        config = _OPENAI_COMPATIBLE[self._kind]
+        kwargs: dict[str, Any] = {}
+        base_url = os.environ.get(config["base_url_env"]) or config["default_base_url"]
+        if base_url:
+            kwargs["base_url"] = base_url
+        # Each kind reads its OWN key variable, so a real hosted key is never sent
+        # to a local server. The SDK refuses to construct without a key even against
+        # a server that ignores it, so a local endpoint gets a throwaway when the
+        # environment supplies none; a hosted endpoint is left to the SDK's own error.
+        api_key = os.environ.get(config["key_env"])
+        if not api_key and config["local"]:
+            api_key = "civil-local-unused"
+        if api_key:
+            kwargs["api_key"] = api_key
+        return openai.OpenAI(**kwargs)
+
+    def run(
+        self,
+        *,
+        system: str,
+        user: str,
+        tools: tuple[Callable[..., Any], ...],
+        max_turns: int,
+        model: str,
+        max_tokens: int,
+    ) -> str:
+        client = self._client
+        if client is None:
+            # Imported at first use, not at module import: the interface must
+            # be loadable where this vendor's SDK is not installed.
+            try:
+                import openai
+            except ImportError as error:  # a clear failure beats an opaque one
+                raise RuntimeError(
+                    f"the 'openai' package is required for the {self._kind!r} engine "
+                    "(pip install openai)"
+                ) from error
+            client = self._client = self._make_client(openai)
+
+        schemas = [_openai_tool_schema(fn) for fn in tools]
+        by_name = {schema["function"]["name"]: fn for schema, fn in zip(schemas, tools)}
+        # The token-limit field is kind-specific: OpenAI's current models want
+        # max_completion_tokens, the OSS servers still take max_tokens.
+        request: dict[str, Any] = {
+            "model": model,
+            _OPENAI_COMPATIBLE[self._kind]["token_field"]: max_tokens,
+        }
+        if schemas:
+            request["tools"] = schemas
+        # The system prompt is a message here, not a top-level field.
+        messages: list[dict[str, Any]] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
+        for _turn in range(max_turns):
+            response = client.chat.completions.create(messages=messages, **request)
+            message = response.choices[0].message
+            tool_calls = list(getattr(message, "tool_calls", None) or [])
+            # Presence of tool calls drives the loop — the OpenAI analogue of
+            # Claude's stop_reason == "tool_use", and steadier across the OSS
+            # servers, whose finish_reason is not always "tool_calls".
+            if not tool_calls:
+                return message.content or ""
+
+            messages.append(
+                {
+                    "role": "assistant",
+                    # Some OSS servers reject a null content on an assistant turn.
+                    "content": message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments,
+                            },
+                        }
+                        for call in tool_calls
+                    ],
+                }
+            )
+            for call in tool_calls:
+                fn = by_name.get(call.function.name)
+                if fn is None:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": f"unknown tool {call.function.name}",
+                        }
+                    )
+                    continue
+                # Arguments arrive as a JSON string; a malformed or empty one
+                # becomes no arguments rather than a crash the model can't see.
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                try:
+                    output = _call_tool(fn, args if isinstance(args, dict) else {})
+                    content = json.dumps(output, default=str)
+                except Exception as error:  # noqa: BLE001 — the model gets the failure
+                    content = str(error)
+                messages.append(
+                    {"role": "tool", "tool_call_id": call.id, "content": content}
+                )
+
+        raise RuntimeError(f"the engine hit its turn budget ({max_turns}) without concluding")
+
+
 #: Vendor identity is data: the constructor key selects from here, and adding a
-#: vendor adds a row, never a second public class.
-_ADAPTERS: dict[str, type] = {
+#: vendor adds a row, never a second public class. The OpenAI-compatible kinds
+#: are one adapter differentiated by data (endpoint, key policy), bound per row.
+_ADAPTERS: dict[str, Callable[[], Any]] = {
     "claude": _ClaudeAdapter,
+    "openai": functools.partial(_OpenAIAdapter, "openai"),
+    "ollama": functools.partial(_OpenAIAdapter, "ollama"),
+    "vllm": functools.partial(_OpenAIAdapter, "vllm"),
 }
 
 
@@ -220,8 +407,10 @@ class Engine:
     """One conversational engine, whichever vendor answers.
 
     `Engine()` is Claude; `Engine("<kind>", model=...)` is any other registered
-    vendor. The model defaults from the CIVIL_DEFAULT_MODEL environment
-    variable, resolved when the engine is constructed.
+    vendor — `"openai"`, `"ollama"`, and `"vllm"` all speak the OpenAI
+    chat-completions dialect behind this same surface. The model defaults from
+    the CIVIL_DEFAULT_MODEL environment variable, resolved when the engine is
+    constructed.
     """
 
     def __init__(
@@ -232,8 +421,8 @@ class Engine:
         max_tokens: int = 4096,
         _adapter: Any = None,
     ):
-        self._model = model or os.environ.get("CIVIL_DEFAULT_MODEL") or _FALLBACK_MODEL
-        self._max_tokens = max_tokens
+        # Validate the kind first: an unknown kind is a more basic error than a
+        # missing model, and its message names the known kinds.
         if _adapter is None:
             adapter_type = _ADAPTERS.get(kind)
             if adapter_type is None:
@@ -241,6 +430,18 @@ class Engine:
                 raise ValueError(f"unknown engine kind {kind!r} (known kinds: {known})")
             _adapter = adapter_type()
         self._adapter = _adapter
+        resolved = model or os.environ.get("CIVIL_DEFAULT_MODEL")
+        if resolved is None:
+            # The built-in fallback is a Claude model id; handing it to another
+            # vendor would send a Claude name to that server and fail opaquely.
+            if kind != "claude":
+                raise ValueError(
+                    f"Engine({kind!r}) needs an explicit model "
+                    "(pass model=..., or set CIVIL_DEFAULT_MODEL)"
+                )
+            resolved = _FALLBACK_MODEL
+        self._model = resolved
+        self._max_tokens = max_tokens
 
     def run(
         self,

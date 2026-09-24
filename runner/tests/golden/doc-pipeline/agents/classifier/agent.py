@@ -11,7 +11,7 @@ from src.tools.search.search import search_docs
 
 engine = Engine(model="claude-sonnet-5")
 
-_PROMPT_FILE = "agents/classifier/prompt.md"
+_PROMPT_FILE = "prompts/classifier.md"
 
 
 def run(document: NormalizedDocument) -> dict:

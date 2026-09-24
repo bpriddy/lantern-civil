@@ -1,5 +1,4 @@
 import type {
-  Agent,
   Composition,
   Diagnostic,
   Graph,
@@ -48,9 +47,16 @@ export interface RepositorySummary {
   private: boolean;
 }
 
+/**
+ * An agent node's resolved prompt. agent.yaml has dissolved (docs/emitted-code.md):
+ * model and turn budget are literal kwargs in the emitted code, so the only asset the
+ * canvas resolves is the prompt at prompts/<node-id>.md. Keyed `graphPath#nodeId`.
+ */
 export interface AgentEntry {
-  ref: string;
-  agent: Agent;
+  graphPath: string;
+  id: string;
+  name?: string;
+  promptPath: string;
   prompt: string | undefined;
 }
 

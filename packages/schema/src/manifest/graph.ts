@@ -7,11 +7,16 @@ import { zApiVersion, zId, zLayout, zMetadata, zRelPath } from './common.js';
  * No blended contexts: a node is a canvas or it is code, never both.
  */
 
-/** PRD 5: a leaf. Everything inspector-editable; tools come from capability edges. */
+/**
+ * PRD 5: a leaf. Everything inspector-editable; tools come from capability edges.
+ * agent.yaml has dissolved (docs/emitted-code.md): model, turn budget, and engine
+ * are literal kwargs in the emitted code, and the prompt is an app asset at
+ * prompts/<id>.md by convention. The node carries only identity, wiring, and layout.
+ */
 export const zAgentNode = z.object({
   id: zId,
   type: z.literal('agent'),
-  ref: zRelPath,
+  name: z.string().min(1).optional(),
 });
 
 /**

@@ -194,7 +194,7 @@ test('capability edges must run agent → code', () => {
     graph({
       nodes: [
         { id: 'in', type: 'io', direction: 'in' },
-        { id: 'agent', type: 'agent', ref: 'agents/a/agent.yaml' },
+        { id: 'agent', type: 'agent' },
         { id: 'code', type: 'code', include: ['src/**/*.py'] },
       ],
       edges: [
@@ -203,17 +203,17 @@ test('capability edges must run agent → code', () => {
       ],
     }),
     'g.yaml',
-    MemoryFiles.from({ 'agents/a/agent.yaml': '', 'src/x.py': '' }),
+    MemoryFiles.from({ 'src/x.py': '' }),
   );
   assert.deepEqual(codes(r.diagnostics), ['capability-edge-bad-source', 'capability-edge-bad-target']);
 });
 
 test('a code node on a flow edge must declare an entrypoint, but a capability target need not', () => {
-  const files = MemoryFiles.from({ 'agents/a/agent.yaml': '', 'src/tools/t.py': '' });
+  const files = MemoryFiles.from({ 'src/tools/t.py': '' });
   const base = {
     nodes: [
       { id: 'in', type: 'io', direction: 'in' },
-      { id: 'agent', type: 'agent', ref: 'agents/a/agent.yaml' },
+      { id: 'agent', type: 'agent' },
       { id: 'tools', type: 'code', include: ['src/tools/**/*.py'] },
       { id: 'step', type: 'code', include: ['src/tools/**/*.py'] },
     ],
@@ -312,7 +312,10 @@ test('unresolved refs are reported per node, not as one blanket failure', () => 
   const r = validateGraph(
     graph({
       nodes: [
-        { id: 'agent', type: 'agent', ref: 'agents/missing/agent.yaml' },
+        // An agent node carries no ref (agent.yaml has dissolved), so it never yields
+        // an unresolved-ref — a missing prompts/<id>.md is a runtime asset, not a
+        // manifest error.
+        { id: 'agent', type: 'agent' },
         { id: 'sub', type: 'subgraph', ref: 'graphs/missing.graph.yaml' },
         { id: 'step', type: 'code', include: ['src/nothing/**/*.py'], entrypoint: 'src/gone.py' },
       ],
@@ -324,10 +327,9 @@ test('unresolved refs are reported per node, not as one blanket failure', () => 
     'unresolved-entrypoint',
     'unresolved-ref',
     'unresolved-ref',
-    'unresolved-ref',
   ]);
   assert.deepEqual(
     [...new Set(r.diagnostics.map((d) => d.nodeId))].sort(),
-    ['agent', 'step', 'sub'],
+    ['step', 'sub'],
   );
 });

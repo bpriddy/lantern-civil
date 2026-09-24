@@ -176,5 +176,14 @@ wanted lenient there).
   transpiler meets each one.
 - Multi-vendor template families (an `engine` facet naming a non-Claude vendor
   changes the emitted body) and how far codegen chases each SDK's idiom drift.
-- Migration: the doc-pipeline example and civil-project-test move to the
-  emitted-code world when the transpiler lands — agent.yaml files retire then.
+- Migration: the doc-pipeline example has moved to the emitted-code world —
+  agent.yaml is gone, its prompt lives at `prompts/classifier.md`, and the agent
+  node carries only identity. `planAgentDissolution` (apps/api `migrate.ts`) plans
+  the same move for a real project as reviewable pending changes (prompt relocated,
+  agent.yaml deleted, node ref dropped, a pinned model or non-default turn budget
+  surfaced as a warning), but is not yet wired into the `/migrate` route;
+  civil-project-test still awaits it. The dev-time graph-Run debugger
+  (`runner/agent.py`) runs the un-transpiled bundle, so it honors the prompt
+  convention and the defaults (default model, `max_turns=8`) but NOT a non-default
+  model or turn budget typed into the emitted agent module — a later mini-lift can
+  restore that.

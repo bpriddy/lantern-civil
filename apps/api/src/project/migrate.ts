@@ -1,3 +1,4 @@
+import { parse } from 'yaml';
 import type { ProjectSource } from './source.js';
 import { CIVIL_DIR, civilYamlPath, compositionPathFor } from './bundle.js';
 
@@ -85,4 +86,134 @@ export function planMigration(source: ProjectSource): MigrationPlan | null {
 /** The document paths a plan needs read before it can be built (github is lazy). */
 export function migrationInputs(source: ProjectSource): string[] {
   return ['civil.yaml', civilYamlPath(source), compositionPathFor(source), ...graphDocs(source)];
+}
+
+// ---------------------------------------------------------------------------
+// agent.yaml dissolution (docs/emitted-code.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Moving a project from the agent.yaml world to the emitted-code world
+ * (docs/emitted-code.md): each agent node's prompt becomes an app asset at
+ * prompts/<node-id>.md, the agent.yaml is deleted, and the referencing graph node
+ * drops its ref (keeping a display name). A pinned model or a non-default turn budget
+ * has no home in the graph any more — under the contract they are literal kwargs in the
+ * emitted code — so the plan surfaces them as warnings rather than dropping them
+ * silently. Planned as reviewable pending changes, exactly like planMigration.
+ */
+export interface AgentDissolutionPlan {
+  /** A prompt file relocated to prompts/<node-id>.md. */
+  moves: DocMove[];
+  /** agent.yaml files, now unreferenced, to delete. */
+  deletes: string[];
+  /** Graph documents rewritten in place (from === to): the agent node drops its ref. */
+  rewrites: DocMove[];
+  /** Config the graph can no longer carry — a pinned model / non-default turn budget. */
+  warnings: string[];
+}
+
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const asObject = (v: unknown): Record<string, unknown> | undefined =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
+
+/** Parse loosely — the agent.yaml is on its way out, so its exact schema is moot. */
+function looseParse(source: string | undefined): Record<string, unknown> | undefined {
+  if (source === undefined) return undefined;
+  try {
+    return asObject(parse(source));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Drop the `ref: <ref>` from an agent node — replaced in place with `name: <name>`
+ * when a name is to be added, else removed whole. A text rewrite, so comments and
+ * layout survive (PRD 6.5). Flow style (`{ ..., ref: x }`) loses the comma-led token;
+ * block style loses the whole `ref:` line.
+ */
+export function dissolveAgentRef(content: string, ref: string, name: string | undefined): string {
+  const val = `['"]?${escapeRe(ref)}['"]?`;
+  if (name !== undefined) {
+    return content.replace(new RegExp(`ref:(\\s*)${val}`), (_m, gap: string) => `name:${gap}${name}`);
+  }
+  const flow = new RegExp(`,\\s*ref:\\s*${val}`);
+  if (flow.test(content)) return content.replace(flow, '');
+  return content.replace(new RegExp(`^[^\\S\\n]*ref:\\s*${val}[^\\S\\n]*\\n`, 'm'), '');
+}
+
+/** The graph documents at the conventional top-level layout, root or civil/. */
+function allGraphDocs(source: ProjectSource): string[] {
+  return source.list().filter((p) => /^(civil\/)?graphs\/[^/]+\.ya?ml$/.test(p));
+}
+
+/**
+ * The dissolution plan, or null when no agent node references an agent.yaml to dissolve.
+ */
+export function planAgentDissolution(source: ProjectSource): AgentDissolutionPlan | null {
+  const moves: DocMove[] = [];
+  const deletes = new Set<string>();
+  const rewrites: DocMove[] = [];
+  const warnings: string[] = [];
+  const movedTo = new Set<string>();
+
+  for (const graphPath of allGraphDocs(source)) {
+    const content = source.read(graphPath);
+    if (content === undefined) continue;
+    const nodes = asObject(looseParse(content)?.['spec'])?.['nodes'];
+    if (!Array.isArray(nodes)) continue;
+
+    let rewritten = content;
+    let changed = false;
+    for (const raw of nodes) {
+      const node = asObject(raw);
+      if (!node || node['type'] !== 'agent' || typeof node['id'] !== 'string') continue;
+      const id = node['id'];
+      const nodeName = node['name'];
+      const nodeHasName = typeof nodeName === 'string' && nodeName.length > 0;
+
+      let name = nodeHasName ? (nodeName as string) : undefined;
+      let promptFile: string | undefined;
+
+      const ref = node['ref'];
+      if (typeof ref === 'string') {
+        deletes.add(ref);
+        const agent = looseParse(source.read(ref));
+        const spec = asObject(agent?.['spec']) ?? {};
+        if (typeof spec['promptFile'] === 'string') promptFile = spec['promptFile'];
+        const metaName = asObject(agent?.['metadata'])?.['name'];
+        if (!name && typeof metaName === 'string') name = metaName;
+        if (spec['model'] !== undefined) {
+          warnings.push(
+            `agent "${id}" pinned model "${String(spec['model'])}"; agent.yaml no longer carries it — set it as the Engine(model=...) literal in the emitted agent module`,
+          );
+        }
+        if (spec['maxTurns'] !== undefined && spec['maxTurns'] !== 8) {
+          warnings.push(
+            `agent "${id}" set maxTurns ${String(spec['maxTurns'])}; edit the max_turns literal in the emitted agent module (the default is 8)`,
+          );
+        }
+        // The node drops its ref, gaining a display name when the agent.yaml named
+        // one and the node did not already carry its own.
+        rewritten = dissolveAgentRef(rewritten, ref, nodeHasName ? undefined : name);
+        changed = true;
+      }
+
+      const target = `prompts/${id}.md`;
+      if (promptFile && promptFile !== target && !movedTo.has(target)) {
+        const promptContent = source.read(promptFile);
+        if (promptContent !== undefined) {
+          moves.push({ from: promptFile, to: target, content: promptContent });
+          movedTo.add(target);
+        }
+      }
+    }
+    if (changed) rewrites.push({ from: graphPath, to: graphPath, content: rewritten });
+  }
+
+  if (moves.length === 0 && deletes.size === 0 && rewrites.length === 0) return null;
+  return { moves, deletes: [...deletes], rewrites, warnings };
 }

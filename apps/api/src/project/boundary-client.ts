@@ -1,6 +1,7 @@
 import { parse } from 'yaml';
-import { zComposition, zGraph } from '@civil/schema';
+import { zComposition, zGraph, type IoNode } from '@civil/schema';
 import { compositionPathFor } from './bundle.js';
+import { discoverContracts, type Contract, type ContractRequest } from './contracts.js';
 import type { ProjectSource } from './source.js';
 
 /**
@@ -21,10 +22,12 @@ import type { ProjectSource } from './source.js';
  * of civil/patterns.md and emitting into it is the next increment; v1 seeds.
  */
 
-// Bump when the generated file's shape changes, so the memo (which folds the client
-// signature into its hash) regenerates instead of replaying an older layout. Mirrors
-// the runner's PROMPT_VERSION for the same reason.
-const CLIENT_VERSION = '1';
+// Bump when the generated file's shape OR the signature format changes, so the memo
+// (which folds the client signature into its hash) regenerates instead of replaying an
+// older layout. Mirrors the runner's PROMPT_VERSION. v2: the signature gained explicit
+// / separators (was a bare ''-join) — a deliberate, one-time re-emission
+// for web-client projects, made intentional by this bump.
+const CLIENT_VERSION = '2';
 
 /** One exposed service, resolved to its request/response types. */
 export interface Endpoint {
@@ -38,6 +41,12 @@ export interface Endpoint {
   inputSchema: unknown | null;
   /** The resolved output JSON Schema, or null when the boundary declares none. */
   outputSchema: unknown | null;
+  /**
+   * The resolved SSE progress-payload JSON Schema for a single typed `kind: progress`
+   * out, or null. Types only: the emitted boundary server does not stream it yet
+   * (docs/boundary-type-sync.md: "The progress channel").
+   */
+  progressSchema: unknown | null;
 }
 
 export interface BoundaryClientPlan {
@@ -79,6 +88,96 @@ const camel = (id: string): string => {
 };
 
 /**
+ * A not-yet-resolved request/response/progress type. A graph io names its schema by
+ * path (`ref`, hydrated in one round); a composite of several io nodes names each
+ * field's path (`object`); a discovered contract carries its schema inline. All three
+ * collapse to a JSON Schema (or null) once the referenced schemas are read.
+ */
+type Resolvable =
+  | { via: 'ref'; ref: string }
+  | { via: 'object'; fields: { key: string; ref: string | null; required: boolean }[] }
+  | { via: 'inline'; schema: unknown | null }
+  | null;
+
+/**
+ * A graph endpoint's io in one direction, resolved into a plan. A single typed io maps
+ * directly to its schema (v1's original behaviour); several synthesize an object — one
+ * field per io node keyed `name ?? id`, or by id for all when those names collide, so
+ * the type stays collision-free. A single untyped io stays null (unknown), as before.
+ * Referenced schema paths are added to `refs` for the one hydration round.
+ */
+function planIo(nodes: IoNode[], refs: Set<string>): Resolvable {
+  if (nodes.length === 0) return null;
+  if (nodes.length === 1) {
+    const only = nodes[0]!;
+    if (!only.schema) return null;
+    refs.add(only.schema);
+    return { via: 'ref', ref: only.schema };
+  }
+  const keys = nodes.map((n) => n.name ?? n.id);
+  const collision = new Set(keys).size !== keys.length;
+  const fields = nodes.map((n) => {
+    if (n.schema) refs.add(n.schema);
+    return { key: collision ? n.id : n.name ?? n.id, ref: n.schema ?? null, required: true };
+  });
+  return { via: 'object', fields };
+}
+
+/**
+ * Fold several io nodes or contract params into one object type: a property per field
+ * in declaration order, keyed as given. A field with no schema becomes `{}`, which
+ * tsType degrades to `unknown` — faithful, never a guess. Only fields flagged required
+ * land in `required`, and it is omitted entirely when none are, so tsType marks the
+ * rest optional.
+ */
+function synthesizeObject(
+  fields: { key: string; schema: unknown | null; required: boolean }[],
+): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const f of fields) {
+    properties[f.key] = f.schema ?? {};
+    if (f.required) required.push(f.key);
+  }
+  return required.length
+    ? { type: 'object', properties, required }
+    : { type: 'object', properties };
+}
+
+/**
+ * A bare, unsubscripted Python container has a knowable JSON kind even when its element
+ * type is not: `dict` is an object, the sequence types an array. Anything else with no
+ * discovered schema stays unknown. (civil_runtime.discover already emits JSON Schema for
+ * str/int/float/bool/bytes/None and for subscripted list/dict, so those never reach here.)
+ */
+const PY_BARE_TYPE_SCHEMA: Record<string, Record<string, unknown>> = {
+  dict: { type: 'object' },
+  list: { type: 'array' },
+  tuple: { type: 'array' },
+  set: { type: 'array' },
+  frozenset: { type: 'array' },
+};
+
+/** A contract port's effective schema: its discovered one, else the bare-container map. */
+const portSchema = (port: {
+  type: string | null;
+  schema: Record<string, unknown> | null;
+}): unknown | null => port.schema ?? (port.type ? PY_BARE_TYPE_SCHEMA[port.type] ?? null : null);
+
+/**
+ * A contract's inputs folded into one request type: a single param maps directly to its
+ * schema; several synthesize an object, each param's `required` driving its field.
+ */
+const contractInput = (contract: Contract): unknown | null => {
+  const params = contract.inputs;
+  if (params.length === 0) return null;
+  if (params.length === 1) return portSchema(params[0]!);
+  return synthesizeObject(
+    params.map((p) => ({ key: p.name, schema: portSchema(p), required: p.required })),
+  );
+};
+
+/**
  * The plan for a project's web boundary client, or null when there is nothing to
  * emit — no web client to emit into, or no api boundary to type against. Only the
  * `api` boundary is a web surface; `mcp` is an agent surface and emits nothing here.
@@ -106,16 +205,38 @@ export async function planBoundaryClient(
   const services = new Map<string, (typeof nodes)[number]>();
   for (const node of nodes) if (node.type === 'service') services.set(node.id, node);
 
-  // Gather the graph refs first so a lazy (GitHub) source hydrates them in one round.
+  // Gather the graph refs and function entrypoints first so a lazy (GitHub) source
+  // hydrates them in one round before anything reads them.
   const graphRefs: string[] = [];
+  const entrypoints: { id: string; file: string }[] = [];
   for (const id of exposed) {
     const svc = services.get(id);
-    if (svc?.type === 'service' && 'graph' in svc.impl) graphRefs.push(svc.impl.graph);
+    if (svc?.type !== 'service') continue;
+    if ('graph' in svc.impl) graphRefs.push(svc.impl.graph);
+    else if ('entrypoint' in svc.impl) entrypoints.push({ id, file: svc.impl.entrypoint });
   }
-  await source.ensure?.(graphRefs);
+  await source.ensure?.([...graphRefs, ...entrypoints.map((e) => e.file)]);
 
+  // A function-backed service declares no schema in the graph; recover its request and
+  // response types from the source via contract discovery (contracts.ts), keyed exactly
+  // like bundle.ts (`${compositionPath}:${nodeId}`). This degrades quietly — no Python
+  // interpreter or a discovery failure leaves the endpoint unknown, never crashing the
+  // plan, exactly as discoverContracts already does.
+  const contractRequests: ContractRequest[] = [];
+  for (const { id, file } of entrypoints) {
+    const src = source.read(file);
+    if (src === undefined) continue;
+    contractRequests.push({ key: `${compositionPath}:${id}`, source: src });
+  }
+  const contracts = await discoverContracts(contractRequests);
+
+  // Each endpoint's request/response/progress resolves in one of two shapes: a graph io
+  // names a schema by path (hydrated in the round below), a discovered contract carries
+  // its schema inline. Both collapse to a JSON Schema (or null) in the resolve pass.
   const endpoints: Endpoint[] = [];
   const schemaRefs = new Set<string>();
+  const plans = new Map<Endpoint, { in: Resolvable; out: Resolvable; progress: Resolvable }>();
+
   for (const id of exposed) {
     const svc = services.get(id);
     const endpoint: Endpoint = {
@@ -124,45 +245,74 @@ export async function planBoundaryClient(
       typeBase: pascal(id),
       inputSchema: null,
       outputSchema: null,
+      progressSchema: null,
     };
-    // A graph-backed service carries its I/O in the graph's io nodes; a function-backed
-    // one declares no schema here, so its types read as unknown until discovery (a
-    // later increment) can recover them. v1 types precisely what the boundary declares.
+    const plan: { in: Resolvable; out: Resolvable; progress: Resolvable } = {
+      in: null,
+      out: null,
+      progress: null,
+    };
+
     if (svc?.type === 'service' && 'graph' in svc.impl) {
+      // A graph-backed service carries its I/O in the graph's io nodes. A single typed
+      // in/out maps directly; several synthesize an object rather than stay unknown.
       const graph = zGraph.safeParse(parseDoc(source, svc.impl.graph));
       if (graph.success) {
-        const io = graph.data.spec.nodes.filter((n) => n.type === 'io');
-        const ins = io.filter((n) => n.type === 'io' && n.direction === 'in' && n.schema);
-        // A progress out is an SSE channel, not the response body — excluded here.
-        const outs = io.filter(
-          (n) => n.type === 'io' && n.direction === 'out' && n.kind !== 'progress' && n.schema,
+        const io = graph.data.spec.nodes.filter(
+          (n): n is Extract<typeof n, { type: 'io' }> => n.type === 'io',
         );
-        // A single typed in/out maps cleanly to one request/response type. Zero or
-        // several is a composite this v1 does not invent — it stays unknown, honestly.
-        if (ins.length === 1 && ins[0]!.type === 'io' && ins[0]!.schema) {
-          schemaRefs.add(ins[0]!.schema);
+        const ins = io.filter((n) => n.direction === 'in');
+        // A progress out is an SSE channel, not the response body — excluded here.
+        const outs = io.filter((n) => n.direction === 'out' && n.kind !== 'progress');
+        // Count ALL progress outs, not just schema-bearing ones: several progress
+        // channels is a composite v1 does not invent, so it stays null even if only
+        // one carries a schema (docs/boundary-type-sync.md: "The progress channel").
+        const progress = io.filter((n) => n.direction === 'out' && n.kind === 'progress');
+        plan.in = planIo(ins, schemaRefs);
+        plan.out = planIo(outs, schemaRefs);
+        // A single typed progress out becomes the SSE payload type; zero, several, or
+        // schema-less stays null.
+        if (progress.length === 1 && progress[0]!.schema) {
+          schemaRefs.add(progress[0]!.schema);
+          plan.progress = { via: 'ref', ref: progress[0]!.schema };
         }
-        if (outs.length === 1 && outs[0]!.type === 'io' && outs[0]!.schema) {
-          schemaRefs.add(outs[0]!.schema);
-        }
-        endpoint.inputSchema = ins.length === 1 ? (ins[0]! as { schema?: string }).schema ?? null : null;
-        endpoint.outputSchema =
-          outs.length === 1 ? (outs[0]! as { schema?: string }).schema ?? null : null;
+      }
+    } else if (svc?.type === 'service' && 'entrypoint' in svc.impl) {
+      // A function-backed service recovers its types from its discovered contract; if
+      // discovery yielded nothing (or an error), the endpoint stays unknown.
+      const result = contracts.get(`${compositionPath}:${id}`);
+      if (result && !('error' in result)) {
+        plan.in = { via: 'inline', schema: contractInput(result) };
+        plan.out = { via: 'inline', schema: portSchema(result.output) };
       }
     }
+
     endpoints.push(endpoint);
+    plans.set(endpoint, plan);
   }
 
-  // Read the referenced schemas (one hydration round), then resolve each endpoint's
-  // schema path to its parsed content.
+  // Read the referenced schemas (one hydration round), then resolve every endpoint's
+  // request, response, and progress plan to its final JSON Schema.
   await source.ensure?.([...schemaRefs]);
   const resolved = new Map<string, unknown | null>();
   for (const ref of schemaRefs) resolved.set(ref, readSchema(source, ref));
+  const finalize = (r: Resolvable): unknown | null => {
+    if (r === null) return null;
+    if (r.via === 'inline') return r.schema;
+    if (r.via === 'ref') return resolved.get(r.ref) ?? null;
+    return synthesizeObject(
+      r.fields.map((f) => ({
+        key: f.key,
+        schema: f.ref === null ? null : resolved.get(f.ref) ?? null,
+        required: f.required,
+      })),
+    );
+  };
   for (const ep of endpoints) {
-    ep.inputSchema =
-      typeof ep.inputSchema === 'string' ? resolved.get(ep.inputSchema) ?? null : null;
-    ep.outputSchema =
-      typeof ep.outputSchema === 'string' ? resolved.get(ep.outputSchema) ?? null : null;
+    const plan = plans.get(ep)!;
+    ep.inputSchema = finalize(plan.in);
+    ep.outputSchema = finalize(plan.out);
+    ep.progressSchema = finalize(plan.progress);
   }
 
   return { clientPath: clientPathFor(source, web.path), endpoints };
@@ -189,13 +339,21 @@ function clientPathFor(source: ProjectSource, webPath: string): string {
  */
 export function clientSignature(plan: BoundaryClientPlan): string {
   const stable = (v: unknown): string => (v === null || v === undefined ? '' : JSON.stringify(v));
+  // Unambiguous separators: control chars cannot appear in ids or JSON, so no two
+  // distinct plans can collide on the joined string. (\u0001/\u0002 replace the original
+  // bare ''-join, a deliberate change made intentional by the CLIENT_VERSION bump.)
+  const FIELD = '\u0001';
+  const PART = '\u0002';
   const parts = [`v${CLIENT_VERSION}`, plan.clientPath];
   for (const ep of plan.endpoints) {
-    parts.push(
-      [ep.name, ep.fn, ep.typeBase, stable(ep.inputSchema), stable(ep.outputSchema)].join(''),
-    );
+    const fields = [ep.name, ep.fn, ep.typeBase, stable(ep.inputSchema), stable(ep.outputSchema)];
+    // Append the progress schema ONLY when present, so adding progress typing to one
+    // endpoint never shifts the fingerprint of endpoints that have none (the join uses
+    // a real separator, so an empty trailing field would still move the hash).
+    if (ep.progressSchema !== null) fields.push(stable(ep.progressSchema));
+    parts.push(fields.join(FIELD));
   }
-  return parts.join('');
+  return parts.join(PART);
 }
 
 // ---- JSON Schema (2020-12 subset) -> TypeScript type expression -------------------
@@ -326,6 +484,13 @@ export function generateBoundaryClient(plan: BoundaryClientPlan): {
   for (const ep of plan.endpoints) {
     out.push(renderType(`${ep.typeBase}Input`, ep.inputSchema));
     out.push(renderType(`${ep.typeBase}Output`, ep.outputSchema));
+    if (ep.progressSchema !== null) {
+      out.push(
+        '// The SSE progress-payload shape only. The emitted boundary server does not',
+        '// stream it yet (docs/boundary-type-sync.md: "The progress channel").',
+        renderType(`${ep.typeBase}Progress`, ep.progressSchema),
+      );
+    }
     out.push('');
   }
 

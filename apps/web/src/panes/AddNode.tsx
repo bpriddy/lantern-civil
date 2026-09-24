@@ -282,24 +282,16 @@ const GRAPH: NodeFamily[] = [
         type: 'agent',
         idBase: 'agent',
         hint: 'An objective, a model, and the tools it may call.',
-        defaults: (id) => ({ ref: `agents/${pyName(id)}/agent.yaml` }),
-        // The objective is the agent (PRD 5); the yaml is only where it points.
-        // Model deliberately unset: absent means the project default (PRD 12).
+        // agent.yaml has dissolved (docs/emitted-code.md): the node carries only
+        // identity and wiring; model and turn budget become literal kwargs in the
+        // emitted code. The only asset to scaffold is the prompt.
+        defaults: () => ({}),
+        // The objective is the agent (PRD 5). It lives at prompts/<node-id>.md by
+        // convention (the raw id) — an app asset, not under civil/, since civil/ is
+        // never read at runtime.
         scaffold: (id) => [
           {
-            path: `agents/${pyName(id)}/agent.yaml`,
-            content: [
-              'apiVersion: civil/v1',
-              'kind: Agent',
-              `metadata: { id: ${id} }`,
-              'spec:',
-              `  promptFile: agents/${pyName(id)}/prompt.md`,
-              '  maxTurns: 8',
-              '',
-            ].join('\n'),
-          },
-          {
-            path: `agents/${pyName(id)}/prompt.md`,
+            path: `prompts/${id}.md`,
             content:
               'Describe the objective. What should this agent accomplish, and how does it know it is done?\n',
           },

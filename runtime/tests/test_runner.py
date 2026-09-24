@@ -44,7 +44,7 @@ GRAPH = {
     "nodes": [
         {"id": "document", "type": "io", "direction": "in"},
         {"id": "normalize", "type": "code", "entrypoint": "steps/normalize.py"},
-        {"id": "classifier", "type": "agent", "ref": "agents/c/agent.yaml"},
+        {"id": "classifier", "type": "agent", "name": "Classifier"},
         {"id": "tools", "type": "code", "include": ["tools/**/*.py"], "entrypoint": "tools/search.py"},
         {"id": "record", "type": "io", "direction": "out"},
     ],

@@ -15,8 +15,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-import yaml
-
 import asyncio
 
 from civil_runtime.discover import discover
@@ -139,14 +137,17 @@ def run_agent(
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise GraphError("model access is not configured (ANTHROPIC_API_KEY)")
 
-    # The agent manifest: objective file, model, turn budget (PRD 6.3).
-    ref = node.raw.get("ref")
-    agent_doc = yaml.safe_load((scratch / ref).read_text()) if ref else {}
-    spec = (agent_doc or {}).get("spec") or {}
-    prompt_file = spec.get("promptFile")
-    system = (scratch / prompt_file).read_text() if prompt_file else "You are a step in a dataflow graph."
-    model = spec.get("model") or DEFAULT_MODEL
-    max_turns = int(spec.get("maxTurns") or 8)
+    # agent.yaml has dissolved (docs/emitted-code.md): model, turn budget, and engine
+    # are now literal kwargs in the EMITTED agent module. This graph-Run debugger runs
+    # the un-transpiled bundle (HEAD + pending), so it has no emitted code to read —
+    # v1 is convention + defaults: the prompt at prompts/<node-id>.md if present, the
+    # default model, a turn budget of 8. LIMITATION: a non-default model or maxTurns
+    # typed into the emitted agent.py is honored by the app session (it runs that real
+    # code) but NOT here — a later mini-lift can restore per-agent config to this path.
+    prompt_path = scratch / "prompts" / f"{node.id}.md"
+    system = prompt_path.read_text() if prompt_path.exists() else "You are a step in a dataflow graph."
+    model = DEFAULT_MODEL
+    max_turns = 8
 
     loaded = _load_tools(scratch, tools)
     by_name = {t.name: t for t in loaded}

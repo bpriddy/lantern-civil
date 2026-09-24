@@ -164,6 +164,24 @@ async function analyzePatterns(
   return patterns;
 }
 
+/**
+ * Agent prompts are human-authored runtime assets (agent.yaml dissolution,
+ * docs/emitted-code.md): the emitted code references `prompts/<id>.md` via _PROMPT_FILE
+ * but never owns it — the inspector's objective editor is what saves it. A `.md` is
+ * neither a civil document nor code context, so the transpiler's collision validator
+ * cannot catch the model emitting one; this does. Dropped from the emission so a prompt
+ * never becomes a maintained (read-only) file, which would 409 the objective editor.
+ */
+const PROMPT_ASSET = /^prompts\/[^/]+\.md$/;
+function stripPromptAssets(output: TranspileOutput): void {
+  for (const path of Object.keys(output.files)) {
+    if (PROMPT_ASSET.test(path)) {
+      delete output.files[path];
+      delete output.roles[path];
+    }
+  }
+}
+
 export interface TranspileFlow {
   output: TranspileOutput;
   cached: boolean;
@@ -257,8 +275,13 @@ export async function transpileProject(
         output.roles[path] = client.roles[path]!;
       }
     }
+    // Never let a prompt asset into the stored memo (and thus the maintained set).
+    stripPromptAssets(output);
     await storeMemo(pool, ownerId, project.id, hash, output);
   }
+  // A memo written before this guard existed may still carry a prompt asset; strip on
+  // the hit path too, so a returned emission is always clean (idempotent on a miss).
+  stripPromptAssets(output);
 
   // Every emitted file is a pending change — reviewed in the diff panel and
   // committed explicitly, exactly like an edit a human made (PRD 7). Written on
@@ -280,7 +303,11 @@ export async function transpileProject(
   // — a delete change when it exists at HEAD so a commit removes it from the repo
   // too, a plain revert when it was only ever pending. Runs after the writes above,
   // and the filter keeps a path this emission still owns from ever being retired.
-  const retired = [...maintained].filter((path) => !(path in output.files)).sort();
+  // A prompt asset is human-authored and never Civil's to retire: even if a pre-guard
+  // memo left one in the maintained set, deleting it would remove the human's prompt.
+  const retired = [...maintained]
+    .filter((path) => !(path in output.files) && !PROMPT_ASSET.test(path))
+    .sort();
   for (const path of retired) {
     if (source.exists(path)) {
       await deletePending(pool, ownerId, project.id, project.defaultBranch, path);

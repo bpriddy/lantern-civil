@@ -114,7 +114,7 @@ scaffolds them once and never regenerates them. Only orchestration-class files
 |---|---|---|
 | `civil/*.yaml` | the canvas (via ops) | committed as edited |
 | handlers, libs, tools | the human (scaffolded once) | never regenerated |
-| agent.yaml, prompt.md | the human, via Civil's inspectors | committed as edited |
+| `prompts/<node-id>.md` | the human, via Civil's inspector | committed as edited |
 | orchestration, boundary server | the transpiler | regenerated; mine-or-theirs on drift |
 | `web/` | the human, any tooling | read-only to Civil (API-call analysis only) |
 

@@ -79,7 +79,7 @@ const graph = [
   node('record', 'io', { direction: 'out' }),
   node('normalize', 'code', { include: [], entrypoint: 'a.py' }),
   node('tools', 'code', { include: [] }),
-  node('classifier', 'agent', { ref: 'agents/c/agent.yaml' }),
+  node('classifier', 'agent', { name: 'Classifier' }),
   node('enrich', 'subgraph', { ref: 'graphs/e.graph.yaml' }),
 ];
 

@@ -19,8 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "runtime" / "src"))
 
-# server's import chain reaches PyYAML (agent, execute), but nothing exercised
-# here parses YAML — a stub keeps this suite runnable under plain python3.
+# server's import chain reaches PyYAML (execute), but nothing exercised here
+# parses YAML — a stub keeps this suite runnable under plain python3.
 sys.modules.setdefault("yaml", types.ModuleType("yaml"))
 
 from agent import DEFAULT_MODEL  # noqa: E402
@@ -427,7 +427,9 @@ def test_golden_doc_pipeline_emission_stays_lawful() -> None:
 
     documents = {
         str(p.relative_to(pipeline)): p.read_text()
-        for pattern in ("civil/*.yaml", "civil/graphs/*.yaml", "agents/*/agent.yaml", "agents/*/prompt.md")
+        # agent.yaml has dissolved (docs/emitted-code.md): prompts are app assets at
+        # prompts/<id>.md, not civil documents.
+        for pattern in ("civil/*.yaml", "civil/graphs/*.yaml", "prompts/*.md")
         for p in pipeline.glob(pattern)
     }
     context = {
@@ -455,6 +457,10 @@ def test_golden_doc_pipeline_emission_stays_lawful() -> None:
     ok("from civil_runtime.engines import Engine" in agent_file, "the agent imports the facade")
     ok('Engine(model="claude-' in agent_file, "the engine literal carries a real model id")
     ok("anthropic" not in agent_file, "no vendor SDK in the golden agent")
+    ok(
+        '_PROMPT_FILE = "prompts/classifier.md"' in agent_file,
+        "the agent loads its prompt from prompts/<node-id>.md (agent.yaml dissolved)",
+    )
 
 
 def test_transpile_meta_carries_the_prompt_version() -> None:
@@ -475,7 +481,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "3", "boundary emission bumped the prompt version")
+        ok(meta["promptVersion"] == "4", "the agent.yaml dissolution bumped the prompt version")
         connection.close()
     finally:
         server.shutdown()

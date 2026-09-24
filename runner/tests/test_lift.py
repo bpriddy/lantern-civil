@@ -35,7 +35,7 @@ spec:
   nodes:
     - { id: document, type: io, direction: in, schema: schemas/document.schema.json }
     - { id: normalize, type: code, entrypoint: src/steps/normalize/main.py }
-    - { id: classifier, type: agent, ref: agents/classifier/agent.yaml }
+    - { id: classifier, type: agent, name: Classifier }
     - { id: enrich, type: subgraph, ref: graphs/enrich.graph.yaml }
     - { id: search_tools, type: code }
     - { id: record, type: io, direction: out, schema: schemas/record.schema.json }

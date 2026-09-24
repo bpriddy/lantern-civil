@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { planMigration, rewriteCivilRefs } from '../dist/project/migrate.js';
+import {
+  dissolveAgentRef,
+  planAgentDissolution,
+  planMigration,
+  rewriteCivilRefs,
+} from '../dist/project/migrate.js';
 
 /**
  * The migration's one subtle piece is the ref rewrite: graph refs and the
@@ -71,4 +76,121 @@ test('planMigration is null when already migrated or not a civil project', () =>
   assert.equal(planMigration(migrated), null, 'already migrated -> null');
   const notCivil = { exists: () => false, list: () => [], read: () => undefined } as never;
   assert.equal(planMigration(notCivil), null, 'no civil.yaml -> null');
+});
+
+// ---------------------------------------------------------------------------
+// agent.yaml dissolution (docs/emitted-code.md)
+// ---------------------------------------------------------------------------
+
+/** A source over a fixed file map — planAgentDissolution only reads list() and read(). */
+const source = (files: Record<string, string>) =>
+  ({
+    list: () => Object.keys(files),
+    read: (p: string) => files[p],
+    exists: (p: string) => p in files,
+    glob: () => [],
+  }) as never;
+
+test('dissolveAgentRef replaces a ref with a name, or drops it whole', () => {
+  const flow = '    - { id: cls, type: agent, ref: agents/cls/agent.yaml }\n';
+  assert.equal(
+    dissolveAgentRef(flow, 'agents/cls/agent.yaml', 'Classifier'),
+    '    - { id: cls, type: agent, name: Classifier }\n',
+  );
+  assert.equal(
+    dissolveAgentRef(flow, 'agents/cls/agent.yaml', undefined),
+    '    - { id: cls, type: agent }\n',
+    'no name: the comma-led ref token is removed',
+  );
+
+  const block = ['    - id: cls', '      type: agent', '      ref: agents/cls/agent.yaml', ''].join('\n');
+  assert.equal(
+    dissolveAgentRef(block, 'agents/cls/agent.yaml', 'Classifier'),
+    ['    - id: cls', '      type: agent', '      name: Classifier', ''].join('\n'),
+  );
+  assert.equal(
+    dissolveAgentRef(block, 'agents/cls/agent.yaml', undefined),
+    ['    - id: cls', '      type: agent', ''].join('\n'),
+    'no name: the whole ref line is removed',
+  );
+});
+
+test('planAgentDissolution moves the prompt, deletes the yaml, and rewrites the node', () => {
+  const graph = `apiVersion: civil/v1
+kind: Graph
+metadata: { id: classify }
+spec:
+  nodes:
+    - { id: normalize, type: code, entrypoint: src/steps/normalize/main.py }
+    - { id: classifier, type: agent, ref: agents/classifier/agent.yaml }
+  edges: []
+layout: { nodes: {} }
+`;
+  const agentYaml = `apiVersion: civil/v1
+kind: Agent
+metadata: { id: classifier, name: Classifier }
+spec:
+  promptFile: agents/classifier/prompt.md
+  maxTurns: 8
+`;
+  const plan = planAgentDissolution(
+    source({
+      'civil/graphs/classify.graph.yaml': graph,
+      'agents/classifier/agent.yaml': agentYaml,
+      'agents/classifier/prompt.md': 'Classify the document.\n',
+    }),
+  )!;
+
+  assert.ok(plan, 'a project with an agent yields a plan');
+  assert.deepEqual(plan.moves, [
+    {
+      from: 'agents/classifier/prompt.md',
+      to: 'prompts/classifier.md',
+      content: 'Classify the document.\n',
+    },
+  ]);
+  assert.deepEqual(plan.deletes, ['agents/classifier/agent.yaml']);
+  assert.deepEqual(plan.warnings, [], 'the default turn budget and absent model raise nothing');
+  assert.equal(plan.rewrites.length, 1);
+  assert.equal(plan.rewrites[0].from, 'civil/graphs/classify.graph.yaml');
+  assert.equal(plan.rewrites[0].to, 'civil/graphs/classify.graph.yaml', 'rewritten in place');
+  assert.match(plan.rewrites[0].content, /{ id: classifier, type: agent, name: Classifier }/);
+  assert.doesNotMatch(plan.rewrites[0].content, /agent\.yaml/, 'the ref is gone');
+  // The code node's entrypoint is untouched.
+  assert.match(plan.rewrites[0].content, /entrypoint: src\/steps\/normalize\/main\.py/);
+});
+
+test('planAgentDissolution warns about a pinned model and non-default maxTurns', () => {
+  const graph = `spec:
+  nodes:
+    - { id: cls, type: agent, ref: agents/cls/agent.yaml }
+`;
+  const agentYaml = `metadata: { id: cls }
+spec:
+  model: claude-opus
+  promptFile: agents/cls/prompt.md
+  maxTurns: 12
+`;
+  const plan = planAgentDissolution(
+    source({
+      'civil/graphs/g.graph.yaml': graph,
+      'agents/cls/agent.yaml': agentYaml,
+      'agents/cls/prompt.md': 'do it\n',
+    }),
+  )!;
+
+  assert.equal(plan.warnings.length, 2, 'both the pinned model and the turn budget are surfaced');
+  assert.match(plan.warnings.join(' '), /claude-opus/);
+  assert.match(plan.warnings.join(' '), /12/);
+  // No name anywhere, so the ref is dropped without adding one.
+  assert.match(plan.rewrites[0].content, /{ id: cls, type: agent }/);
+});
+
+test('planAgentDissolution is null when no agent references a yaml', () => {
+  const plan = planAgentDissolution(
+    source({
+      'civil/graphs/g.graph.yaml': 'spec:\n  nodes:\n    - { id: step, type: code, entrypoint: src/x.py }\n',
+    }),
+  );
+  assert.equal(plan, null);
 });

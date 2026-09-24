@@ -27,7 +27,6 @@ const manifests = [
   'civil/app.yaml',
   'civil/graphs/classify.graph.yaml',
   'civil/graphs/enrich.graph.yaml',
-  'agents/classifier/agent.yaml',
 ];
 
 for (const relative of manifests) {

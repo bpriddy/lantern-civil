@@ -209,3 +209,53 @@ test('a path a prior emission produced and this one drops is retired from pendin
   assert.deepEqual(deleted, ['app/legacy.py'], 'a HEAD file is retired as a delete');
   assert.deepEqual(reverted, ['src/only_pending.py'], 'a pending-only file is reverted');
 });
+
+test('an emitted prompt asset is stripped — never stored, maintained, or saved', async () => {
+  // Agent.yaml dissolution makes prompts/<id>.md a human-owned runtime asset the
+  // inspector edits. The model sometimes emits it anyway; transpileProject must drop
+  // it, or it becomes a maintained (read-only) file and the objective editor 409s on
+  // save. Regression caught in browser testing, 2026-09-23.
+  const runner = await fakeRunner({ 'app/main.py': 'x', 'prompts/classifier.md': 'HUMAN PROMPT' });
+
+  const saved: string[] = [];
+  let stored: Record<string, string> = {};
+  const pool = {
+    query: async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('INSERT INTO transpilations')) {
+        stored = (JSON.parse(params[3] as string) as { files: Record<string, string> }).files;
+        return { rows: [] }; // storeMemo
+      }
+      if (sql.includes('INSERT INTO pending_changes') && sql.includes('RETURNING')) {
+        saved.push(params[3] as string); // savePending
+        return { rows: [{ path: params[3], kind: 'add', content: params[5], updatedAt: 'now' }] };
+      }
+      if (sql.includes('INSERT INTO pending_changes')) return { rows: [] };
+      if (sql.includes('DELETE FROM pending_changes')) return { rowCount: 1 };
+      if (sql.includes('FROM transpilations') && sql.includes('input_hash')) return { rows: [] };
+      if (sql.includes('FROM transpilations')) return { rows: [] }; // maintainedPaths: empty
+      if (sql.includes('FROM projects') && sql.includes('patterns_stale')) {
+        return { rows: [{ stale: false, head: null, headSha: null }] };
+      }
+      return { rows: [] };
+    },
+  };
+
+  const source = { exists: () => false };
+  const overlay = sourceOf(project);
+  const deps = { config: { runnerUrl: runner.url }, pool };
+
+  const flow = await transpileProject(
+    deps as never,
+    'owner',
+    { id: 'proj', defaultBranch: 'main' } as never,
+    source as never,
+    overlay as never,
+  );
+
+  runner.close();
+
+  assert.ok('app/main.py' in flow.output.files, 'ordinary emitted code survives');
+  assert.ok(!('prompts/classifier.md' in flow.output.files), 'the prompt asset is stripped from the emission');
+  assert.ok(!('prompts/classifier.md' in stored), 'the prompt asset never enters the stored memo, so it is never maintained');
+  assert.ok(!saved.includes('prompts/classifier.md'), 'the prompt asset is never saved as a pending change');
+});
