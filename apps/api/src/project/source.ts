@@ -30,7 +30,11 @@ export class LocalSource implements ProjectSource {
   readonly root: string;
 
   constructor(root: string) {
-    this.root = path.resolve(root);
+    // realpath the root so a symlinked ancestor in its path (e.g. macOS /var -> /private/var)
+    // does not make every contained read fail the containment check below — `resolve()`
+    // realpaths its targets, so the root it compares against must be canonical too.
+    const resolved = path.resolve(root);
+    this.root = fs.existsSync(resolved) ? fs.realpathSync(resolved) : resolved;
   }
 
   /**

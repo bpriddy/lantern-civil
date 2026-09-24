@@ -69,6 +69,14 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/lift":
             self._lift()
             return
+        # Drain the request body before replying: a POST with a body to an unknown
+        # route otherwise leaves unread bytes in the socket, and closing the
+        # connection over them resets it (the client sees a ConnectionResetError
+        # instead of the 404). Matches the body reads the real routes already do.
+        try:
+            self.rfile.read(int(self.headers.get("content-length") or 0))
+        except (ValueError, OSError):
+            pass
         self.send_response(404)
         self.end_headers()
 
