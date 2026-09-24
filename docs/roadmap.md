@@ -44,13 +44,18 @@ F — the app actually runs and is trustworthy at both altitudes.
 **The burn-down, in priority order:**
 
 - **P1 — The graph → code loop is tight, trustworthy, propulsive** *(A + E).*
-  Emission reliability (kill the transient malformed-`emit_files` flakiness — the loop
-  randomly fails until this is fixed); transpiler hardening (generative → templates,
-  tighten determinism); agent code analysis always-on and seamless (normal, not a
-  special trigger); complete the emission surfaces (multi-vendor engines, boundary
-  type-sync follow-ups — function-backed/composite/progress typing, call-site
-  adoption); hot re-transpile + stale/superseded-emission cleanup. (agent.yaml
-  dissolution has landed: config is code kwargs, prompts are prompts/<node-id>.md.)
+  DONE (2026-09-23): emission reliability (recover the model's double-encoded
+  `emit_files`); multi-vendor engines (an OpenAI-compatible adapter for openai/ollama/
+  vllm behind the Engine facade, Claude default); boundary type-sync follow-ups
+  (function-backed types via contract discovery, composite I/O, progress typing);
+  agent.yaml dissolution (config is code kwargs, agent node is {id,type,name}, prompts
+  at prompts/<node-id>.md) — and the `/migrate` route now dissolves legacy agent.yaml
+  alongside the civil/ move, so existing projects modernize in one click. STILL OPEN:
+  transpiler hardening (generative → templates, tighten determinism); agent code
+  analysis always-on and seamless (normal, not a special trigger); hot re-transpile +
+  stale/superseded-emission cleanup; call-site adoption for the boundary client.
+  Testing: an app-wide coverage pass landed (2026-09-23) — schema/api/web/runner gaps
+  filled within the existing node:test + python script styles.
 - **P2 — Building & running at altitude is rich and end-to-end** *(F + top-down
   authorship).* Harness authoring / attaching; app testing (project's own tests
   in-session, agent testing as normal); observability in dev end-to-end (trace viewer,
