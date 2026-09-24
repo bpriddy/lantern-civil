@@ -28,7 +28,12 @@ import { RunnerError, transpileProject } from './transpile-routes.js';
 import { createHash } from 'node:crypto';
 import { emittedHistory, maintainedPaths, markPatternsStale } from '../project/transpile.js';
 import { CIVIL_DIR } from '../project/bundle.js';
-import { migrationInputs, planMigration } from '../project/migrate.js';
+import {
+  dissolutionInputs,
+  migrationInputs,
+  planAgentDissolution,
+  planMigration,
+} from '../project/migrate.js';
 import { type ProjectSource } from '../project/source.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { GitHubSource } from '../github/source.js';
@@ -581,40 +586,75 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const overlay = new OverlaySource(base, pending);
     await overlay.ensure?.(migrationInputs(overlay));
 
-    const plan = planMigration(overlay);
-    if (!plan) {
+    // Two independent modernizations, both landed as reviewable pending changes: the
+    // civil/ document move (delta 19) and agent.yaml dissolution (docs/emitted-code.md).
+    // A legacy project may need either or both. Both rewrite graph docs, so dissolution
+    // runs against the state the civil/ move produced — hence the re-read between them.
+    const write = (path: string, content: string): Promise<unknown> =>
+      savePending(pool, {
+        ownerId: request.identity.id,
+        projectId: project.id,
+        branch: project.defaultBranch,
+        path,
+        content,
+        existsAtHead: base.exists(path),
+      });
+    // Retire an original: delete it when committed, drop the pending row when it was
+    // only ever pending (a revert leaves nothing behind).
+    const retire = (path: string): Promise<unknown> =>
+      base.exists(path)
+        ? deletePending(pool, request.identity.id, project.id, project.defaultBranch, path)
+        : revertPending(pool, request.identity.id, project.id, project.defaultBranch, path);
+
+    const civilPlan = planMigration(overlay);
+    const moved: { from: string; to: string }[] = [];
+    for (const move of civilPlan?.moves ?? []) {
+      await write(move.to, move.content);
+      await retire(move.from);
+      moved.push({ from: move.from, to: move.to });
+    }
+
+    // Re-read so dissolution sees the just-moved civil/ graph docs (a graph carries both
+    // the civil/ ref rewrite and the dropped agent ref in the end).
+    const dissolveOverlay = moved.length
+      ? new OverlaySource(
+          base,
+          await listPending(pool, request.identity.id, project.id, project.defaultBranch),
+        )
+      : overlay;
+    await dissolveOverlay.ensure?.(dissolutionInputs(dissolveOverlay));
+    const agentPlan = planAgentDissolution(dissolveOverlay);
+    if (agentPlan) {
+      for (const move of agentPlan.moves) {
+        await write(move.to, move.content);
+        await retire(move.from);
+      }
+      for (const path of agentPlan.deletes) await retire(path);
+      for (const rw of agentPlan.rewrites) await write(rw.to, rw.content);
+    }
+
+    if (!civilPlan && !agentPlan) {
       return reply.code(409).send({
         error: 'nothing_to_migrate',
         message: overlay.exists(`${CIVIL_DIR}/civil.yaml`)
-          ? 'This project already keeps its documents in civil/.'
+          ? 'This project already keeps its documents in civil/ and its agents are dissolved.'
           : 'This repository is not a Civil project (no civil.yaml).',
       });
     }
 
-    const moved: { from: string; to: string }[] = [];
-    for (const move of plan.moves) {
-      await savePending(pool, {
-        ownerId: request.identity.id,
-        projectId: project.id,
-        branch: project.defaultBranch,
-        path: move.to,
-        content: move.content,
-        existsAtHead: base.exists(move.to),
-      });
-      // Retire the root original: a delete when it is committed, a dropped pending
-      // row when it was only ever pending (revert leaves nothing behind at the root).
-      if (base.exists(move.from)) {
-        await deletePending(pool, request.identity.id, project.id, project.defaultBranch, move.from);
-      } else {
-        await revertPending(pool, request.identity.id, project.id, project.defaultBranch, move.from);
-      }
-      moved.push({ from: move.from, to: move.to });
-    }
-
-    request.log.info({ projectId: project.id, moved: moved.length }, 'migrated to civil/');
+    const dissolved = agentPlan?.rewrites.length ?? 0;
+    const warnings = agentPlan?.warnings ?? [];
+    const parts: string[] = [];
+    if (moved.length) parts.push(`moved ${moved.length} document(s) into civil/`);
+    if (dissolved) parts.push(`dissolved agent.yaml in ${dissolved} graph(s)`);
+    request.log.info({ projectId: project.id, moved: moved.length, dissolved }, 'migrated');
     return {
       moved,
-      summary: `Moved ${moved.length} document(s) into civil/ as pending changes.`,
+      dissolved,
+      warnings,
+      summary:
+        `Migrated: ${parts.join('; ')}, as pending changes.` +
+        (warnings.length ? ` ${warnings.length} warning(s) — see the emitted agent code.` : ''),
     };
   });
 

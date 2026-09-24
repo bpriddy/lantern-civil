@@ -194,3 +194,45 @@ test('planAgentDissolution is null when no agent references a yaml', () => {
   );
   assert.equal(plan, null);
 });
+
+test('civil/ migration then dissolution compose on the same graph (the /migrate sequence)', () => {
+  // A legacy project with an agent. The route runs the civil/ move first, then
+  // dissolution against that result; this checks both rewrites land on the one graph.
+  const legacy: Record<string, string> = {
+    'civil.yaml':
+      'apiVersion: civil/v1\nkind: Project\nmetadata: { id: p }\nspec: { composition: app.yaml }\n',
+    'app.yaml':
+      'apiVersion: civil/v1\nkind: Composition\nmetadata: { id: p }\nspec:\n  nodes:\n    - { id: svc, type: service, impl: { graph: graphs/classify.graph.yaml } }\n',
+    'graphs/classify.graph.yaml':
+      'apiVersion: civil/v1\nkind: Graph\nmetadata: { id: classify }\nspec:\n  nodes:\n    - { id: cls, type: agent, ref: agents/cls/agent.yaml }\n    - { id: sub, type: subgraph, ref: graphs/enrich.graph.yaml }\n',
+    'graphs/enrich.graph.yaml':
+      'apiVersion: civil/v1\nkind: Graph\nmetadata: { id: enrich }\nspec: { nodes: [] }\n',
+    'agents/cls/agent.yaml': 'metadata: { id: cls, name: Classifier }\nspec: { promptFile: agents/cls/prompt.md }\n',
+    'agents/cls/prompt.md': 'classify\n',
+  };
+
+  // Phase 1 — the civil/ move, applied to build the post-move file map.
+  const civilPlan = planMigration(source(legacy))!;
+  assert.ok(civilPlan, 'a legacy project migrates');
+  const afterMove: Record<string, string> = { ...legacy };
+  for (const m of civilPlan.moves) {
+    delete afterMove[m.from];
+    afterMove[m.to] = m.content;
+  }
+  const movedGraph = afterMove['civil/graphs/classify.graph.yaml']!;
+  assert.match(movedGraph, /ref: civil\/graphs\/enrich\.graph\.yaml/, 'the move prefixes the subgraph ref');
+  assert.match(movedGraph, /ref: agents\/cls\/agent\.yaml/, 'the move leaves the agent ref alone');
+
+  // Phase 2 — dissolution on the moved state.
+  const agentPlan = planAgentDissolution(source(afterMove))!;
+  assert.ok(agentPlan, 'dissolution finds the agent in the moved graph');
+  assert.deepEqual(agentPlan.deletes, ['agents/cls/agent.yaml']);
+  assert.deepEqual(agentPlan.moves, [
+    { from: 'agents/cls/prompt.md', to: 'prompts/cls.md', content: 'classify\n' },
+  ]);
+  const rw = agentPlan.rewrites.find((r) => r.to === 'civil/graphs/classify.graph.yaml')!;
+  assert.ok(rw, 'the moved graph is what gets rewritten');
+  assert.match(rw.content, /{ id: cls, type: agent, name: Classifier }/, 'agent ref dropped, name kept');
+  assert.match(rw.content, /ref: civil\/graphs\/enrich\.graph\.yaml/, 'the civil/ subgraph ref survives');
+  assert.doesNotMatch(rw.content, /agent\.yaml/, 'no agent.yaml ref remains anywhere in the graph');
+});

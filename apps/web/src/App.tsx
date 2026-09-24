@@ -752,9 +752,10 @@ function Workspace({ me }: { me: Me }) {
   const doMigrate = useCallback(async () => {
     if (!activeId) return;
     try {
-      const { moved, summary } = await migrateProject(activeId);
+      const { moved, summary, warnings } = await migrateProject(activeId);
       await refresh();
-      report({ title: 'Migrate', detail: summary || `Moved ${moved.length} document(s) into civil/.` });
+      const detail = summary || `Moved ${moved.length} document(s) into civil/.`;
+      report({ title: 'Migrate', detail: warnings.length ? `${detail}\n${warnings.join('\n')}` : detail });
     } catch (error) {
       report({ title: 'Migrate', detail: (error as Error).message, refused: true });
     }

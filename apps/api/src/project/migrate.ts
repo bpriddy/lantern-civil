@@ -88,6 +88,21 @@ export function migrationInputs(source: ProjectSource): string[] {
   return ['civil.yaml', civilYamlPath(source), compositionPathFor(source), ...graphDocs(source)];
 }
 
+/**
+ * The paths planAgentDissolution reads — graph docs (to find agent nodes), plus every
+ * agents/ and prompts/ file — ensured up front so a lazy (github) source has them local.
+ */
+export function dissolutionInputs(source: ProjectSource): string[] {
+  return source
+    .list()
+    .filter(
+      (p) =>
+        /^(civil\/)?graphs\/[^/]+\.ya?ml$/.test(p) ||
+        p.startsWith('agents/') ||
+        p.startsWith('prompts/'),
+    );
+}
+
 // ---------------------------------------------------------------------------
 // agent.yaml dissolution (docs/emitted-code.md)
 // ---------------------------------------------------------------------------
