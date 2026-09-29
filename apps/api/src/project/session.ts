@@ -132,16 +132,47 @@ export function deriveProcesses(
   const processes: ProcessSpec[] = [];
   const previews: SessionProcess[] = [];
   const boundaries: SessionProcess[] = [];
-  let nextPort = sessionPortBase(projectId);
+  const base = sessionPortBase(projectId);
 
   const clients = nodes
     .filter((n) => n.type === 'client' && n.client === 'web' && Boolean(n.dev))
     .sort((a, b) => byString(a.id, b.id));
 
-  for (const node of clients) {
-    if (node.type !== 'client' || !node.dev) continue; // narrows for the compiler
-    const port = nextPort;
-    nextPort += 1;
+  const serverFiles = Object.keys(roles)
+    .filter((path) => roles[path] === 'boundary-server')
+    .sort(byString);
+
+  // One emitted server and one api boundary pair unambiguously; any other count
+  // falls back to the file stem, because a guessed pairing would put the wrong
+  // node's name on a process log.
+  const apiBoundaryIds = nodes
+    .filter((n) => n.type === 'boundary' && n.boundary === 'api')
+    .map((n) => n.id);
+
+  // Clients take the first ports, boundary servers the ones after. Known up front
+  // because each side is told where the other is: the web client reaches the api
+  // through VITE_API_URL (the generated boundary client reads it), and the server
+  // admits the client's origin through CORS_ORIGINS. Without both, a fetch from the
+  // preview goes to the dev server and 404s. Only an api server the pairing can
+  // name is advertised — a guessed one would send the client to the wrong process.
+  const clientPort = (i: number) => base + i;
+  const serverPort = (j: number) => base + clients.length + j;
+  const apiServer =
+    serverFiles.length === 1
+      ? 0
+      : apiBoundaryIds.length === 1
+        ? serverFiles.findIndex((path) => stem(path) === apiBoundaryIds[0])
+        : -1;
+  const apiUrl = apiServer >= 0 ? `http://127.0.0.1:${serverPort(apiServer)}` : undefined;
+  // Both spellings of loopback: the preview uses 127.0.0.1, a developer's own
+  // browser tab as often says localhost.
+  const corsOrigins = clients
+    .flatMap((_, i) => [`http://127.0.0.1:${clientPort(i)}`, `http://localhost:${clientPort(i)}`])
+    .join(',');
+
+  clients.forEach((node, i) => {
+    if (node.type !== 'client' || !node.dev) return; // narrows for the compiler
+    const port = clientPort(i);
     const dir = node.path.replace(/\/+$/, '');
     // npm install only when there is a package.json to install from — an empty
     // setup step would just spend a minute saying "up to date" in the log. The
@@ -156,25 +187,14 @@ export function deriveProcesses(
       // Through a shell so a dev script stays a script ("vite", "next dev -p 3000"),
       // exactly as package.json would run it.
       cmd: ['sh', '-c', node.dev],
+      ...(apiUrl ? { env: { VITE_API_URL: apiUrl } } : {}),
       port,
     });
     previews.push({ name: node.id, port });
-  }
+  });
 
-  const serverFiles = Object.keys(roles)
-    .filter((path) => roles[path] === 'boundary-server')
-    .sort(byString);
-
-  // One emitted server and one api boundary pair unambiguously; any other count
-  // falls back to the file stem, because a guessed pairing would put the wrong
-  // node's name on a process log.
-  const apiBoundaryIds = nodes
-    .filter((n) => n.type === 'boundary' && n.boundary === 'api')
-    .map((n) => n.id);
-
-  for (const path of serverFiles) {
-    const port = nextPort;
-    nextPort += 1;
+  serverFiles.forEach((path, j) => {
+    const port = serverPort(j);
     const name =
       serverFiles.length === 1 && apiBoundaryIds.length === 1 ? apiBoundaryIds[0]! : stem(path);
     processes.push({
@@ -182,11 +202,11 @@ export function deriveProcesses(
       cwd: '.',
       cmd: [SESSION_PYTHON, path],
       // The emitted server imports the app's own modules from the workspace root.
-      env: { PYTHONPATH: '.' },
+      env: { PYTHONPATH: '.', ...(corsOrigins ? { CORS_ORIGINS: corsOrigins } : {}) },
       port,
     });
     boundaries.push({ name, port });
-  }
+  });
 
   return { processes, previews, boundaries };
 }

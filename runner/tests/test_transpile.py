@@ -144,10 +144,17 @@ BOUNDARY = """\
 import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from src.classify import run as classify_run
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o for o in os.environ.get("CORS_ORIGINS", "").split(",") if o],
+    allow_methods=["POST"],
+    allow_headers=["content-type"],
+)
 
 
 @app.post("/classify")
@@ -182,6 +189,7 @@ def test_transpile_parses_the_forced_tool_call() -> None:
     ok([t["name"] for t in call["tools"]] == ["emit_files"], "emit_files is the only tool")
     ok("boundary-server" in call["system"] and "FastAPI" in call["system"], "the boundary rule rides the system prompt")
     ok('int(os.environ["PORT"])' in call["system"], "the PORT convention rides the system prompt")
+    ok("CORS_ORIGINS" in call["system"], "the CORS convention rides the system prompt")
     prompt = call["messages"][0]["content"]
     ok("## repo patterns" in prompt, "the patterns markdown rides verbatim")
     ok("The repo's own conventions — follow them" in prompt, "and is marked as the repo's own")
@@ -234,6 +242,22 @@ def test_validators_pass_a_lawful_boundary_emission() -> None:
     roles = {"src/classify.py": "orchestration", "src/server.py": "boundary-server"}
     issues = validate(files, documents, CONTEXT, roles)
     ok(issues == [], f"a lawful boundary emission has no issues: {issues}")
+
+
+def test_validator_requires_the_boundary_to_read_cors_origins() -> None:
+    print("test_validator_requires_the_boundary_to_read_cors_origins")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": COMPOSITION})
+    closed = "\n".join(
+        line for line in BOUNDARY.splitlines()
+        if "CORS" not in line and "allow_" not in line and line != "app.add_middleware(" and line != ")"
+    ) + "\n"
+    roles = {"src/classify.py": "orchestration", "src/server.py": "boundary-server"}
+    issues = validate({"src/classify.py": GOOD, "src/server.py": closed}, documents, CONTEXT, roles)
+    ok(any("CORS_ORIGINS" in i for i in issues), "a boundary that ignores CORS_ORIGINS is caught")
+    # A comment naming the variable is not reading it.
+    commented = closed.replace("app = FastAPI()", "# CORS_ORIGINS someday\napp = FastAPI()")
+    issues = validate({"src/classify.py": GOOD, "src/server.py": commented}, documents, CONTEXT, roles)
+    ok(any("CORS_ORIGINS" in i for i in issues), "a comment does not satisfy the rule")
 
 
 def test_validator_requires_a_boundary_server() -> None:
@@ -481,7 +505,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "4", "the agent.yaml dissolution bumped the prompt version")
+        ok(meta["promptVersion"] == "5", "the boundary CORS rule bumped the prompt version")
         connection.close()
     finally:
         server.shutdown()

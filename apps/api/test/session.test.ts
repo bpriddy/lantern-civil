@@ -105,12 +105,40 @@ test('a boundary-server file becomes a $CIVIL_PYTHON process named after the api
     name: 'public-api', // one server, one api boundary: the pairing is unambiguous
     cwd: '.',
     cmd: ['$CIVIL_PYTHON', 'src/server.py'],
-    env: { PYTHONPATH: '.' },
+    env: {
+      PYTHONPATH: '.',
+      // Every client's origin, both loopback spellings, so the preview's fetch is admitted.
+      CORS_ORIGINS: [PORT_BASE, PORT_BASE + 1]
+        .flatMap((port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`])
+        .join(','),
+    },
     port: PORT_BASE + 2, // ports continue after the two clients
   });
+  // And each client is told where the api is — what the generated boundary client reads.
+  for (const name of ['alpha', 'zeta']) {
+    const client = derived.processes.find((p) => p.name === name);
+    assert.deepEqual(client?.env, { VITE_API_URL: `http://127.0.0.1:${PORT_BASE + 2}` });
+  }
   assert.deepEqual(derived.boundaries, [{ name: 'public-api', port: PORT_BASE + 2 }]);
   // Only boundary-server files run; orchestration and agent files are imported, not started.
   assert.equal(derived.processes.length, 3);
+});
+
+test('with several servers, clients reach only the one named for the api boundary', () => {
+  const roles = { 'src/mcp_server.py': 'boundary-server', 'src/public-api.py': 'boundary-server' };
+  const derived = deriveProcesses(PROJECT_ID, composition([...clients, ...boundaryNodes]) as never, {}, roles as never);
+  const alpha = derived.processes.find((p) => p.name === 'alpha');
+  // Servers sort as mcp_server, public-api → the api server is the second one.
+  assert.deepEqual(alpha?.env, { VITE_API_URL: `http://127.0.0.1:${PORT_BASE + 3}` });
+});
+
+test('an unpairable server is not advertised to clients, and no clients means no CORS', () => {
+  const roles = { 'src/a.py': 'boundary-server', 'src/b.py': 'boundary-server' };
+  const derived = deriveProcesses(PROJECT_ID, composition([...clients, ...boundaryNodes]) as never, {}, roles as never);
+  assert.equal(derived.processes.find((p) => p.name === 'alpha')?.env, undefined);
+
+  const bare = deriveProcesses(PROJECT_ID, composition(boundaryNodes) as never, {}, { 'src/server.py': 'boundary-server' } as never);
+  assert.deepEqual(bare.processes[0]?.env, { PYTHONPATH: '.' });
 });
 
 test('two boundary servers fall back to file stems rather than guess a pairing', () => {

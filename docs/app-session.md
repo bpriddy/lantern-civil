@@ -101,6 +101,15 @@ logs, destroy) and substrates are adapters behind it, the same move as
 - **The PORT convention**: a client node's dev script must bind the port the
   session hands it in `$PORT` (the Heroku convention). This is the one thing
   Civil asks of a frontend's tooling.
+- **The address convention** (2026-09-29): the client and its api boundary run
+  on different ports, so each is told where the other is. A web client gets
+  `VITE_API_URL` — the api server's address, which the generated boundary client
+  reads — and each boundary server gets `CORS_ORIGINS`, the clients' origins
+  (comma-separated). The transpiler's contract requires the emitted server to
+  admit exactly those origins, never a wildcard, and a validator refuses a
+  boundary server that never reads the variable. Without this pair a fetch from
+  the preview reached the vite dev server and 404'd. Both are ordinary env
+  configuration, so a deployed app sets them the same way.
 
 ## Hot re-transpile and the emission lifecycle — built 2026-08-22
 

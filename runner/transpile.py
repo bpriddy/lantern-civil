@@ -79,7 +79,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "5"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -112,7 +112,11 @@ the api kind into ONE boundary server file: a FastAPI app exposing every \
 entry in the node's exposes list as POST /<name> — JSON body in, JSON result \
 out — importing and calling the real service function or graph run() from \
 the other emitted and context files. The file ends with a __main__ block \
-running uvicorn on host 127.0.0.1 and port int(os.environ["PORT"]). fastapi \
+running uvicorn on host 127.0.0.1 and port int(os.environ["PORT"]). The web \
+client calls the server from another origin, so the server admits the \
+origins listed in the CORS_ORIGINS environment variable — comma-separated, \
+unset or empty meaning none — through fastapi's CORSMiddleware; never a \
+wildcard. fastapi \
 and uvicorn are the app's own dependencies — the strong-engineer default \
 when the repo shows no server pattern of its own; a pattern the repo does \
 show wins. mcp boundaries emit nothing today.
@@ -200,6 +204,16 @@ def _is_vendor_module(module: str) -> bool:
     google.cloud is not."""
     parts = module.split(".")
     return any(".".join(parts[: i + 1]) in VENDOR_MODULES for i in range(len(parts)))
+
+
+def _reads_cors_origins(tree: ast.Module) -> bool:
+    """Whether the file names the CORS_ORIGINS variable. The name is the contract
+    the session keeps (it sets the variable to the preview's origins); how the
+    server admits them is the repo's pattern, so only the name is checked."""
+    return any(
+        isinstance(node, ast.Constant) and node.value == "CORS_ORIGINS"
+        for node in ast.walk(tree)
+    )
 
 
 def _vendor_imports(tree: ast.Module) -> list[str]:
@@ -291,6 +305,11 @@ def validate(
                 "module level with literal kwargs"
             )
         if roles.get(path, "other") == "boundary-server":
+            if not _reads_cors_origins(tree):
+                issues.append(
+                    f"{path}: the boundary server never reads CORS_ORIGINS — the "
+                    "web client calls it cross-origin and every request would be refused"
+                )
             # Transport, not orchestration: the boundary file has no run(),
             # so the straight-line rule has nothing to hold it to — and a
             # run() it did define would not be a graph's.
