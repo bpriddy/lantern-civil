@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import {
   ContentTooLargeError,
   MAX_INLINE_BYTES,
-  clearPending,
+  clearCommitted,
   deletePending,
   listPending,
   revertPending,
@@ -130,7 +130,26 @@ test('savePending never refreshes kind on conflict, so a pending add stays an ad
     content: 'y',
     existsAtHead: false,
   });
-  assert.match(pool.calls[0]!.sql, /kind = pending_changes\.kind/, 'kind is preserved across re-saves, not re-derived');
+  assert.match(
+    pool.calls[0]!.sql,
+    /ELSE pending_changes\.kind END/,
+    'kind is preserved across re-saves, not re-derived',
+  );
+});
+
+test('savePending over a pending delete takes the fresh kind, so the row stays a legal shape', async () => {
+  const pool = mockPool({ rows: [{ path: 'x' }] });
+  await savePending(pool as never, {
+    ownerId: 'o',
+    projectId: 'p',
+    branch: 'main',
+    path: 'x',
+    content: 'y',
+    existsAtHead: true,
+  });
+  // A 'delete' row must have NULL content (pending_changes_content_shape); keeping
+  // the kind while writing content would fail the CHECK and surface as a 500.
+  assert.match(pool.calls[0]!.sql, /WHEN pending_changes\.kind = 'delete'\s+THEN EXCLUDED\.kind/);
 });
 
 test('savePending rejects content over MAX_INLINE_BYTES before ever touching the pool', async () => {
@@ -195,15 +214,39 @@ test('revertPending treats a missing rowCount as zero rather than throwing', asy
   assert.equal(result, false);
 });
 
-// --- clearPending (same delete-count shape as revertPending, one branch wide) ---
+// --- clearCommitted -------------------------------------------------------------
 
-test('clearPending deletes every pending row for a branch and reports the count', async () => {
-  const pool = mockPool({ rowCount: 3 });
+test('clearCommitted deletes only rows still holding exactly what was committed', async () => {
+  const pool = mockPool({ rowCount: 2 });
+  const committed = [
+    { path: 'a.py', kind: 'modify' as const, content: 'A', contentRef: null },
+    { path: 'gone.py', kind: 'delete' as const, content: null, contentRef: null },
+  ];
 
-  const result = await clearPending(pool as never, 'owner-1', 'proj-1', 'main');
+  const result = await clearCommitted(pool as never, 'owner-1', 'proj-1', 'main', committed);
 
   const { sql, params } = pool.calls[0]!;
-  assert.match(sql, /DELETE FROM pending_changes WHERE owner_id = \$1 AND project_id = \$2 AND branch = \$3/);
-  assert.deepEqual(params, ['owner-1', 'proj-1', 'main']);
-  assert.equal(result, 3);
+  assert.match(sql, /DELETE FROM pending_changes p/);
+  assert.match(sql, /p\.owner_id = \$1 AND p\.project_id = \$2 AND p\.branch = \$3/);
+  // An edit saved mid-commit changes content in place; matching on it is what spares it.
+  assert.match(sql, /p\.kind = c\.kind/);
+  assert.match(sql, /p\.content IS NOT DISTINCT FROM c\.content/);
+  assert.match(sql, /p\.content_ref IS NOT DISTINCT FROM c\.content_ref/);
+  assert.deepEqual(params, [
+    'owner-1',
+    'proj-1',
+    'main',
+    ['a.py', 'gone.py'],
+    ['modify', 'delete'],
+    ['A', null],
+    [null, null],
+  ]);
+  assert.equal(result, 2);
+});
+
+test('clearCommitted with nothing committed issues no query', async () => {
+  const pool = mockPool({ rowCount: 5 });
+  const result = await clearCommitted(pool as never, 'owner-1', 'proj-1', 'main', []);
+  assert.equal(pool.calls.length, 0);
+  assert.equal(result, 0);
 });

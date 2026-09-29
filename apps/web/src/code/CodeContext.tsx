@@ -119,17 +119,20 @@ export function CodeContext({
     const file = open.get(path);
     if (!file || file.draft === file.saved) return;
 
+    // What goes over the wire is what is saved. Typing continues while the PUT is in
+    // flight; marking the live draft saved would hide those keystrokes as clean.
+    const sent = file.draft;
     setSaving(true);
     setError(null);
     try {
-      await saveFile(id, path, file.draft);
+      await saveFile(id, path, sent);
       setTabs((prev) => {
         const next = new Map(prev);
         const entry = next.get(path);
-        if (entry) next.set(path, { ...entry, saved: entry.draft });
+        if (entry) next.set(path, { ...entry, saved: sent });
         return next;
       });
-      onPendingChanged(path.split('/').pop());
+      onPendingChanged(path);
     } catch (e) {
       setError((e as Error).message);
     } finally {

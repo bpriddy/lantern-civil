@@ -1382,7 +1382,10 @@ function Workspace({ me }: { me: Me }) {
                   setUndoDepth(undoStack.current.length);
                 }
                 void refresh();
-                if (saved) report({ chord: '⌘S', title: 'Save', detail: `${saved} saved as a pending change.` });
+                if (saved) {
+                  const name = saved.split('/').pop();
+                  report({ chord: '⌘S', title: 'Save', detail: `${name} saved as a pending change.` });
+                }
               }}
             />
           </Suspense>

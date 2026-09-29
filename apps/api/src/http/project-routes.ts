@@ -8,7 +8,7 @@ import { loadBundle } from '../project/bundle.js';
 import { OverlaySource } from '../project/overlay.js';
 import {
   ContentTooLargeError,
-  clearPending,
+  clearCommitted,
   deletePending,
   listPending,
   revertPending,
@@ -411,8 +411,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       });
 
       // Only after the ref moved. Clearing first would lose the edits if the commit
-      // failed, and these rows are the only copy.
-      await clearPending(pool, request.identity.id, project.id, project.defaultBranch);
+      // failed, and these rows are the only copy. Only the rows as committed: an edit
+      // saved while the commit was in flight is still the only copy of itself.
+      await clearCommitted(pool, request.identity.id, project.id, project.defaultBranch, toCommit);
 
       // Civil is now editing against what it just wrote. Without this the next read
       // would serve the tree from before the commit.

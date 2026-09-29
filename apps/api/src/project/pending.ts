@@ -88,7 +88,11 @@ export async function savePending(pool: pg.Pool, input: SaveInput): Promise<Pend
            -- kind is NOT refreshed: a file added in this pending set stays an add
            -- however many times it is saved. Letting it flip to 'modify' would tell
            -- the committer to expect a blob at HEAD that was never there.
-           kind = pending_changes.kind
+           -- The exception is a pending delete: saving content un-deletes the file,
+           -- and keeping 'delete' would violate pending_changes_content_shape.
+           kind = CASE WHEN pending_changes.kind = 'delete'
+                       THEN EXCLUDED.kind
+                       ELSE pending_changes.kind END
      RETURNING ${SELECT}`,
     [
       input.ownerId,
@@ -137,15 +141,39 @@ export async function revertPending(
   return (rowCount ?? 0) > 0;
 }
 
-export async function clearPending(
+/**
+ * Clears exactly the rows a commit wrote, and nothing saved since. A commit spans
+ * several GitHub calls; an edit landing in that window (another tab, the background
+ * re-transpile an op triggers) updates its row in place, and deleting it would lose
+ * work that was never committed. So a row is cleared only if it still holds what was
+ * committed — same kind, same content — and any row changed since survives as pending.
+ */
+export async function clearCommitted(
   pool: pg.Pool,
   ownerId: string,
   projectId: string,
   branch: string,
+  committed: readonly Pick<PendingChange, 'path' | 'kind' | 'content' | 'contentRef'>[],
 ): Promise<number> {
+  if (committed.length === 0) return 0;
   const { rowCount } = await pool.query(
-    `DELETE FROM pending_changes WHERE owner_id = $1 AND project_id = $2 AND branch = $3`,
-    [ownerId, projectId, branch],
+    `DELETE FROM pending_changes p
+      USING unnest($4::text[], $5::text[], $6::text[], $7::text[])
+            AS c(path, kind, content, content_ref)
+      WHERE p.owner_id = $1 AND p.project_id = $2 AND p.branch = $3
+        AND p.path = c.path
+        AND p.kind = c.kind
+        AND p.content IS NOT DISTINCT FROM c.content
+        AND p.content_ref IS NOT DISTINCT FROM c.content_ref`,
+    [
+      ownerId,
+      projectId,
+      branch,
+      committed.map((c) => c.path),
+      committed.map((c) => c.kind),
+      committed.map((c) => c.content),
+      committed.map((c) => c.contentRef),
+    ],
   );
   return rowCount ?? 0;
 }
