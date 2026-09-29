@@ -150,8 +150,8 @@ The vocabulary is complete against PRD §7.1.
 |---|---|---|
 | `addNode` | Appends a node to `spec.nodes` | `node.add` command, `N` |
 | `setLayout` | Writes `layout[id]` — sibling of `spec`, never inside it | Node drag, on drop |
-| `addEdge` | Appends to `spec.edges` with an explicit `kind` | Dragging between ports |
-| `removeEdge` | Removes an edge by id | `canvas.delete` on a selected edge; the inspector's Disconnect |
+| `addEdge` | Appends to `spec.edges` with an explicit `kind` | Dragging between ports; a boundary → service `routes-to` edge also sends an `updateNode` adding the service to `exposes` in the same batch |
+| `removeEdge` | Removes an edge by id | `canvas.delete` on a selected edge; the inspector's Disconnect. Removing the last boundary → service edge withdraws the service from `exposes` (and its `invocation` override) in the same batch |
 | `removeNode` | Removes a node, its edges (`cascadeEdges`, default true), and its layout entry | `canvas.delete` on a selected node; the inspector's Remove |
 | `updateNode` | Sets fields from a patch; `null` removes a field; `id`/`type` refused | Every editable inspector field |
 | `updateEdge` | Same mechanism on an edge | The edge inspector: kind where it is a genuine choice (agent → code), and a capability edge's `function` |

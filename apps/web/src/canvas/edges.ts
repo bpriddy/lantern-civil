@@ -92,3 +92,86 @@ export function nextEdgeId(existing: readonly string[], prefix: string): string 
     if (!taken.has(candidate)) return candidate;
   }
 }
+
+/** The slice of a composition exposesSync reads — its nodes and edges, nothing else. */
+export interface CompositionShape {
+  spec: {
+    nodes: readonly CompositionNode[];
+    edges: readonly { id: string; kind: string; from: { node: string }; to: { node: string } }[];
+  };
+}
+
+export type ExposesPatch = { op: 'updateNode'; id: string; patch: Record<string, unknown> };
+
+/**
+ * A boundary serves what its `exposes` list names — the transpiler and the typed web
+ * client read the list, not the edges. So the gesture that draws boundary → service
+ * is the gesture that exposes it, and deleting the last such edge withdraws it. This
+ * returns the updateNode ops that keep the list in step with an edge change, sent in
+ * the same batch so the pair lands, previews and undoes as one.
+ *
+ * Only what the edges account for moves: a service listed with no edge (typed into the
+ * inspector) is left alone, and an invocation override for a withdrawn service goes
+ * with it, because an override naming an unexposed service fails validation.
+ */
+export function exposesSync(
+  composition: CompositionShape | undefined,
+  change: {
+    added?: readonly { kind?: unknown; from?: { node?: string }; to?: { node?: string } }[];
+    removedIds?: readonly string[];
+  },
+): ExposesPatch[] {
+  if (!composition) return [];
+  const index = byId(composition.spec.nodes);
+  const removed = new Set(change.removedIds ?? []);
+
+  // A routes-to edge from a boundary to a service is a statement about exposure.
+  const exposure = (edge: { kind?: unknown; from?: { node?: string }; to?: { node?: string } }) => {
+    const from = index.get(edge.from?.node ?? '');
+    const to = index.get(edge.to?.node ?? '');
+    if (edge.kind !== 'routes-to' || from?.type !== 'boundary' || to?.type !== 'service') return null;
+    return { boundary: from, service: to.id };
+  };
+
+  const additions = new Map<string, string[]>();
+  for (const edge of change.added ?? []) {
+    const hit = exposure(edge);
+    if (hit) additions.set(hit.boundary.id, [...(additions.get(hit.boundary.id) ?? []), hit.service]);
+  }
+
+  // Withdrawn only when no surviving or newly drawn edge still routes there.
+  const surviving = new Set<string>();
+  const withdrawals = new Map<string, Set<string>>();
+  for (const edge of composition.spec.edges) {
+    const hit = exposure(edge);
+    if (!hit) continue;
+    const key = `${hit.boundary.id}\u0000${hit.service}`;
+    if (!removed.has(edge.id)) surviving.add(key);
+    else withdrawals.set(hit.boundary.id, (withdrawals.get(hit.boundary.id) ?? new Set()).add(hit.service));
+  }
+
+  const ops: ExposesPatch[] = [];
+  for (const id of new Set([...additions.keys(), ...withdrawals.keys()])) {
+    const boundary = index.get(id);
+    if (boundary?.type !== 'boundary') continue;
+    const added = additions.get(id) ?? [];
+    const gone = [...(withdrawals.get(id) ?? [])].filter(
+      (service) => !surviving.has(`${id}\u0000${service}`) && !added.includes(service),
+    );
+    const exposes = [
+      ...boundary.exposes.filter((service) => !gone.includes(service)),
+      ...added.filter((service, i) => !boundary.exposes.includes(service) && added.indexOf(service) === i),
+    ];
+    if (exposes.length === boundary.exposes.length && exposes.every((s, i) => s === boundary.exposes[i])) {
+      continue;
+    }
+    const patch: Record<string, unknown> = { exposes };
+    const invocation = boundary.invocation;
+    if (invocation && gone.some((service) => service in invocation)) {
+      const kept = Object.fromEntries(Object.entries(invocation).filter(([service]) => !gone.includes(service)));
+      patch['invocation'] = Object.keys(kept).length > 0 ? kept : null;
+    }
+    ops.push({ op: 'updateNode', id, patch });
+  }
+  return ops;
+}

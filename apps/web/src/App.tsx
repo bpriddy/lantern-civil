@@ -2,6 +2,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } fro
 import { Editor, descentTarget, type Altitude } from './canvas/Editor.js';
 import { parseRoute, routePath, type Route } from './routes.js';
 import { compositionToFlow, graphToFlow } from './canvas/model.js';
+import { exposesSync } from './canvas/edges.js';
 import type { NodeData } from './canvas/nodes.js';
 /**
  * Monaco is about a megabyte gzipped — more than the rest of Civil combined. Loading
@@ -1052,14 +1053,18 @@ function Workspace({ me }: { me: Me }) {
     const graphOrComposition =
       current.kind === 'graph' ? bundle?.graphs[current.path] : bundle?.composition;
     const doomed = new Set(confirming.nodes);
+    const edgeIds = confirming.edges.filter((id) => {
+      const edge = graphOrComposition?.spec.edges.find((e) => e.id === id);
+      return !edge || (!doomed.has(edge.from.node) && !doomed.has(edge.to.node));
+    });
     const ops: ManifestOp[] = [
       ...confirming.nodes.map((id): ManifestOp => ({ op: 'removeNode', id })),
-      ...confirming.edges
-        .filter((id) => {
-          const edge = graphOrComposition?.spec.edges.find((e) => e.id === id);
-          return !edge || (!doomed.has(edge.from.node) && !doomed.has(edge.to.node));
-        })
-        .map((id): ManifestOp => ({ op: 'removeEdge', id })),
+      ...edgeIds.map((id): ManifestOp => ({ op: 'removeEdge', id })),
+      // Only for edges removed on their own; removeNode leaves exposes deliberately
+      // (docs/ops.md), and a boundary removed takes its list with it.
+      ...(current.kind === 'composition'
+        ? exposesSync(bundle?.composition, { removedIds: edgeIds }).filter((op) => !doomed.has(op.id))
+        : []),
     ];
     if (ops.length === 0) return;
     const ok = await runOps(ops, 'Delete', { quiet: true });
@@ -1111,9 +1116,10 @@ function Workspace({ me }: { me: Me }) {
       }
 
       ops.push({ op: 'addEdge', edge });
+      if (current.kind === 'composition') ops.push(...exposesSync(bundle?.composition, { added: [edge] }));
       await runOps(ops, 'Connect', { quiet: true });
     },
-    [activeId, bundle, manifestPath, runOps, report],
+    [activeId, bundle, manifestPath, current.kind, runOps, report],
   );
 
   const addNode = useCallback(
@@ -1514,7 +1520,16 @@ function Workspace({ me }: { me: Me }) {
             // The inspector's remove buttons ask the same question the Delete key asks.
             onRemoveNode={(id) => setConfirming({ nodes: [id], edges: [] })}
             onRemoveEdge={(id) =>
-              void runOps([{ op: 'removeEdge', id }], 'Disconnect', { quiet: true }).then((ok) => {
+              void runOps(
+                [
+                  { op: 'removeEdge', id },
+                  ...(current.kind === 'composition'
+                    ? exposesSync(bundle?.composition, { removedIds: [id] })
+                    : []),
+                ],
+                'Disconnect',
+                { quiet: true },
+              ).then((ok) => {
                 if (ok) setSelectedEdgeIds((cur) => cur.filter((e) => e !== id));
               })
             }

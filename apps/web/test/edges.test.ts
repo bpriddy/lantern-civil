@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  exposesSync,
   nextEdgeId,
   proposeCompositionEdge,
   proposeGraphEdge,
@@ -117,4 +118,77 @@ test('a new edge id does not collide', () => {
   assert.equal(nextEdgeId([], 'e'), 'e1');
   // Gaps are filled rather than skipped past — ids are labels, not a sequence.
   assert.equal(nextEdgeId(['e1', 'e3'], 'e'), 'e2');
+});
+
+// --- exposesSync: drawing boundary → service is what exposes it ---------------
+
+const shape = (
+  nodes: unknown[],
+  edges: { id: string; kind: string; from: string; to: string }[] = [],
+) =>
+  ({
+    spec: {
+      nodes,
+      edges: edges.map((e) => ({ id: e.id, kind: e.kind, from: { node: e.from }, to: { node: e.to } })),
+    },
+  }) as never;
+
+const routes = (from: string, to: string) => ({ kind: 'routes-to', from: { node: from }, to: { node: to } });
+
+test('drawing boundary → service appends the service to exposes', () => {
+  const ops = exposesSync(shape(composition), { added: [routes('api', 'classify')] });
+  assert.deepEqual(ops, [{ op: 'updateNode', id: 'api', patch: { exposes: ['classify'] } }]);
+});
+
+test('an already-exposed service produces no op', () => {
+  const nodes = [node('api', 'boundary', { boundary: 'api', exposes: ['classify'] }), node('classify', 'service')];
+  assert.deepEqual(exposesSync(shape(nodes), { added: [routes('api', 'classify')] }), []);
+});
+
+test('edges that are not boundary → service routes-to change nothing', () => {
+  assert.deepEqual(exposesSync(shape(composition), { added: [routes('web', 'api')] }), []);
+  assert.deepEqual(
+    exposesSync(shape(composition), { added: [{ kind: 'depends-on', from: { node: 'classify' }, to: { node: 'store' } }] }),
+    [],
+  );
+  assert.deepEqual(exposesSync(undefined, { added: [routes('api', 'classify')] }), []);
+});
+
+test('removing the edge withdraws the service, keeping entries no edge accounts for', () => {
+  const nodes = [
+    node('api', 'boundary', { boundary: 'api', exposes: ['typed', 'classify'] }),
+    node('typed', 'service'),
+    node('classify', 'service'),
+  ];
+  const ops = exposesSync(shape(nodes, [{ id: 'e1', kind: 'routes-to', from: 'api', to: 'classify' }]), {
+    removedIds: ['e1'],
+  });
+  assert.deepEqual(ops, [{ op: 'updateNode', id: 'api', patch: { exposes: ['typed'] } }]);
+});
+
+test('a service still reached by another edge stays exposed', () => {
+  const nodes = [node('api', 'boundary', { boundary: 'api', exposes: ['classify'] }), node('classify', 'service')];
+  const edges = [
+    { id: 'e1', kind: 'routes-to', from: 'api', to: 'classify' },
+    { id: 'e2', kind: 'routes-to', from: 'api', to: 'classify' },
+  ];
+  assert.deepEqual(exposesSync(shape(nodes, edges), { removedIds: ['e1'] }), []);
+});
+
+test('withdrawing a service drops its invocation override, and the key when it empties', () => {
+  const nodes = [
+    node('api', 'boundary', { boundary: 'api', exposes: ['a', 'b'], invocation: { a: 'async', b: 'sync' } }),
+    node('a', 'service'),
+    node('b', 'service'),
+  ];
+  const edges = [
+    { id: 'e1', kind: 'routes-to', from: 'api', to: 'a' },
+    { id: 'e2', kind: 'routes-to', from: 'api', to: 'b' },
+  ];
+  assert.deepEqual(exposesSync(shape(nodes, edges), { removedIds: ['e1'] }), [
+    { op: 'updateNode', id: 'api', patch: { exposes: ['b'], invocation: { b: 'sync' } } },
+  ]);
+  assert.deepEqual(exposesSync(shape(nodes, edges), { removedIds: ['e1', 'e2'] }), [
+    { op: 'updateNode', id: 'api', patch: { exposes: [], invocation: null } },
+  ]);
 });
