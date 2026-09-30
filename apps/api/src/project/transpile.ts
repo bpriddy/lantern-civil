@@ -236,6 +236,7 @@ export const FILE_ROLES = [
   'orchestration',
   'boundary-server',
   'boundary-client',
+  'registry',
   'other',
 ] as const;
 export type FileRole = (typeof FILE_ROLES)[number];
@@ -244,6 +245,8 @@ export type FileRole = (typeof FILE_ROLES)[number];
 export interface TranspileOutput {
   files: Record<string, string>;
   roles: Record<string, FileRole>;
+  /** The unit each file implements (civil/registry.yaml); "shared" when unlabelled. */
+  units: Record<string, string>;
   attempts: number;
 }
 
@@ -256,6 +259,7 @@ export function shapeOutput(
   files: Record<string, string>,
   roles: unknown,
   attempts: unknown,
+  units?: unknown,
 ): TranspileOutput {
   const given =
     typeof roles === 'object' && roles !== null && !Array.isArray(roles)
@@ -269,7 +273,23 @@ export function shapeOutput(
         ? (role as FileRole)
         : 'other';
   }
-  return { files, roles: shaped, attempts: typeof attempts === 'number' ? attempts : 1 };
+  // Units are validated by the runner against the documents; a row stored before
+  // units existed has none, and every file of it reads as shared.
+  const labelled =
+    typeof units === 'object' && units !== null && !Array.isArray(units)
+      ? (units as Record<string, unknown>)
+      : {};
+  const shapedUnits: Record<string, string> = {};
+  for (const path of Object.keys(files)) {
+    const unit = labelled[path];
+    shapedUnits[path] = typeof unit === 'string' && unit.length > 0 ? unit : 'shared';
+  }
+  return {
+    files,
+    roles: shaped,
+    units: shapedUnits,
+    attempts: typeof attempts === 'number' ? attempts : 1,
+  };
 }
 
 export async function findMemo(
@@ -280,14 +300,16 @@ export async function findMemo(
 ): Promise<TranspileOutput | undefined> {
   // Typed loosely on purpose: rows stored before the roles map existed have none.
   const { rows } = await pool.query<{
-    output: { files: Record<string, string>; roles?: unknown; attempts?: unknown };
+    output: { files: Record<string, string>; roles?: unknown; units?: unknown; attempts?: unknown };
   }>(
     `SELECT output FROM transpilations
       WHERE owner_id = $1 AND project_id = $2 AND input_hash = $3`,
     [ownerId, projectId, hash],
   );
   const row = rows[0];
-  return row ? shapeOutput(row.output.files, row.output.roles, row.output.attempts) : undefined;
+  return row
+    ? shapeOutput(row.output.files, row.output.roles, row.output.attempts, row.output.units)
+    : undefined;
 }
 
 /**

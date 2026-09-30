@@ -48,13 +48,16 @@ def fake_analyze(files: dict, client: object, model: str) -> str:
     return "## canned patterns"
 
 
-def fake_transpile(documents: dict, patterns, context: dict, client: object, model: str) -> dict:
+def fake_transpile(
+    documents: dict, patterns, context: dict, client: object, model: str, units=None,
+) -> dict:
     RECORD["transpile"] = {
         "documents": documents,
         "patterns": patterns,
         "context": context,
         "client": client,
         "model": model,
+        "units": units,
     }
     return {"files": {"src/x.py": "y\n"}, "roles": {"src/x.py": "other"}, "attempts": 1}
 
@@ -183,6 +186,16 @@ def test_transpile_defaults_optional_fields() -> None:
     ok(status == 200, "documents alone suffice")
     ok(RECORD["transpile"]["context"] == {}, "an absent context defaults to empty")
     ok(RECORD["transpile"]["patterns"] is None, "absent patterns pass through as null")
+    ok(RECORD["transpile"]["units"] is None, "absent units pass through as None")
+
+
+def test_transpile_passes_units_and_rejects_malformed_ones() -> None:
+    print("test_transpile_passes_units_and_rejects_malformed_ones")
+    units = [{"id": "graph/g", "kind": "graph", "source": "civil/g.yaml"}]
+    status, _ = request("POST", "/transpile", {"documents": {"civil/g.yaml": "x"}, "units": units})
+    ok(status == 200 and RECORD["transpile"]["units"] == units, "units reach transpile")
+    status, _ = request("POST", "/transpile", {"documents": {"civil/g.yaml": "x"}, "units": [{"id": 1}]})
+    ok(status == 400, "a malformed unit list answers 400")
 
 
 def test_transpile_rejects_bad_body() -> None:

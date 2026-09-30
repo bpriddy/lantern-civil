@@ -128,12 +128,22 @@ class Handler(BaseHTTPRequestHandler):
         if not _string_map(context):
             self._json(400, {"error": '"context" must map repo paths to file contents'})
             return
+        units = body.get("units")
+        if units is not None and not (
+            isinstance(units, list)
+            and all(
+                isinstance(u, dict) and all(isinstance(u.get(k), str) for k in ("id", "kind", "source"))
+                for u in units
+            )
+        ):
+            self._json(400, {"error": '"units" must be a list of {id, kind, source} strings'})
+            return
 
         client = self._model_client()
         if client is None:
             return
         try:
-            result = transpile(documents, patterns, context, client, DEFAULT_MODEL)
+            result = transpile(documents, patterns, context, client, DEFAULT_MODEL, units)
         except TranspileValidationError as error:
             self._json(422, {
                 "error": "validation failed",

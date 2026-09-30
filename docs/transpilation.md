@@ -117,6 +117,7 @@ scaffolds them once and never regenerates them. Only orchestration-class files
 | `prompts/<node-id>.md` | the human, via Civil's inspector | committed as edited |
 | orchestration, boundary server | the transpiler | regenerated; mine-or-theirs on drift |
 | `web/` | the human, any tooling | read-only to Civil (API-call analysis only) |
+| `civil/registry.yaml` | Civil, derived (docs/registry.md) | rebuilt on every transpile; read-only |
 
 ## What this revises
 

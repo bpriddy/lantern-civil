@@ -81,13 +81,15 @@ class FakeClient:
 
 
 def emission(*entries: tuple, id: str = "call_1") -> Response:
-    """Entries are (path, content) or (path, content, role) — role optional,
-    exactly as the emit_files schema has it."""
+    """Entries are (path, content), (path, content, role) or (path, content,
+    role, unit) — role and unit optional, exactly as the emit_files schema has it."""
     files = []
     for entry in entries:
         item = {"path": entry[0], "content": entry[1]}
-        if len(entry) > 2:
+        if len(entry) > 2 and entry[2] is not None:
             item["role"] = entry[2]
+        if len(entry) > 3:
+            item["unit"] = entry[3]
         files.append(item)
     return Response([ToolUse(files, id=id)])
 
@@ -179,9 +181,10 @@ def test_transpile_parses_the_forced_tool_call() -> None:
         == {
             "files": {"src/classify.py": GOOD},
             "roles": {"src/classify.py": "other"},
+            "units": {"src/classify.py": "shared"},
             "attempts": 1,
         },
-        "files, roles, and attempts come back",
+        "files, roles, units, and attempts come back",
     )
     call = client.messages.calls[0]
     ok(call["model"] == "model-x", "the caller's model is used")
@@ -216,6 +219,44 @@ def test_roles_ride_back_defaulting_other() -> None:
         result["roles"] == {"src/classify.py": "orchestration", "docs/notes.md": "other"},
         "a stated role rides back; an omitted one defaults to other",
     )
+
+
+UNITS = [
+    {"id": "graph/classify", "kind": "graph", "source": "civil/graphs/classify.yaml"},
+    {"id": "app/public-api", "kind": "boundary", "source": "civil/app.yaml"},
+]
+
+
+def test_units_ride_back_and_the_list_rides_the_prompt() -> None:
+    print("test_units_ride_back_and_the_list_rides_the_prompt")
+    client = FakeClient(emission(
+        ("src/classify.py", GOOD, "orchestration", "graph/classify"),
+        ("src/__init__.py", "", None, "shared"),
+    ))
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS)
+    ok(
+        result["units"] == {"src/classify.py": "graph/classify", "src/__init__.py": "shared"},
+        "each file's unit rides back",
+    )
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    ok("- graph/classify (graph, defined in civil/graphs/classify.yaml)" in prompt, "the unit list rides the prompt")
+    ok("unit" in client.messages.calls[0]["tools"][0]["input_schema"]["properties"]["files"]["items"]["properties"],
+       "emit_files carries a unit field")
+
+
+def test_an_unknown_unit_is_fed_back_and_retried() -> None:
+    print("test_an_unknown_unit_is_fed_back_and_retried")
+    client = FakeClient(
+        emission(("src/classify.py", GOOD, "orchestration", "graph/clasify")),
+        emission(("src/classify.py", GOOD, "orchestration", "graph/classify"), id="call_2"),
+    )
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS)
+    ok(result["attempts"] == 2, "a made-up unit costs a retry")
+    feedback = client.messages.calls[1]["messages"][-1]["content"][0]["content"]
+    ok("'graph/clasify' is not in the unit list" in feedback, "the issue names the bad unit")
+    # An omitted unit reads as shared, which is always allowed.
+    client = FakeClient(emission(("src/classify.py", GOOD, "orchestration")))
+    ok(transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS)["attempts"] == 1, "omitted means shared")
 
 
 def test_unknown_role_is_an_issue_not_a_crash() -> None:
@@ -505,7 +546,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "5", "the boundary CORS rule bumped the prompt version")
+        ok(meta["promptVersion"] == "6", "the unit label bumped the prompt version")
         connection.close()
     finally:
         server.shutdown()

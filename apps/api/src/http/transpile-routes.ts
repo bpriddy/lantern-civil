@@ -37,6 +37,7 @@ import {
   planBoundaryClient,
 } from '../project/boundary-client.js';
 import { idTokenFor } from './runner-auth.js';
+import { attachRegistry, deriveUnits } from '../project/registry.js';
 import { transpileAndSync } from './session-routes.js';
 
 /**
@@ -210,6 +211,9 @@ export async function transpileProject(
 
   const maintained = await maintainedPaths(pool, ownerId, project.id);
   const inputs = await gatherInputs(overlay, maintained);
+  // The same documents the model sees decide the units it labels against and the
+  // registry is written from, so the two cannot disagree.
+  const units = deriveUnits(inputs.documents);
 
   // Fetched before any model work: the fingerprint is part of the memo key, and
   // a runner that cannot answer it fails the request the way an unreachable
@@ -252,6 +256,7 @@ export async function transpileProject(
       documents: inputs.documents,
       patterns: inputs.patterns,
       context: inputs.context,
+      units: units.map(({ id, kind, source }) => ({ id, kind, source })),
     });
     const rawFiles = answer['files'];
     if (typeof rawFiles !== 'object' || rawFiles === null || Array.isArray(rawFiles)) {
@@ -264,7 +269,7 @@ export async function transpileProject(
     for (const [path, content] of Object.entries(rawFiles)) {
       if (typeof content === 'string') files[path] = content;
     }
-    output = shapeOutput(files, answer['roles'], answer['attempts']);
+    output = shapeOutput(files, answer['roles'], answer['attempts'], answer['units']);
     // Merge the generated client BEFORE the memo is stored, so it is a first-class
     // member of the emission — memoized, provenance-tracked, retired, and materialized
     // into the session — with no special-casing anywhere downstream.
@@ -277,7 +282,14 @@ export async function transpileProject(
     }
     // Never let a prompt asset into the stored memo (and thus the maintained set).
     stripPromptAssets(output);
+    // Stored with the emission so the registry is a maintained file: read-only in the
+    // editor, retired and materialized like the code it describes.
+    attachRegistry(output, units);
     await storeMemo(pool, ownerId, project.id, hash, output);
+  } else {
+    // Rebuilt on a hit too: it is deterministic and cheap, so a registry format that
+    // improved since the memo was written never replays stale.
+    attachRegistry(output, units);
   }
   // A memo written before this guard existed may still carry a prompt asset; strip on
   // the hit path too, so a returned emission is always clean (idempotent on a miss).

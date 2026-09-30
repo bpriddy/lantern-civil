@@ -49,6 +49,11 @@ VENDOR_CLASS_NAMES = ("ClaudeEngine", "AnthropicEngine", "OpenAIEngine")
 # files become supervised processes; everything else is classification only.
 ROLES = ("agent", "orchestration", "boundary-server", "other")
 
+# Every emitted file names the unit it implements (civil/registry.yaml): the API
+# derives the unit list from the documents and sends it; this is the one label
+# outside that list, for plumbing that serves several units (a package __init__.py).
+SHARED_UNIT = "shared"
+
 EMIT_FILES_TOOL = {
     "name": "emit_files",
     "description": "Emit the complete set of transpiled files for this repository.",
@@ -67,6 +72,11 @@ EMIT_FILES_TOOL = {
                             "enum": list(ROLES),
                             "description": "What the file is at the architecture's altitude; omitted means other.",
                         },
+                        "unit": {
+                            "type": "string",
+                            "description": "The id of the unit this file implements, from the unit "
+                            f"list in the request; \"{SHARED_UNIT}\" for a file serving several.",
+                        },
                     },
                     "required": ["path", "content"],
                 },
@@ -79,7 +89,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "5"
+PROMPT_VERSION = "6"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -140,6 +150,11 @@ narration. Docstrings follow the repo's own habits.
 - Label every emitted file's role: "agent" for a function wrapping Engine, \
 "orchestration" for a graph's run() module, "boundary-server" for a boundary \
 server file, "other" for everything else.
+- Label every emitted file's unit too: the id, from the unit list in the \
+request, of the architectural unit the file implements — an agent's function \
+carries its agent unit, a graph's run() module its graph unit, a boundary \
+server its boundary unit. A file that serves several units (a package \
+__init__.py) carries "shared".
 
 Choose emitted file paths yourself, guided by the repo layout visible in the \
 context files — put code where this repo's author would have. NEVER emit a \
@@ -388,12 +403,15 @@ def _files_list(tool_input: Any) -> list[Any] | None:
     return None
 
 
-def _parse_emission(tool_input: Any) -> tuple[dict[str, str], dict[str, str], list[str]]:
+def _parse_emission(
+    tool_input: Any,
+) -> tuple[dict[str, str], dict[str, str], dict[str, str], list[str]]:
     entries = _files_list(tool_input)
     if entries is None:
-        return {}, {}, ['emit_files input must be {"files": [{"path", "content"}, ...]}']
+        return {}, {}, {}, ['emit_files input must be {"files": [{"path", "content"}, ...]}']
     files: dict[str, str] = {}
     roles: dict[str, str] = {}
+    units: dict[str, str] = {}
     issues: list[str] = []
     for entry in entries:
         if (
@@ -414,7 +432,32 @@ def _parse_emission(tool_input: Any) -> tuple[dict[str, str], dict[str, str], li
             continue
         files[entry["path"]] = entry["content"]
         roles[entry["path"]] = role
-    return files, roles, issues
+        # Absent reads as shared here; whether that is allowed is the validator's
+        # call, which knows the unit list.
+        unit = entry.get("unit", SHARED_UNIT)
+        units[entry["path"]] = unit if isinstance(unit, str) else repr(unit)
+    return files, roles, units, issues
+
+
+def _unit_issues(units: dict[str, str], known: list[dict[str, str]]) -> list[str]:
+    """Every file must name a unit the documents define, or shared. A made-up id
+    would put a file in the registry under an architecture that does not exist."""
+    ids = {unit["id"] for unit in known}
+    issues = []
+    for path in sorted(units):
+        if units[path] != SHARED_UNIT and units[path] not in ids:
+            issues.append(
+                f"{path}: unit {units[path]!r} is not in the unit list — use one of "
+                f"{', '.join(sorted(ids))}, or {SHARED_UNIT!r} for a file serving several"
+            )
+    return issues
+
+
+def _unit_section(units: list[dict[str, str]]) -> str:
+    lines = ["The units of this application — label every emitted file with the one it implements:"]
+    for unit in units:
+        lines.append(f"- {unit['id']} ({unit['kind']}, defined in {unit['source']})")
+    return "\n".join(lines)
 
 
 def transpile(
@@ -423,6 +466,7 @@ def transpile(
     context: dict[str, str],
     client: Any,
     model: str,
+    units: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     parts = []
     if context:
@@ -432,6 +476,8 @@ def transpile(
         ))
     parts.append(_section("The civil documents to transpile:", documents))
     parts.append(PATTERNS_PREFACE + patterns if patterns else NO_PATTERNS)
+    if units:
+        parts.append(_unit_section(units))
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": "\n\n".join(parts)}]
     issues: list[str] = []
@@ -472,11 +518,13 @@ def transpile(
                 f"(CIVIL_TRANSPILE_MAX_TOKENS={MAX_TOKENS}); raise it for this project"
             )
 
-        files, roles, issues = _parse_emission(block.input)
+        files, roles, file_units, issues = _parse_emission(block.input)
         if not issues:
             issues = validate(files, documents, context, roles)
+            if units is not None:
+                issues += _unit_issues(file_units, units)
         if not issues:
-            return {"files": files, "roles": roles, "attempts": attempt}
+            return {"files": files, "roles": roles, "units": file_units, "attempts": attempt}
 
         messages.append({"role": "assistant", "content": response.content})
         messages.append({
