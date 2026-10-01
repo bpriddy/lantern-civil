@@ -30,6 +30,7 @@ export type CommandId =
   | 'project.diff'
   | 'project.commit'
   | 'project.sync'
+  | 'git.check'
   | 'project.apply'
   | 'help.keys';
 
@@ -248,6 +249,15 @@ export const COMMANDS: readonly Command[] = [
     description: 'Commit every pending change to the repository.',
     keys: ['mod+enter'],
     enabled: (c) => c.pendingCount > 0 && c.canCommit,
+  },
+  {
+    id: 'git.check',
+    title: 'Check GitHub',
+    description:
+      'Ask GitHub whether the branch has new commits since you last synced. Reads only ' +
+      '— nothing changes until you sync. Civil never checks on its own.',
+    keys: ['g'],
+    enabled: (c) => c.where !== 'home' && c.canCommit,
   },
   {
     id: 'project.sync',

@@ -1533,3 +1533,48 @@ select.field { cursor: pointer; }
 .drift-banner code { font-family: var(--mono); color: var(--text); }
 .drift-actions { display: flex; align-items: center; gap: 8px; }
 .drift-actions .connect { margin-top: 0; height: 24px; }
+
+/* ---- source control (left pane, above the files) ------------------------- */
+
+.scm { border-bottom: 1px solid var(--border); font-size: 12px; }
+.scm-block { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.scm-block:last-child { border-bottom: 0; }
+.scm-row { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.scm .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+.scm .dot.ok { background: var(--ok); }
+.scm .dot.warn { background: var(--warn); }
+.scm-grow { flex: 1; min-width: 0; }
+.scm-repo { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.scm-repo a { color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-branch {
+  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 10px;
+}
+.scm-head {
+  display: block; margin-top: 4px; color: var(--text); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scm-head code, .scm-list code { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.scm-group { margin-top: 6px; }
+.scm-group-title {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-faint); margin-bottom: 2px;
+}
+.scm-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.scm-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }
+.scm-list a { color: var(--text); text-decoration: none; }
+.scm-file { display: flex; align-items: center; gap: 6px; }
+.scm-kind { width: 12px; font-family: var(--mono); font-size: 11px; color: var(--warn); }
+.scm-kind-add { color: var(--ok); }
+.scm-path {
+  flex: 1; min-width: 0; border: 0; background: none; padding: 0; text-align: left;
+  font: inherit; font-family: var(--mono); font-size: 11px; color: var(--text); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.scm-path:hover { text-decoration: underline; }
+.scm-revert { border: 0; background: none; color: var(--text-faint); cursor: pointer; padding: 0 2px; }
+.scm-revert:hover { color: var(--text); }
+.scm-commit { display: flex; gap: 6px; margin-top: 8px; }
+.scm-commit .commit-message { flex: 1; min-width: 0; }
+.scm-why { margin-top: 4px; font-size: 11px; }
+.scm-note { margin-top: 6px; font-size: 11px; color: var(--text); }

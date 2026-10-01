@@ -19,6 +19,7 @@ export function DiffPanel({
   committing,
   revision,
   unapplied,
+  initialPath,
   onCommit,
   onClose,
 }: {
@@ -31,12 +32,14 @@ export function DiffPanel({
   /** The sketch has changes the generated code does not reflect yet (or an apply
    *  is running): committing now would land documents and code that disagree. */
   unapplied?: boolean;
+  /** Open on this file — the source-control panel's per-file diff link. */
+  initialPath?: string | undefined;
   onCommit: (message: string) => void;
   onClose: () => void;
 }) {
   const [files, setFiles] = useState<DiffFile[] | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const [active, setActive] = useState<string | undefined>(undefined);
+  const [active, setActive] = useState<string | undefined>(initialPath);
   const [message, setMessage] = useState('');
 
   useEffect(() => {

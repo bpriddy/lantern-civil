@@ -590,3 +590,43 @@ export async function stopSession(projectId: string): Promise<void> {
     throw new Error(await describeFailure(response, 'could not stop the app'));
   }
 }
+
+// --- source control (docs: owner's rule — no automated git, visible control) ----
+
+export interface GitCommit {
+  sha: string;
+  message: string;
+  author: string;
+  date: string;
+  url: string;
+}
+
+export interface GitInfo {
+  repo: { owner: string; name: string; url: string };
+  branch: string;
+  /** The commit edits are made against; null for a repository with no commits. */
+  head: GitCommit | null;
+  history: GitCommit[];
+}
+
+export interface GitCheck {
+  tip: string | null;
+  head: string | null;
+  behind: number | null;
+  diverged: boolean;
+  commits: GitCommit[];
+}
+
+/** What Civil is editing against. A read of the pinned commit — never the remote's present. */
+export async function fetchGit(projectId: string, signal?: AbortSignal): Promise<GitInfo> {
+  const response = await apiFetch(`/api/projects/${projectId}/git`, { signal: signal ?? null });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not read the repository'));
+  return (await response.json()) as GitInfo;
+}
+
+/** Whether the branch moved on GitHub. Only ever called from an explicit Check. */
+export async function checkGit(projectId: string): Promise<GitCheck> {
+  const response = await apiFetch(`/api/projects/${projectId}/git/check`, { method: 'POST' });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not check GitHub'));
+  return (await response.json()) as GitCheck;
+}

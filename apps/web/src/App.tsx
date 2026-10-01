@@ -17,7 +17,7 @@ const DiffPanel = lazy(() =>
   import('./panes/DiffPanel.js').then((m) => ({ default: m.DiffPanel })),
 );
 import { ApplyButton } from './panes/ApplyButton.js';
-import { CommitBar } from './panes/CommitBar.js';
+import { SourceControl } from './panes/SourceControl.js';
 import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
 import { Toast } from './commands/Toast.js';
@@ -55,6 +55,10 @@ import {
   getSession,
   stopSession,
   syncProject,
+  checkGit,
+  fetchGit,
+  type GitCheck,
+  type GitInfo,
   transpileProject,
   liftGraph,
   migrateProject,
@@ -183,6 +187,15 @@ function Workspace({ me }: { me: Me }) {
   // Bumped when a pre-commit transpile lands emitted files under the open diff,
   // so the panel re-fetches and the review shows exactly what will commit.
   const [applying, setApplying] = useState(false);
+  // Source control (owner's rule: no automated git, visible control). gitInfo
+  // describes the pinned commit; gitCheck is the remote's answer, present only
+  // after the author pressed Check, and dropped whenever the head moves.
+  const [gitInfo, setGitInfo] = useState<GitInfo | undefined>(undefined);
+  const [gitError, setGitError] = useState<string | null>(null);
+  const [gitCheck, setGitCheck] = useState<GitCheck | undefined>(undefined);
+  const [checking, setChecking] = useState(false);
+  const [gitRevision, setGitRevision] = useState(0);
+  const [diffFocus, setDiffFocus] = useState<string | undefined>(undefined);
   const applyingRef = useRef(false);
   // Drift banners the user waved off this session, by orchestration path.
   const [driftDismissed, setDriftDismissed] = useState<Set<string>>(new Set());
@@ -294,7 +307,10 @@ function Workspace({ me }: { me: Me }) {
     setCommitNote(null);
     try {
       const result = await commitProject(activeId, message);
-      setCommitNote(`Committed ${result.files} file(s).`);
+      setCommitNote(`Committed ${result.files} file(s) as ${result.commit.slice(0, 7)}.`);
+      // The head moved to the new commit: the old remote answer no longer applies.
+      setGitCheck(undefined);
+      setGitRevision((n) => n + 1);
       // Undo stops at a commit. Walking back past one would resurrect pre-commit
       // text as a new pending change — an edit war with your own history.
       clearUndo();
@@ -581,6 +597,11 @@ function Workspace({ me }: { me: Me }) {
         void doSync();
         return 'Checking the repository…';
       },
+      'git.check': () => {
+        if (!canCommit) return undefined;
+        void doCheck();
+        return 'Asking GitHub…';
+      },
       'project.apply': () => {
         void doApply();
         return 'Transpiling the civil documents…';
@@ -659,10 +680,69 @@ function Workspace({ me }: { me: Me }) {
     }
   }, [activeId, refresh, report, openFile]);
 
+  // Asked only from Check (button or G): the one call that reads the remote's present.
+  const doCheck = useCallback(async () => {
+    if (!activeId) return;
+    setChecking(true);
+    try {
+      const result = await checkGit(activeId);
+      setGitCheck(result);
+      report({
+        title: 'Check GitHub',
+        detail: result.diverged
+          ? 'The branch history was rewritten on GitHub — sync to pick it up.'
+          : result.behind
+            ? `${result.behind} new commit${result.behind === 1 ? '' : 's'} on GitHub. Sync when ready.`
+            : result.behind === null
+              ? 'GitHub has commits you have not synced.'
+              : 'Up to date with GitHub.',
+      });
+    } catch (error) {
+      report({ title: 'Check GitHub', detail: (error as Error).message, refused: true });
+    } finally {
+      setChecking(false);
+    }
+  }, [activeId, report]);
+
+  const doRevert = useCallback(
+    async (path: string) => {
+      if (!activeId) return;
+      try {
+        await revertFile(activeId, path);
+        // An undo entry for this file would restore text over the revert.
+        undoStack.current = undoStack.current.filter((entry) => entry.path !== path);
+        setUndoDepth(undoStack.current.length);
+        await refresh();
+        report({ title: 'Discard change', detail: `${path} is back to the committed version.` });
+      } catch (error) {
+        report({ title: 'Discard change', detail: (error as Error).message, refused: true });
+      }
+    },
+    [activeId, refresh, report],
+  );
+
+  // What the panel says about the pinned commit. Re-read when the project changes and
+  // after a commit or sync moves the head — never on a timer.
+  useEffect(() => {
+    setGitInfo(undefined);
+    setGitError(null);
+    setGitCheck(undefined);
+    if (!activeId || bundle?.project.id !== activeId || bundle.project.sourceKind !== 'github') return;
+    const controller = new AbortController();
+    fetchGit(activeId, controller.signal)
+      .then(setGitInfo)
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) setGitError((error as Error).message);
+      });
+    return () => controller.abort();
+  }, [activeId, bundle?.project.id, bundle?.project.sourceKind, gitRevision]);
+
   const doSync = useCallback(async () => {
     if (!activeId) return;
     try {
       const { summary, moved } = await syncProject(activeId);
+      setGitCheck(undefined);
+      setGitRevision((n) => n + 1);
       if (moved) {
         // The head this history was recorded against is gone.
         clearUndo();
@@ -1180,8 +1260,12 @@ function Workspace({ me }: { me: Me }) {
             committable={bundle.project.sourceKind === 'github'}
             committing={committing}
             unapplied={bundle.generation?.state === 'stale' || applying}
+            initialPath={diffFocus}
             onCommit={(message) => void commit(message)}
-            onClose={() => setDiffOpen(false)}
+            onClose={() => {
+              setDiffOpen(false);
+              setDiffFocus(undefined);
+            }}
           />
         </Suspense>
       ) : null}
@@ -1273,22 +1357,6 @@ function Workspace({ me }: { me: Me }) {
         ) : null}
         {/* The branch, and the way to pick up what has been pushed to it. Civil
             edits against a pinned commit, so this is deliberate rather than automatic. */}
-        <button
-          type="button"
-          className="chip chip-branch"
-          onClick={() => void doSync()}
-          disabled={!canCommit}
-          title={
-            canCommit
-              ? 'Sync: pick up commits pushed since this project was opened'
-              : 'Only a repository-backed project has anything to sync with'
-          }
-        >
-          <span className="dot" />
-          {bundle?.project.defaultBranch ?? 'main'}
-          {canCommit ? <span className="chip-sync">⟳</span> : null}
-        </button>
-        {/* PRD 7: commits are explicit, and the indicator shows a count. */}
         {bundle?.composition ? (
           <ApplyButton
             state={bundle.generation?.state}
@@ -1296,13 +1364,8 @@ function Workspace({ me }: { me: Me }) {
             onApply={() => void doApply()}
           />
         ) : null}
-        {/* PRD 7: the indicator shows a count; clicking it shows the diff preview. */}
-        <CommitBar
-          count={pendingCount}
-          note={commitNote}
-          onReview={reviewBeforeCommit}
-          onDismissNote={() => setCommitNote(null)}
-        />
+        {/* Branch, sync and commit live in the Source control panel (left), always
+            on screen — owner's rule, 2026-10-01: visible control of the git flow. */}
         {activeRun ? (
           <button
             type="button"
@@ -1344,6 +1407,30 @@ function Workspace({ me }: { me: Me }) {
       </header>
 
       <aside className="pane tree">
+        {bundle ? (
+          <SourceControl
+            sourceKind={bundle.project.sourceKind}
+            git={gitInfo}
+            gitError={gitError}
+            check={gitCheck}
+            checking={checking}
+            pending={bundle.pending}
+            maintained={maintainedSet}
+            applyState={bundle.generation?.state}
+            applying={applying}
+            committing={committing}
+            note={commitNote}
+            onCheck={() => void doCheck()}
+            onSync={() => void doSync()}
+            onApply={() => void doApply()}
+            onCommit={(message) => void commit(message)}
+            onReview={(path) => {
+              setDiffFocus(path);
+              setDiffOpen(true);
+            }}
+            onRevert={(path) => void doRevert(path)}
+          />
+        ) : null}
         <ProjectTree
           bundle={bundle}
           onOpenFile={openFile}
