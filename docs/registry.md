@@ -50,10 +50,22 @@ emitted — enough to notice a change under Civil, not a security property.
 ## The steps
 
 1. **Record the path map** — BUILT 2026-09-30. No behaviour change.
-2. **Stable paths.** Tell the transpiler which paths existing units already live
-   at, and keep them. Needed now: the first live emission after step 1 moved the
-   boundary from `src/boundaries/` to `src/boundary/` with no document change
-   behind it.
+2. **Revise, don't regenerate** — BUILT 2026-10-01. On a memo miss the model is
+   handed the current generated code, located through the registry and read
+   from HEAD plus pending (so a hand edit made outside Civil is what gets
+   revised), and asked to change only what the documents now require. The memo
+   key stays the sketch state — returning to an earlier sketch is still a hit.
+   Deterministic backstops, each found by running it live:
+   - a file of a unit that still exists keeps its path and unit;
+   - codeless units (clients, mcp boundaries, services) get no file — the first
+     revision run wrote a placeholder for the mcp boundary;
+   - an api boundary's server serves exactly its `exposes` — asked to keep
+     unchanged code byte-for-byte, the model kept a route the sketch removed;
+   - no unused imports — the characteristic leftover of an in-place edit.
+
+   Measured on doc-pipeline: a no-op re-emission returns every file
+   byte-identical; un-exposing a service changes exactly the boundary server
+   (route, import, docstring) and the generated client; reverting is a 0.1s hit.
 3. **Partial regeneration.** An edit regenerates its unit and its dependents; a
    memo per unit; unchanged files keep their bytes.
 4. **End-to-end probes.** `routes` and `contract` from the documents, probes

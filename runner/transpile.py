@@ -89,7 +89,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "6"
+PROMPT_VERSION = "10"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -155,6 +155,16 @@ request, of the architectural unit the file implements — an agent's function \
 carries its agent unit, a graph's run() module its graph unit, a boundary \
 server its boundary unit. A file that serves several units (a package \
 __init__.py) carries "shared".
+
+When the request includes the current generated code, you are REVISING it, \
+not writing anew: change only what the civil documents now require, return \
+every file you leave unchanged byte-for-byte as given, keep each existing \
+file at its path and under its unit, and omit the files of a unit no longer \
+in the unit list. Write a new file only where the documents now require code \
+that no current file provides. Many units have no code at all — clients, mcp \
+boundaries, services (their code is their graph's, or the human's handler) — \
+and never get a file, not even a placeholder. When an edit removes the last \
+use of an import, remove the import too.
 
 Choose emitted file paths yourself, guided by the repo layout visible in the \
 context files — put code where this repo's author would have. NEVER emit a \
@@ -307,6 +317,7 @@ def validate(
 
     run_modules = 0
     for path, tree in trees.items():
+        issues.extend(_unused_imports(path, tree))
         for module in _vendor_imports(tree):
             issues.append(f"{path}: imports {module} — emitted code never imports a vendor SDK")
         for name in _vendor_class_names(tree):
@@ -453,10 +464,138 @@ def _unit_issues(units: dict[str, str], known: list[dict[str, str]]) -> list[str
     return issues
 
 
+def _unused_imports(path: str, tree: ast.Module) -> list[str]:
+    """Names a module imports and never mentions. Revising in place makes this
+    the characteristic leftover — remove a route, keep its handler's import — so
+    it is checked rather than hoped for. A package __init__.py imports to
+    re-export, and a module listing __all__ declares its own; both are exempt."""
+    if path.endswith("__init__.py"):
+        return []
+    imported: dict[str, int] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported[(alias.asname or alias.name).split(".")[0]] = node.lineno
+        elif isinstance(node, ast.ImportFrom) and node.module != "__future__":
+            for alias in node.names:
+                if alias.name != "*":
+                    imported[alias.asname or alias.name] = node.lineno
+    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+    if "__all__" in used:
+        return []
+    # Names in string annotations ("Engine") count as uses too.
+    used |= {
+        n.value for n in ast.walk(tree)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value.isidentifier()
+    }
+    return [
+        f"{path}: imports {name} (line {line}) but never uses it — remove the import"
+        for name, line in sorted(imported.items(), key=lambda item: item[1])
+        if name not in used
+    ]
+
+
+def _route_issues(
+    files: dict[str, str],
+    roles: dict[str, str],
+    file_units: dict[str, str],
+    known: list[dict[str, Any]],
+) -> list[str]:
+    """An api boundary's server serves exactly what the boundary exposes: every
+    exposed service has its route, and no service the boundary does not expose
+    does. Revising in place makes the second half the live risk — asked to keep
+    unchanged code byte-for-byte, a model can keep a route the sketch removed.
+    Checked on route literals, so it holds whatever server framework the repo's
+    pattern chose."""
+    by_id = {unit["id"]: unit for unit in known}
+    services = sorted(u["id"].removeprefix("app/") for u in known if u["kind"] == "service")
+    issues = []
+    for path in sorted(files):
+        unit = by_id.get(file_units.get(path, ""))
+        if roles.get(path) != "boundary-server" or not unit or unit.get("boundary") != "api":
+            continue
+        try:
+            tree = ast.parse(files[path])
+        except SyntaxError:
+            continue  # reported by validate
+        literals = {
+            n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        }
+        exposes = unit.get("exposes") or []
+        for name in exposes:
+            if f"/{name}" not in literals:
+                issues.append(f"{path}: {unit['id']} exposes {name} but serves no /{name} route")
+        for name in services:
+            if name not in exposes and f"/{name}" in literals:
+                issues.append(
+                    f"{path}: serves /{name}, but {unit['id']} no longer exposes {name} — "
+                    "remove the route and anything only it used"
+                )
+    return issues
+
+
+def _codeless(unit: dict[str, str]) -> bool:
+    """Units that never own generated code: a client is the human's frontend, an
+    mcp boundary emits nothing today, and a service's code is its graph's (its own
+    unit) or the human's handler."""
+    return unit["kind"] in ("client", "service") or unit.get("boundary") == "mcp"
+
+
+def _codeless_issues(file_units: dict[str, str], known: list[dict[str, str]]) -> list[str]:
+    codeless = {unit["id"] for unit in known if _codeless(unit)}
+    return [
+        f"{path}: unit {file_units[path]!r} has no generated code — emit nothing for it, "
+        "not even a placeholder"
+        for path in sorted(file_units)
+        if file_units[path] in codeless
+    ]
+
+
+def _revision_issues(
+    files: dict[str, str],
+    file_units: dict[str, str],
+    current: list[dict[str, str]],
+    known: list[dict[str, str]],
+) -> list[str]:
+    """The backstop for revising in place: a file of a unit that still exists
+    must come back at the same path, under the same unit. Paths are how the
+    registry, the diff, and a human reviewer recognise the same code across
+    emissions; a moved file reads as one deleted and another written."""
+    ids = {unit["id"] for unit in known if not _codeless(unit)}
+    issues = []
+    for entry in sorted(current, key=lambda e: e["path"]):
+        path, unit = entry["path"], entry["unit"]
+        if unit not in ids:
+            # The unit left the documents, or never should have had code (a
+            # placeholder an earlier emission wrote): dropping its files is right.
+            continue
+        if path not in files:
+            issues.append(
+                f"{path}: an existing file of unit {unit!r} is missing — revise it in "
+                "place at this path; never move, rename, or drop it while its unit exists"
+            )
+        elif file_units.get(path) != unit:
+            issues.append(
+                f"{path}: belongs to unit {unit!r}, but came back labelled "
+                f"{file_units.get(path)!r} — a file stays with its unit"
+            )
+    return issues
+
+
+def _current_section(current: list[dict[str, str]]) -> str:
+    parts = ["The current generated code — revise it; return unchanged files exactly as given:"]
+    for entry in sorted(current, key=lambda e: e["path"]):
+        parts.append(
+            f"--- {entry['path']} (unit: {entry['unit']}, role: {entry['role']}) ---\n{entry['content']}"
+        )
+    return "\n\n".join(parts)
+
+
 def _unit_section(units: list[dict[str, str]]) -> str:
     lines = ["The units of this application — label every emitted file with the one it implements:"]
     for unit in units:
-        lines.append(f"- {unit['id']} ({unit['kind']}, defined in {unit['source']})")
+        kind = f"{unit['boundary']} {unit['kind']}" if unit.get("boundary") else unit["kind"]
+        lines.append(f"- {unit['id']} ({kind}, defined in {unit['source']})")
     return "\n".join(lines)
 
 
@@ -467,6 +606,7 @@ def transpile(
     client: Any,
     model: str,
     units: list[dict[str, str]] | None = None,
+    current: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     parts = []
     if context:
@@ -478,6 +618,8 @@ def transpile(
     parts.append(PATTERNS_PREFACE + patterns if patterns else NO_PATTERNS)
     if units:
         parts.append(_unit_section(units))
+    if current:
+        parts.append(_current_section(current))
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": "\n\n".join(parts)}]
     issues: list[str] = []
@@ -523,6 +665,10 @@ def transpile(
             issues = validate(files, documents, context, roles)
             if units is not None:
                 issues += _unit_issues(file_units, units)
+                issues += _codeless_issues(file_units, units)
+                issues += _route_issues(files, roles, file_units, units)
+                if current:
+                    issues += _revision_issues(files, file_units, current, units)
         if not issues:
             return {"files": files, "roles": roles, "units": file_units, "attempts": attempt}
 

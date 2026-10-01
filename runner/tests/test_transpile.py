@@ -28,6 +28,7 @@ from patterns import analyze  # noqa: E402
 from server import Handler  # noqa: E402
 from transpile import (  # noqa: E402
     PROMPT_VERSION,
+    _route_issues,
     TranspileValidationError,
     transpile,
     validate,
@@ -223,8 +224,33 @@ def test_roles_ride_back_defaulting_other() -> None:
 
 UNITS = [
     {"id": "graph/classify", "kind": "graph", "source": "civil/graphs/classify.yaml"},
-    {"id": "app/public-api", "kind": "boundary", "source": "civil/app.yaml"},
+    {"id": "app/public-api", "kind": "boundary", "boundary": "api", "source": "civil/app.yaml"},
+    {"id": "app/agent-tools", "kind": "boundary", "boundary": "mcp", "source": "civil/app.yaml"},
+    {"id": "app/web", "kind": "client", "source": "civil/app.yaml"},
 ]
+
+
+def test_codeless_units_get_no_files_not_even_placeholders() -> None:
+    print("test_codeless_units_get_no_files_not_even_placeholders")
+    client = FakeClient(
+        emission(
+            ("src/graphs/classify.py", GOOD, "orchestration", "graph/classify"),
+            ("src/boundary/agent_tools.py", '"""mcp emits nothing today."""\n', None, "app/agent-tools"),
+        ),
+        emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify"), id="call_2"),
+    )
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS)
+    feedback = client.messages.calls[1]["messages"][-1]["content"][0]["content"]
+    ok(result["attempts"] == 2 and "'app/agent-tools' has no generated code" in feedback,
+       "a placeholder for an mcp boundary is refused")
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    ok("- app/agent-tools (mcp boundary, defined in civil/app.yaml)" in prompt, "the surface rides the unit list")
+
+    # A placeholder an earlier emission wrote is current code the revision may drop.
+    stale = [dict(CURRENT[0]), {"path": "src/boundary/agent_tools.py", "unit": "app/agent-tools", "role": "other", "content": "x"}]
+    client = FakeClient(emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify")))
+    ok(transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, stale)["attempts"] == 1,
+       "a codeless unit's leftover file may be dropped without a retry")
 
 
 def test_units_ride_back_and_the_list_rides_the_prompt() -> None:
@@ -257,6 +283,90 @@ def test_an_unknown_unit_is_fed_back_and_retried() -> None:
     # An omitted unit reads as shared, which is always allowed.
     client = FakeClient(emission(("src/classify.py", GOOD, "orchestration")))
     ok(transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS)["attempts"] == 1, "omitted means shared")
+
+
+CURRENT = [
+    {"path": "src/graphs/classify.py", "unit": "graph/classify", "role": "orchestration", "content": GOOD},
+]
+
+
+def test_current_code_rides_the_prompt_as_a_revision() -> None:
+    print("test_current_code_rides_the_prompt_as_a_revision")
+    client = FakeClient(emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify")))
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, CURRENT)
+    ok(result["attempts"] == 1, "a file revised in place passes first time")
+    prompt = client.messages.calls[0]["messages"][0]["content"]
+    ok("The current generated code — revise it" in prompt, "the current code is framed as a revision")
+    ok("--- src/graphs/classify.py (unit: graph/classify, role: orchestration) ---" in prompt,
+       "each current file carries its unit and role")
+    ok("REVISING" in client.messages.calls[0]["system"], "the revision rule rides the system prompt")
+
+
+def test_moving_a_current_file_is_fed_back_and_retried() -> None:
+    print("test_moving_a_current_file_is_fed_back_and_retried")
+    client = FakeClient(
+        emission(("src/graph/classify.py", GOOD, "orchestration", "graph/classify")),
+        emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify"), id="call_2"),
+    )
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, CURRENT)
+    ok(result["attempts"] == 2, "a moved file costs a retry")
+    feedback = client.messages.calls[1]["messages"][-1]["content"][0]["content"]
+    ok("src/graphs/classify.py: an existing file of unit 'graph/classify' is missing" in feedback,
+       "the issue names the file that must stay put")
+
+
+def test_a_file_cannot_change_units_but_a_removed_unit_may_drop_its_files() -> None:
+    print("test_a_file_cannot_change_units_but_a_removed_unit_may_drop_its_files")
+    client = FakeClient(
+        emission(("src/graphs/classify.py", GOOD, "orchestration", "app/public-api")),
+        emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify"), id="call_2"),
+    )
+    result = transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, CURRENT)
+    feedback = client.messages.calls[1]["messages"][-1]["content"][0]["content"]
+    ok(result["attempts"] == 2 and "a file stays with its unit" in feedback, "a relabelled file is refused")
+
+    gone = [dict(CURRENT[0]), {"path": "src/old.py", "unit": "graph/retired", "role": "orchestration", "content": "x"}]
+    client = FakeClient(emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify")))
+    ok(transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, gone)["attempts"] == 1,
+       "files of a unit no longer in the list may go")
+
+
+def test_an_import_left_unused_is_an_issue() -> None:
+    print("test_an_import_left_unused_is_an_issue")
+    documents = dict(DOCUMENTS, **{"civil/app.yaml": COMPOSITION})
+    roles = {"src/classify.py": "orchestration", "src/server.py": "boundary-server"}
+    leftover = BOUNDARY.replace(
+        "from src.classify import run as classify_run\n",
+        "from src.classify import run as classify_run\nfrom src.services.save_record import handler as save_record_handler\n",
+    )
+    issues = validate({"src/classify.py": GOOD, "src/server.py": leftover}, documents, CONTEXT, roles)
+    ok(any("imports save_record_handler (line" in i and "never uses it" in i for i in issues),
+       "the handler import a removed route left behind is caught")
+    ok(not any("never uses it" in i for i in validate(
+        {"src/classify.py": GOOD, "src/server.py": BOUNDARY}, documents, CONTEXT, roles)),
+       "a clean boundary has no unused imports (os, FastAPI, CORSMiddleware, uvicorn all used)")
+    reexport = {"src/__init__.py": "from src.classify import run\n"}
+    ok(not any("never uses it" in i for i in validate(dict(reexport, **{"src/classify.py": GOOD}), DOCUMENTS, CONTEXT)),
+       "a package __init__ re-exports; it is exempt")
+
+
+def test_a_boundary_serves_exactly_what_it_exposes() -> None:
+    print("test_a_boundary_serves_exactly_what_it_exposes")
+    units = [
+        {"id": "app/public-api", "kind": "boundary", "boundary": "api", "source": "civil/app.yaml", "exposes": ["classify"]},
+        {"id": "app/classify", "kind": "service", "source": "civil/app.yaml"},
+        {"id": "app/save-record", "kind": "service", "source": "civil/app.yaml"},
+    ]
+    roles = {"src/server.py": "boundary-server"}
+    labels = {"src/server.py": "app/public-api"}
+    kept = BOUNDARY + '\n\n@app.post("/save-record")\ndef save(body: dict) -> dict:\n    return body\n'
+    issues = _route_issues({"src/server.py": kept}, roles, labels, units)
+    ok(any("serves /save-record, but app/public-api no longer exposes save-record" in i for i in issues),
+       "a route the sketch removed is caught")
+    ok(_route_issues({"src/server.py": BOUNDARY}, roles, labels, units) == [], "exactly the exposed routes passes")
+    units[0]["exposes"] = ["classify", "save-record"]
+    issues = _route_issues({"src/server.py": BOUNDARY}, roles, labels, units)
+    ok(any("exposes save-record but serves no /save-record route" in i for i in issues), "a missing route is caught")
 
 
 def test_unknown_role_is_an_issue_not_a_crash() -> None:
@@ -546,7 +656,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "6", "the unit label bumped the prompt version")
+        ok(meta["promptVersion"] == "10", "the route check bumped the contract version")
         connection.close()
     finally:
         server.shutdown()

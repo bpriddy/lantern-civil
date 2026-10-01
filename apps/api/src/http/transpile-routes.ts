@@ -37,7 +37,7 @@ import {
   planBoundaryClient,
 } from '../project/boundary-client.js';
 import { idTokenFor } from './runner-auth.js';
-import { attachRegistry, deriveUnits } from '../project/registry.js';
+import { attachRegistry, currentEmission, deriveUnits } from '../project/registry.js';
 import { transpileAndSync } from './session-routes.js';
 
 /**
@@ -252,11 +252,24 @@ export async function transpileProject(
   let output = await findMemo(pool, ownerId, project.id, hash);
   const cached = output !== undefined;
   if (!output) {
+    // Revise, don't regenerate (docs/registry.md, step 2): the model is handed the
+    // code it wrote last time, located through the registry, and edits it. The memo
+    // key deliberately excludes it — a memo entry means "an accepted emission for this
+    // sketch state", so returning to an earlier sketch is still a hit.
+    const current = await currentEmission(overlay);
     const answer = await callRunner(config.runnerUrl!, '/transpile', {
       documents: inputs.documents,
       patterns: inputs.patterns,
       context: inputs.context,
-      units: units.map(({ id, kind, source }) => ({ id, kind, source })),
+      units: units.map(({ id, kind, source, boundary, dependsOn }) => ({
+        id,
+        kind,
+        source,
+        ...(boundary ? { boundary } : {}),
+        // What an api boundary serves, checked against its server's routes.
+        ...(boundary === 'api' ? { exposes: dependsOn.map((d) => d.replace(/^app\//, '')) } : {}),
+      })),
+      ...(current.length > 0 ? { current } : {}),
     });
     const rawFiles = answer['files'];
     if (typeof rawFiles !== 'object' || rawFiles === null || Array.isArray(rawFiles)) {

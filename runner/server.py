@@ -132,18 +132,33 @@ class Handler(BaseHTTPRequestHandler):
         if units is not None and not (
             isinstance(units, list)
             and all(
-                isinstance(u, dict) and all(isinstance(u.get(k), str) for k in ("id", "kind", "source"))
+                isinstance(u, dict)
+                and all(isinstance(u.get(k), str) for k in ("id", "kind", "source"))
+                and isinstance(u.get("boundary", ""), str)
+                and isinstance(u.get("exposes", []), list)
+                and all(isinstance(e, str) for e in u.get("exposes", []))
                 for u in units
             )
         ):
             self._json(400, {"error": '"units" must be a list of {id, kind, source} strings'})
+            return
+        current = body.get("current")
+        if current is not None and not (
+            isinstance(current, list)
+            and all(
+                isinstance(c, dict)
+                and all(isinstance(c.get(k), str) for k in ("path", "unit", "role", "content"))
+                for c in current
+            )
+        ):
+            self._json(400, {"error": '"current" must be a list of {path, unit, role, content} strings'})
             return
 
         client = self._model_client()
         if client is None:
             return
         try:
-            result = transpile(documents, patterns, context, client, DEFAULT_MODEL, units)
+            result = transpile(documents, patterns, context, client, DEFAULT_MODEL, units, current)
         except TranspileValidationError as error:
             self._json(422, {
                 "error": "validation failed",

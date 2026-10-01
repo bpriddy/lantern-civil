@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { Document, parse } from 'yaml';
 import { zComposition, zGraph, type Composition, type Graph } from '@civil/schema';
+import type { ProjectSource } from './source.js';
 import type { TranspileOutput } from './transpile.js';
 
 /**
@@ -189,4 +190,56 @@ export function attachRegistry(output: TranspileOutput, units: readonly Unit[]):
   output.files[REGISTRY_PATH] = buildRegistry(units, output);
   output.roles[REGISTRY_PATH] = 'registry';
   output.units[REGISTRY_PATH] = SHARED_UNIT;
+}
+
+/** A file Civil generated before, as the registry records it — what a revision edits. */
+export interface CurrentFile {
+  path: string;
+  unit: string;
+  role: string;
+  content: string;
+}
+
+/** Generated API-side, never by the model, so never offered to it for revision. */
+const NOT_REVISABLE = new Set(['boundary-client', 'registry']);
+
+/** The same ceiling context files have: a revision prompt stays proportionate. */
+const CURRENT_MAX_BYTES = 200 * 1024;
+
+/**
+ * The current generated code, located through the registry and read from the
+ * project as it stands (HEAD plus pending) — so a hand edit made outside Civil is
+ * what gets revised, not what Civil last wrote. No registry yet (a project's first
+ * transpile, or one last transpiled before the registry existed) means no current
+ * code: the transpiler writes fresh, exactly as before.
+ */
+export async function currentEmission(source: ProjectSource): Promise<CurrentFile[]> {
+  await source.ensure?.([REGISTRY_PATH]);
+  const raw = source.read(REGISTRY_PATH);
+  if (raw === undefined) return [];
+  const doc = parseSafely(raw) as
+    | { units?: Record<string, { files?: Record<string, { role?: unknown }> }>; shared?: { files?: Record<string, { role?: unknown }> } }
+    | undefined;
+  if (!doc || typeof doc !== 'object') return [];
+
+  const listed: { path: string; unit: string; role: string }[] = [];
+  const collect = (unit: string, files: unknown) => {
+    if (!files || typeof files !== 'object') return;
+    for (const [path, entry] of Object.entries(files as Record<string, { role?: unknown }>)) {
+      const role = typeof entry?.role === 'string' ? entry.role : 'other';
+      if (!NOT_REVISABLE.has(role)) listed.push({ path, unit, role });
+    }
+  };
+  for (const [unit, entry] of Object.entries(doc.units ?? {})) collect(unit, entry?.files);
+  collect(SHARED_UNIT, doc.shared?.files);
+
+  await source.ensure?.(listed.map((f) => f.path));
+  const current: CurrentFile[] = [];
+  for (const file of listed.sort((a, b) => byString(a.path, b.path))) {
+    const content = source.read(file.path);
+    // Gone from the project (deleted by hand): nothing to revise; the unit writes anew.
+    if (content === undefined || Buffer.byteLength(content, 'utf8') > CURRENT_MAX_BYTES) continue;
+    current.push({ ...file, content });
+  }
+  return current;
 }

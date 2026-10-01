@@ -9,6 +9,7 @@ import {
   REGISTRY_PATH,
   attachRegistry,
   buildRegistry,
+  currentEmission,
   deriveUnits,
 } from '../dist/project/registry.js';
 import { shapeOutput } from '../dist/project/transpile.js';
@@ -203,4 +204,97 @@ test('transpileProject sends the unit list and lands the registry as a maintaine
   assert.ok(saved.includes(REGISTRY_PATH), 'and lands as a pending change, reviewed like the code');
   assert.ok(stored && REGISTRY_PATH in stored.files, 'stored in the memo, so it is a maintained file');
   assert.equal(stored!.units['src/graphs/enrich.py'], 'graph/enrich');
+});
+
+const sourceWith = (files: Record<string, string>) => ({
+  exists: (p: string) => p in files,
+  read: (p: string) => files[p],
+  list: () => Object.keys(files).sort(),
+  glob: () => [] as string[],
+});
+
+test('currentEmission reads each registered file as the project has it now', async () => {
+  const output = emission();
+  attachRegistry(output, deriveUnits(DOCUMENTS));
+  const project = {
+    ...output.files,
+    // Hand-edited outside Civil since: the revision starts from this, not the emission.
+    'src/graphs/classify.py': 'def run(x):\n    return x  # tuned by hand\n',
+  };
+  delete (project as Record<string, string>)['src/agents/classifier.py']; // deleted by hand
+
+  const current = await currentEmission(sourceWith(project) as never);
+  assert.deepEqual(
+    current.map((c) => [c.path, c.unit, c.role]),
+    [
+      ['src/__init__.py', 'shared', 'other'],
+      ['src/boundaries/public_api.py', 'app/public-api', 'boundary-server'],
+      ['src/graphs/classify.py', 'graph/classify', 'orchestration'],
+    ],
+    'the generated client and the registry itself are never offered; a deleted file is skipped',
+  );
+  assert.match(current.find((c) => c.path === 'src/graphs/classify.py')!.content, /tuned by hand/);
+});
+
+test('no registry, or an unreadable one, means writing fresh', async () => {
+  assert.deepEqual(await currentEmission(sourceWith({}) as never), []);
+  assert.deepEqual(await currentEmission(sourceWith({ [REGISTRY_PATH]: 'units: [broken' }) as never), []);
+});
+
+test('a miss sends the current code; the memo key ignores it', async () => {
+  const bodies: { current?: { path: string }[] }[] = [];
+  const service = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => (raw += c));
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.url === '/transpile/meta') return res.end(JSON.stringify({ model: 'm', promptVersion: '7' }));
+      bodies.push(JSON.parse(raw));
+      res.end(JSON.stringify({ files: { 'src/graphs/enrich.py': 'v2' }, units: { 'src/graphs/enrich.py': 'graph/enrich' } }));
+    });
+  });
+  service.listen(0, '127.0.0.1');
+  await once(service, 'listening');
+  const { port } = service.address() as { port: number };
+
+  const prior = shapeOutput({ 'src/graphs/enrich.py': 'v1' }, { 'src/graphs/enrich.py': 'orchestration' }, 1, {
+    'src/graphs/enrich.py': 'graph/enrich',
+  });
+  attachRegistry(prior, deriveUnits(DOCUMENTS));
+  const files: Record<string, string> = { ...DOCUMENTS, 'civil/patterns.md': '# p\n', ...prior.files };
+  const hashes: string[] = [];
+  const pool = {
+    query: async (sql: string, params: unknown[] = []) => {
+      if (sql.includes('input_hash') && sql.includes('SELECT')) {
+        hashes.push(params[2] as string);
+        return { rows: [] };
+      }
+      // maintainedPaths: the prior emission is Civil's, so it is never offered as context.
+      if (sql.includes('FROM transpilations')) return { rows: [{ output: { files: prior.files } }] };
+      if (sql.includes('FROM projects') && sql.includes('patterns_stale')) {
+        return { rows: [{ stale: false, head: null, headSha: null }] };
+      }
+      if (sql.includes('RETURNING')) return { rows: [{ path: params[3], kind: 'add', content: params[5], updatedAt: 'now' }] };
+      return { rows: [] };
+    },
+  };
+  const run = (overlay: Record<string, string>) =>
+    transpileProject(
+      { config: { runnerUrl: `http://127.0.0.1:${port}` }, pool } as never,
+      'owner',
+      { id: 'proj', defaultBranch: 'main' } as never,
+      { exists: () => false } as never,
+      sourceWith(overlay) as never,
+    );
+
+  await run(files);
+  const withoutCode = { ...files };
+  delete withoutCode['src/graphs/enrich.py'];
+  delete withoutCode[REGISTRY_PATH];
+  await run(withoutCode);
+  service.close();
+
+  assert.deepEqual(bodies[0]!.current!.map((c) => c.path), ['src/graphs/enrich.py'], 'the miss revises the current file');
+  assert.equal(bodies[1]!.current, undefined, 'no registry, no current code: written fresh');
+  assert.equal(hashes[0], hashes[1], 'the memo key is the sketch state, not the code it last produced');
 });
