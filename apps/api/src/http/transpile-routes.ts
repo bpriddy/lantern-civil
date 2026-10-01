@@ -23,6 +23,7 @@ import {
   gatherAnalyzerFiles,
   gatherInputs,
   inputHash,
+  sketchFingerprint,
   maintainedPaths,
   patternsState,
   setPatternsFresh,
@@ -297,12 +298,12 @@ export async function transpileProject(
     stripPromptAssets(output);
     // Stored with the emission so the registry is a maintained file: read-only in the
     // editor, retired and materialized like the code it describes.
-    attachRegistry(output, units);
+    attachRegistry(output, units, sketchFingerprint(inputs));
     await storeMemo(pool, ownerId, project.id, hash, output);
   } else {
     // Rebuilt on a hit too: it is deterministic and cheap, so a registry format that
     // improved since the memo was written never replays stale.
-    attachRegistry(output, units);
+    attachRegistry(output, units, sketchFingerprint(inputs));
   }
   // A memo written before this guard existed may still carry a prompt asset; strip on
   // the hit path too, so a returned emission is always clean (idempotent on a miss).

@@ -138,13 +138,14 @@ Python server imported at start and holds until it is restarted.
 the emitted files, the retired deletions, and a restart of the boundary
 processes — best-effort, so "no session" is silence, exactly like write-through.
 
-**Auto on structural ops.** An op batch that changes what the app *is* — any op
-that is not layout-only — triggers a background re-transpile-and-sync when a
-session is live, so the running app tracks the canvas without a manual Transpile
-(docs/app-session.md's "graph edits ... hot re-transpile"). Layout-only batches
-(node drags, the high-frequency case) never transpile — position is not
-emission. The trigger is fire-and-forget: the op response never waits on model
-latency, and the memo dedups a batch that changed nothing emittable.
+**Auto on structural ops — SUPERSEDED 2026-10-01.** Every non-layout op batch used
+to start a background re-transpile while a session was live. Measured, that was a
+model call (~10s+) per gesture, unserialized, so an errant edge's emission could
+land after the correction's. The owner's call: generation is explicit. An op edits
+the documents and returns; **Apply changes** (command `project.apply`, key A)
+generates and syncs the running app; the button shows whether the sketch has
+unapplied changes (civil/registry.yaml's `generated_from`, docs/registry.md).
+Automatic regeneration is to be revisited with intent detection.
 
 ## Open items, recorded not resolved
 

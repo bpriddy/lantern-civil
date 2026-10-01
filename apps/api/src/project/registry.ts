@@ -139,7 +139,11 @@ const contentHash = (content: string): string =>
  * no timestamps, so it changes in a diff only when the application did. The
  * registry never lists itself.
  */
-export function buildRegistry(units: readonly Unit[], output: TranspileOutput): string {
+export function buildRegistry(
+  units: readonly Unit[],
+  output: TranspileOutput,
+  generatedFrom: string,
+): string {
   const filesOf = (unitId: string) => {
     const entries: Record<string, { role: string; hash: string }> = {};
     for (const path of Object.keys(output.files).sort(byString)) {
@@ -152,6 +156,9 @@ export function buildRegistry(units: readonly Unit[], output: TranspileOutput): 
   const body: Record<string, unknown> = {
     apiVersion: 'civil/v1',
     kind: 'Registry',
+    // The sketch this code was generated from (sketchFingerprint). When the project's
+    // current fingerprint differs, the sketch has changes not yet applied.
+    generated_from: generatedFrom,
     units: Object.fromEntries(
       units.map((unit) => {
         const files = filesOf(unit.id);
@@ -179,7 +186,11 @@ export function buildRegistry(units: readonly Unit[], output: TranspileOutput): 
  * client belongs to the api boundary when there is exactly one — it spans them all
  * otherwise), then the document itself, as a maintained file like any other.
  */
-export function attachRegistry(output: TranspileOutput, units: readonly Unit[]): void {
+export function attachRegistry(
+  output: TranspileOutput,
+  units: readonly Unit[],
+  generatedFrom: string,
+): void {
   const apiBoundaries = units.filter((u) => u.boundary === 'api');
   for (const path of Object.keys(output.roles)) {
     if (output.roles[path] === 'boundary-client') {
@@ -187,9 +198,23 @@ export function attachRegistry(output: TranspileOutput, units: readonly Unit[]):
     }
   }
   delete output.files[REGISTRY_PATH];
-  output.files[REGISTRY_PATH] = buildRegistry(units, output);
+  output.files[REGISTRY_PATH] = buildRegistry(units, output, generatedFrom);
   output.roles[REGISTRY_PATH] = 'registry';
   output.units[REGISTRY_PATH] = SHARED_UNIT;
+}
+
+/**
+ * Whether the sketch has changes the generated code does not reflect yet — what the
+ * Apply changes button shows. `never`: nothing has been generated (no registry, or
+ * one from before generated_from existed); `stale`: the sketch moved since; `current`.
+ */
+export type ApplyState = 'never' | 'stale' | 'current';
+
+export function applyState(source: ProjectSource, fingerprint: string): ApplyState {
+  const raw = source.read(REGISTRY_PATH);
+  const doc = raw === undefined ? undefined : (parseSafely(raw) as { generated_from?: unknown } | undefined);
+  if (!doc || typeof doc.generated_from !== 'string') return 'never';
+  return doc.generated_from === fingerprint ? 'current' : 'stale';
 }
 
 /** A file Civil generated before, as the registry records it — what a revision edits. */

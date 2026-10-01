@@ -66,6 +66,14 @@ emitted — enough to notice a change under Civil, not a security property.
    Measured on doc-pipeline: a no-op re-emission returns every file
    byte-identical; un-exposing a service changes exactly the boundary server
    (route, import, docstring) and the generated client; reverting is a 0.1s hit.
+   **Apply changes** (2026-10-01, owner's call): generation is explicit. The
+   registry records `generated_from`, a fingerprint of the sketch — documents,
+   the human code they reference, the pattern prompt, and nothing about Civil's
+   model or prompt version — and the bundle compares it with the sketch now:
+   `never`, `stale` (the button reads "Apply changes"), or `current`. Opening the
+   review panel no longer generates; committing is refused while stale, so the
+   code that lands matches the documents landing with it and was seen.
+
 3. **Partial regeneration.** An edit regenerates its unit and its dependents; a
    memo per unit; unchanged files keep their bytes.
 4. **End-to-end probes.** `routes` and `contract` from the documents, probes

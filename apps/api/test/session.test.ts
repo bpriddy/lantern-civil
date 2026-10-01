@@ -519,33 +519,6 @@ test('syncTranspileToSession swallows a 404 and an unreachable port alike', asyn
   await syncTranspileToSession(`http://127.0.0.1:${port}`, 'p-1', [], output, []);
 });
 
-// --- the ops auto-retranspile predicate --------------------------------------
-
-import { batchNeedsTranspile } from '../dist/http/project-routes.js';
-
-test('a layout-only op batch does not re-transpile; any structural op does', () => {
-  // Node drags are the high-frequency case and emit nothing — position is not code.
-  assert.equal(batchNeedsTranspile([{ op: 'setLayout', id: 'a', x: 1, y: 2 }]), false);
-  assert.equal(
-    batchNeedsTranspile([
-      { op: 'setLayout', id: 'a', x: 1, y: 2 },
-      { op: 'setLayout', id: 'b', x: 3, y: 4 },
-    ]),
-    false,
-  );
-  // Anything that changes what the app IS triggers a re-transpile.
-  assert.equal(batchNeedsTranspile([{ op: 'addNode', node: {} }]), true);
-  assert.equal(batchNeedsTranspile([{ op: 'removeNode', id: 'a' }]), true);
-  // A mixed batch counts as structural — one real edit rode in with the drag.
-  assert.equal(
-    batchNeedsTranspile([
-      { op: 'setLayout', id: 'a', x: 1, y: 2 },
-      { op: 'updateNode', id: 'a', patch: {} },
-    ]),
-    true,
-  );
-});
-
 // --- cold-start materialization drops retirements ----------------------------
 
 test('a fresh session materialises the emitted app without the retired files', () => {

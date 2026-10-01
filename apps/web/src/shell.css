@@ -700,6 +700,10 @@ body {
 
 .commit-wrap { position: relative; }
 .chip-pending, .chip-note { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
+.chip-apply { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; border-color: var(--warn); }
+.chip-applying { font-family: var(--mono); font-size: 11px; }
+.dot.pulse { animation: civil-pulse 1.2s ease-in-out infinite; }
+@keyframes civil-pulse { 50% { opacity: 0.3; } }
 .dot.warn { background: var(--warn); }
 .dot.ok { background: var(--ok); }
 

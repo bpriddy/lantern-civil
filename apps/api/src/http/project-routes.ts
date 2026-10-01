@@ -23,10 +23,17 @@ import {
 } from '../project/repository.js';
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
-import { sessionIsLive, transpileAndSync, writeThroughToSession } from './session-routes.js';
+import { writeThroughToSession } from './session-routes.js';
 import { RunnerError, transpileProject } from './transpile-routes.js';
 import { createHash } from 'node:crypto';
-import { emittedHistory, maintainedPaths, markPatternsStale } from '../project/transpile.js';
+import {
+  emittedHistory,
+  gatherInputs,
+  maintainedPaths,
+  markPatternsStale,
+  sketchFingerprint,
+} from '../project/transpile.js';
+import { REGISTRY_PATH, applyState } from '../project/registry.js';
 import { CIVIL_DIR } from '../project/bundle.js';
 import {
   dissolutionInputs,
@@ -183,6 +190,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     }
     drifted.sort();
 
+    // Generation is explicit (Apply changes): the canvas edits documents instantly
+    // and the code catches up when asked. This says whether it has, by comparing the
+    // sketch's fingerprint with the one civil/registry.yaml records — so it survives a
+    // reload and reads the same on any device, from the repo alone.
+    const inputs = await gatherInputs(overlay, maintained);
+    await overlay.ensure?.([REGISTRY_PATH]);
+    const generation = { state: applyState(overlay, sketchFingerprint(inputs)) };
+
     return {
       project: {
         id: project.id,
@@ -198,6 +213,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // editor renders these read-only: you change generated code by editing the
       // graph, not the file. Union of every emission this project has produced.
       maintained: [...maintained],
+      generation,
       // Maintained orchestration files whose current content is no emission Civil
       // ever produced — edited outside Civil, and lift's to reconcile (docs/lift.md).
       drifted,
@@ -722,27 +738,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       existsAtHead: base.exists(body.path),
     });
 
-    // A structural op changes what the app IS, so a live session hot re-transpiles
-    // to track the canvas (docs/app-session.md). Layout-only batches — node drags,
-    // the high-frequency case — are position, not emission, and never transpile.
-    // Fire-and-forget: the op response never waits on model latency, and the task
-    // opens its own overlay because this route's predates the op's pending write.
-    if (config.sessionUrl && config.runnerUrl && batchNeedsTranspile(body.ops as ManifestOp[])) {
-      const sessionUrl = config.sessionUrl;
-      const ownerId = request.identity.id;
-      void (async () => {
-        try {
-          // Nothing is listening: skip the model round trip a re-transpile costs.
-          if (!(await sessionIsLive(sessionUrl, project.id))) return;
-          const freshBase = await openSource(ownerId, project);
-          const freshPending = await listPending(pool, ownerId, project.id, project.defaultBranch);
-          const freshOverlay = new OverlaySource(freshBase, freshPending);
-          await transpileAndSync(deps, ownerId, project, freshBase, freshOverlay);
-        } catch (error) {
-          request.log.error({ err: error, projectId: project.id }, 're-transpile after op failed');
-        }
-      })();
-    }
+    // No generation here (owner's call, 2026-10-01): an op edits the documents and
+    // returns; the code catches up when the author presses Apply changes. Automatic
+    // re-transpile after every structural op cost a model call per gesture and raced
+    // its own results — revisit with intent detection (docs/registry.md).
 
     return {
       path: change.path,
@@ -824,16 +823,6 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     await deletePending(pool, request.identity.id, project.id, project.defaultBranch, body.path);
     return reply.code(204).send();
   });
-}
-
-/**
- * Whether an op batch changes what the app emits, and so warrants a re-transpile.
- * Layout-only batches (every op a setLayout — a node drag) move position, which is
- * not emission, so they do not; anything else in the batch does. Extracted so the
- * decision is unit-testable without spawning the background task it gates.
- */
-export function batchNeedsTranspile(ops: readonly { op?: unknown }[]): boolean {
-  return ops.some((op) => op.op !== 'setLayout');
 }
 
 /** Enough for Monaco to pick a grammar. PRD 15 makes Python the only parsed one. */

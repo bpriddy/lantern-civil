@@ -7,12 +7,13 @@ import { once } from 'node:events';
 import { parse } from 'yaml';
 import {
   REGISTRY_PATH,
+  applyState,
   attachRegistry,
   buildRegistry,
   currentEmission,
   deriveUnits,
 } from '../dist/project/registry.js';
-import { shapeOutput } from '../dist/project/transpile.js';
+import { shapeOutput, sketchFingerprint } from '../dist/project/transpile.js';
 import { transpileProject } from '../dist/http/transpile-routes.js';
 
 /**
@@ -22,6 +23,7 @@ import { transpileProject } from '../dist/http/transpile-routes.js';
  * files or misses a hand edit, so the derivation is pinned against a real project.
  */
 
+const FP = 'sha256:00000000feedface';
 const EXAMPLE = path.resolve(import.meta.dirname, '../../../examples/doc-pipeline');
 const read = (rel: string) => fs.readFileSync(path.join(EXAMPLE, rel), 'utf8');
 const DOCUMENTS = {
@@ -88,7 +90,7 @@ const emission = () =>
 
 test('attachRegistry files every emitted file under its unit and never lists itself', () => {
   const output = emission();
-  attachRegistry(output, deriveUnits(DOCUMENTS));
+  attachRegistry(output, deriveUnits(DOCUMENTS), FP);
 
   assert.equal(output.roles[REGISTRY_PATH], 'registry');
   const registry = parse(output.files[REGISTRY_PATH]!) as {
@@ -116,19 +118,19 @@ test('the registry is byte-stable, and a content change moves exactly one hash',
   const units = deriveUnits(DOCUMENTS);
   const a = emission();
   const b = emission();
-  attachRegistry(a, units);
-  attachRegistry(b, units);
+  attachRegistry(a, units, FP);
+  attachRegistry(b, units, FP);
   assert.equal(a.files[REGISTRY_PATH], b.files[REGISTRY_PATH], 'same inputs, same bytes');
 
   // Re-attaching (the memo-hit path) is idempotent.
   const again = a.files[REGISTRY_PATH];
-  attachRegistry(a, units);
+  attachRegistry(a, units, FP);
   assert.equal(a.files[REGISTRY_PATH], again);
 
   const c = emission();
   c.files['src/graphs/classify.py'] = 'def run(x):\n    return [x]\n';
-  const changed = buildRegistry(units, c).split('\n');
-  const base = buildRegistry(units, emission()).split('\n');
+  const changed = buildRegistry(units, c, FP).split('\n');
+  const base = buildRegistry(units, emission(), FP).split('\n');
   const diff = changed.filter((line, i) => line !== base[i]);
   assert.equal(diff.length, 1, 'one line moves');
   assert.match(diff[0]!, /hash: sha256:/);
@@ -215,7 +217,7 @@ const sourceWith = (files: Record<string, string>) => ({
 
 test('currentEmission reads each registered file as the project has it now', async () => {
   const output = emission();
-  attachRegistry(output, deriveUnits(DOCUMENTS));
+  attachRegistry(output, deriveUnits(DOCUMENTS), FP);
   const project = {
     ...output.files,
     // Hand-edited outside Civil since: the revision starts from this, not the emission.
@@ -260,7 +262,7 @@ test('a miss sends the current code; the memo key ignores it', async () => {
   const prior = shapeOutput({ 'src/graphs/enrich.py': 'v1' }, { 'src/graphs/enrich.py': 'orchestration' }, 1, {
     'src/graphs/enrich.py': 'graph/enrich',
   });
-  attachRegistry(prior, deriveUnits(DOCUMENTS));
+  attachRegistry(prior, deriveUnits(DOCUMENTS), FP);
   const files: Record<string, string> = { ...DOCUMENTS, 'civil/patterns.md': '# p\n', ...prior.files };
   const hashes: string[] = [];
   const pool = {
@@ -297,4 +299,29 @@ test('a miss sends the current code; the memo key ignores it', async () => {
   assert.deepEqual(bodies[0]!.current!.map((c) => c.path), ['src/graphs/enrich.py'], 'the miss revises the current file');
   assert.equal(bodies[1]!.current, undefined, 'no registry, no current code: written fresh');
   assert.equal(hashes[0], hashes[1], 'the memo key is the sketch state, not the code it last produced');
+});
+
+test('the registry records the sketch it was generated from, and apply state reads it', () => {
+  const output = emission();
+  attachRegistry(output, deriveUnits(DOCUMENTS), FP);
+  assert.match(output.files[REGISTRY_PATH]!, /^generated_from: sha256:00000000feedface$/m);
+
+  const project = { ...output.files };
+  assert.equal(applyState(sourceWith(project) as never, FP), 'current');
+  assert.equal(applyState(sourceWith(project) as never, 'sha256:somethingelse0'), 'stale');
+  assert.equal(applyState(sourceWith({}) as never, FP), 'never', 'nothing generated yet');
+  const legacy = { [REGISTRY_PATH]: 'apiVersion: civil/v1\nkind: Registry\nunits: {}\n' };
+  assert.equal(applyState(sourceWith(legacy) as never, FP), 'never', 'a registry from before generated_from');
+});
+
+test('the sketch fingerprint moves with the sketch and the code it uses, never with Civil', () => {
+  const inputs = { documents: { 'civil/app.yaml': 'a' }, context: { 'src/x.py': 'x' }, patterns: '# p' };
+  const fp = sketchFingerprint(inputs);
+  assert.match(fp, /^sha256:[0-9a-f]{16}$/);
+  assert.equal(sketchFingerprint({ ...inputs }), fp, 'deterministic');
+  assert.notEqual(sketchFingerprint({ ...inputs, documents: { 'civil/app.yaml': 'b' } }), fp, 'a sketch edit');
+  assert.notEqual(sketchFingerprint({ ...inputs, context: { 'src/x.py': 'y' } }), fp, 'a handler edit');
+  assert.notEqual(sketchFingerprint({ ...inputs, patterns: '# q' }), fp, 'new patterns');
+  // No model id or prompt version is an input at all: upgrading Civil cannot move it.
+  assert.equal(sketchFingerprint.length, 1);
 });

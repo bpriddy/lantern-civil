@@ -224,6 +224,25 @@ export function inputHash(
 }
 
 /**
+ * The sketch's fingerprint: everything the transpiler reads from the project —
+ * documents, the human code they reference, the pattern prompt — and nothing about
+ * Civil itself (model, prompt version). Recorded in civil/registry.yaml as
+ * `generated_from`, so "has the sketch changed since the last apply" is answerable
+ * from the repo alone, and upgrading Civil does not mark every project stale.
+ */
+export function sketchFingerprint(inputs: TranspileInputs): string {
+  const hash = createHash('sha256');
+  const pairs = [...Object.entries(inputs.documents), ...Object.entries(inputs.context)].sort(
+    ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0),
+  );
+  for (const [path, content] of pairs) {
+    hash.update(path).update('\0').update(content).update('\0');
+  }
+  hash.update(inputs.patterns ?? '');
+  return `sha256:${hash.digest('hex').slice(0, 16)}`;
+}
+
+/**
  * What each emitted file is, as the transpiler declared it. The session layer keys
  * off "boundary-server" — those files become supervised processes — and everything
  * the runner has not classified is "other", which no process derivation touches.

@@ -16,6 +16,7 @@ const CodeContext = lazy(() =>
 const DiffPanel = lazy(() =>
   import('./panes/DiffPanel.js').then((m) => ({ default: m.DiffPanel })),
 );
+import { ApplyButton } from './panes/ApplyButton.js';
 import { CommitBar } from './panes/CommitBar.js';
 import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
@@ -181,8 +182,8 @@ function Workspace({ me }: { me: Me }) {
   const [diffOpen, setDiffOpen] = useState(false);
   // Bumped when a pre-commit transpile lands emitted files under the open diff,
   // so the panel re-fetches and the review shows exactly what will commit.
-  const [diffRevision, setDiffRevision] = useState(0);
-  const [preparingReview, setPreparingReview] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const applyingRef = useRef(false);
   // Drift banners the user waved off this session, by orchestration path.
   const [driftDismissed, setDriftDismissed] = useState<Set<string>>(new Set());
 
@@ -584,8 +585,8 @@ function Workspace({ me }: { me: Me }) {
         void doSync();
         return 'Checking the repository…';
       },
-      'project.transpile': () => {
-        void doTranspile();
+      'project.apply': () => {
+        void doApply();
         return 'Transpiling the civil documents…';
       },
       'project.settings': () => {
@@ -682,20 +683,29 @@ function Workspace({ me }: { me: Me }) {
    * appear in the tree and the commit indicator — the same beat every other
    * mutation follows.
    */
-  const doTranspile = useCallback(async () => {
-    if (!activeId) return;
+  const doApply = useCallback(async () => {
+    if (!activeId || applyingRef.current) return;
+    // A ref, not state, guards re-entry: two presses inside one render would both
+    // see applying=false and start two model calls.
+    applyingRef.current = true;
+    setApplying(true);
+    const started = performance.now();
     try {
       const { files, cached, patternsRefreshed } = await transpileProject(activeId);
       await refresh();
+      const seconds = Math.round((performance.now() - started) / 1000);
       const count = `${files.length} file${files.length === 1 ? '' : 's'}`;
       report({
-        title: 'Transpile',
+        title: 'Apply changes',
         detail: cached
-          ? `Transpiled ${count} — unchanged inputs, replayed from cache.`
-          : `Transpiled ${count}.${patternsRefreshed ? ' Pattern prompt refreshed.' : ''}`,
+          ? `Already generated for this sketch — ${count} restored from cache.`
+          : `Generated ${count} in ${seconds}s.${patternsRefreshed ? ' Code patterns re-read.' : ''}`,
       });
     } catch (error) {
-      report({ title: 'Transpile', detail: (error as Error).message, refused: true });
+      report({ title: 'Apply changes', detail: (error as Error).message, refused: true });
+    } finally {
+      applyingRef.current = false;
+      setApplying(false);
     }
   }, [activeId, refresh, report]);
 
@@ -770,25 +780,10 @@ function Workspace({ me }: { me: Me }) {
    * Quiet — no success toast, because it fires whenever the review opens; only a
    * failure is worth interrupting for. A non-committable project just shows pending.
    */
-  const reviewBeforeCommit = useCallback(() => {
-    setDiffOpen(true);
-    if (!canCommit || !activeId) return;
-    // The panel is open on the pre-transpile set; mark it preparing so the commit
-    // button waits, then transpile, refresh, and bump the revision so the panel
-    // re-fetches the post-transpile set. Only then is what is shown what commits.
-    setPreparingReview(true);
-    void (async () => {
-      try {
-        await transpileProject(activeId);
-        await refresh();
-        setDiffRevision((n) => n + 1);
-      } catch (error) {
-        report({ title: 'Prepare commit', detail: (error as Error).message, refused: true });
-      } finally {
-        setPreparingReview(false);
-      }
-    })();
-  }, [canCommit, activeId, refresh, report]);
+  // Opening the review generates nothing (generation is explicit — Apply changes).
+  // The panel refuses to commit while the sketch has unapplied changes instead, so
+  // the code that lands always matches the documents landing with it, and was seen.
+  const reviewBeforeCommit = useCallback(() => setDiffOpen(true), []);
 
   /**
    * Watching is reading (PRD 8.2): poll the event log from the last seq while the
@@ -1188,8 +1183,7 @@ function Workspace({ me }: { me: Me }) {
             // commit something with no repository behind it.
             committable={bundle.project.sourceKind === 'github'}
             committing={committing}
-            revision={diffRevision}
-            preparing={preparingReview}
+            unapplied={bundle.generation?.state === 'stale' || applying}
             onCommit={(message) => void commit(message)}
             onClose={() => setDiffOpen(false)}
           />
@@ -1299,6 +1293,13 @@ function Workspace({ me }: { me: Me }) {
           {canCommit ? <span className="chip-sync">⟳</span> : null}
         </button>
         {/* PRD 7: commits are explicit, and the indicator shows a count. */}
+        {bundle?.composition ? (
+          <ApplyButton
+            state={bundle.generation?.state}
+            applying={applying}
+            onApply={() => void doApply()}
+          />
+        ) : null}
         {/* PRD 7: the indicator shows a count; clicking it shows the diff preview. */}
         <CommitBar
           count={pendingCount}
@@ -1421,7 +1422,7 @@ function Workspace({ me }: { me: Me }) {
                 <button type="button" className="connect" onClick={() => void doLift()}>
                   Update graph from code
                 </button>
-                <button type="button" className="connect" onClick={() => void doTranspile()}>
+                <button type="button" className="connect" onClick={() => void doApply()}>
                   Regenerate code from graph
                 </button>
                 <button

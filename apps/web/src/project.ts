@@ -110,6 +110,11 @@ export interface ProjectBundle {
   maintained: string[];
   /** Maintained orchestration files changed outside Civil — lift's to reconcile. */
   drifted: string[];
+  /**
+   * Whether the generated code reflects the sketch (civil/registry.yaml's
+   * generated_from against the sketch now). Optional: an older server omits it.
+   */
+  generation?: { state: 'never' | 'stale' | 'current' };
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
   contracts: Record<string, ContractResult>;
 }

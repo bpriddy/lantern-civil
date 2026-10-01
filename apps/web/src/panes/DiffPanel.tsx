@@ -18,7 +18,7 @@ export function DiffPanel({
   committable,
   committing,
   revision,
-  preparing,
+  unapplied,
   onCommit,
   onClose,
 }: {
@@ -28,9 +28,9 @@ export function DiffPanel({
   /** Bumped when the pending set changes underneath an open panel (a pre-commit
    *  transpile lands emitted files); the fetch re-runs so the review shows them. */
   revision?: number;
-  /** A pre-commit transpile is in flight — the diff is not yet the final set, so
-   *  committing must wait or it would land more than what is shown. */
-  preparing?: boolean;
+  /** The sketch has changes the generated code does not reflect yet (or an apply
+   *  is running): committing now would land documents and code that disagree. */
+  unapplied?: boolean;
   onCommit: (message: string) => void;
   onClose: () => void;
 }) {
@@ -68,7 +68,7 @@ export function DiffPanel({
   const file = useMemo(() => files?.find((f) => f.path === active), [files, active]);
 
   const commit = () => {
-    if (message.trim() && committable && !committing && !preparing) {
+    if (message.trim() && committable && !committing && !unapplied) {
       onCommit(message.trim());
       setMessage('');
       onClose();
@@ -97,13 +97,14 @@ export function DiffPanel({
               <button
                 type="button"
                 className="connect"
-                disabled={committing || preparing || !message.trim()}
+                disabled={committing || unapplied || !message.trim()}
+                title={unapplied ? 'The sketch has changes not yet applied — press Apply changes first' : undefined}
                 onClick={commit}
               >
                 {committing
                   ? 'Committing…'
-                  : preparing
-                    ? 'Preparing…'
+                  : unapplied
+                    ? 'Apply changes first'
                     : `Commit ${files?.length ?? ''} file${files?.length === 1 ? '' : 's'}`}
               </button>
             </>

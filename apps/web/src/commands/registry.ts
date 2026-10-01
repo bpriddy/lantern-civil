@@ -30,7 +30,7 @@ export type CommandId =
   | 'project.diff'
   | 'project.commit'
   | 'project.sync'
-  | 'project.transpile'
+  | 'project.apply'
   | 'help.keys';
 
 export interface CommandContext {
@@ -262,13 +262,15 @@ export const COMMANDS: readonly Command[] = [
     enabled: (c) => c.where !== 'home' && c.canCommit,
   },
   {
-    id: 'project.transpile',
-    title: 'Transpile',
+    id: 'project.apply',
+    title: 'Apply changes',
     description:
-      'Emit the civil documents as code. Emitted files arrive as pending changes, ' +
-      'reviewed and committed like any other edit — nothing is applied unpreviewably.',
-    keys: ['t'],
-    enabled: (c) => c.where !== 'home',
+      'Generate code for what changed in the sketch since the last apply, and update ' +
+      'the running app. Generated files arrive as pending changes, reviewed and ' +
+      'committed like any other edit — nothing is applied unpreviewably.',
+    keys: ['a'],
+    // Not under the review panel: applying changes the pending set it is showing.
+    enabled: (c) => c.where !== 'home' && c.where !== 'diff',
   },
   {
     id: 'project.settings',
