@@ -294,11 +294,7 @@ function Workspace({ me }: { me: Me }) {
     setCommitNote(null);
     try {
       const result = await commitProject(activeId, message);
-      setCommitNote(
-        result.reparentedOnto
-          ? `Committed ${result.files} file(s) on top of newer work.`
-          : `Committed ${result.files} file(s).`,
-      );
+      setCommitNote(`Committed ${result.files} file(s).`);
       // Undo stops at a commit. Walking back past one would resurrect pre-commit
       // text as a new pending change — an edit war with your own history.
       clearUndo();

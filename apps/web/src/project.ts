@@ -229,7 +229,6 @@ export interface CommitResult {
   commit: string;
   url: string;
   files: number;
-  reparentedOnto: string | null;
 }
 
 export async function commitProject(projectId: string, message: string): Promise<CommitResult> {
@@ -244,8 +243,7 @@ export async function commitProject(projectId: string, message: string): Promise
     issues?: string[];
   };
   if (!response.ok) {
-    // Commit now transpiles first, so a transpiler 422 can surface here too — carry
-    // its issues, the actionable half, exactly as transpileProject does.
+    // A refusal (branch_moved, apply_needed) carries a message saying what to do.
     const issues =
       Array.isArray(body.issues) && body.issues.length > 0 ? ` — ${body.issues.join('; ')}` : '';
     throw new Error(`${body.message ?? body.error ?? `commit failed (${response.status})`}${issues}`);

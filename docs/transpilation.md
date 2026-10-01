@@ -100,8 +100,8 @@ and proof.
 
 ## Conflicts: mine or theirs
 
-No merging, deliberately — the same stance the commit re-parent model already
-takes. When a Civil-maintained file was hand-edited AND the corresponding canvas
+No merging, deliberately — the same stance the commit path takes (it refuses a
+moved branch rather than merging; the author syncs and picks per file). When a Civil-maintained file was hand-edited AND the corresponding canvas
 state changed, commit does not silently clobber and does not attempt a merge: it
 surfaces both and the owner picks — mine (the canvas intent, regenerated) or
 theirs (the hand edit, lifted). Handlers are exempt by construction: Civil

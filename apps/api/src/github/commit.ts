@@ -23,24 +23,19 @@ export interface CommitRequest {
   message: string;
   changes: readonly PendingChange[];
   /**
-   * What to do when the branch moved between reading it and writing.
-   *
-   * `reparent` rebuilds the tree from the new HEAD and re-applies these changes on
-   * top. Nothing is destroyed and history stays linear: files Civil touched take
-   * Civil's version, files it did not keep whatever landed. This is "the Civil UI is
-   * canon" implemented without force — a force update would discard the intervening
-   * commits outright.
-   *
-   * `refuse` stops and hands back the current sha, for when a human should look.
+   * The commit the author has been editing against. The branch must still be there:
+   * if anything landed since, the commit is refused with BranchMovedError before a
+   * blob is written, and the author syncs and resolves (mine or theirs) first. Civil
+   * never decides on its own whose version of a file wins. Omitted (undefined) only
+   * for a project that has never pinned a head, which has nothing to compare.
    */
-  onBranchMoved?: 'reparent' | 'refuse';
+  expectedHead?: string | null;
 }
 
 export interface CommitResult {
   commitSha: string;
   url: string;
   /** Set when the branch had moved and these changes were re-applied on top. */
-  reparentedOnto?: string;
 }
 
 export class BranchMovedError extends Error {
@@ -75,16 +70,7 @@ export async function commitPendingChanges(
     return bootstrapEmptyRepository(app, request);
   }
 
-  try {
-    return await attemptCommit(app, request);
-  } catch (error) {
-    if (!(error instanceof BranchMovedError) || request.onBranchMoved === 'refuse') throw error;
-
-    // One retry only. If the branch moves again during the retry, something is
-    // pushing continuously and looping would just lose to it repeatedly.
-    const result = await attemptCommit(app, { ...request, onBranchMoved: 'refuse' });
-    return { ...result, reparentedOnto: error.currentSha };
-  }
+  return attemptCommit(app, request);
 }
 
 async function attemptCommit(app: GitHubApp, request: CommitRequest): Promise<CommitResult> {
@@ -106,6 +92,12 @@ async function attemptCommit(app: GitHubApp, request: CommitRequest): Promise<Co
       `/git/ref/heads/${encodeURIComponent(branch)}`,
     );
     headSha = ref.object.sha;
+    // Moved since the author last synced: refuse before writing anything. Building
+    // on the new tip instead would silently put this commit's files over whatever
+    // landed — a decision that belongs to the author, not to Civil.
+    if (request.expectedHead && headSha !== request.expectedHead) {
+      throw new BranchMovedError(headSha);
+    }
     const headCommit = await call<{ tree: { sha: string } }>(`/git/commits/${headSha}`);
     baseTreeSha = headCommit.tree.sha;
   } catch (error) {

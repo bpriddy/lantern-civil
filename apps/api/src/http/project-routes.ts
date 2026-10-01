@@ -24,7 +24,6 @@ import {
 import { EXAMPLES, findExample, openExample } from '../project/examples.js';
 import { scaffoldFiles } from '../project/scaffold.js';
 import { writeThroughToSession } from './session-routes.js';
-import { RunnerError, transpileProject } from './transpile-routes.js';
 import { createHash } from 'node:crypto';
 import {
   emittedHistory,
@@ -372,44 +371,29 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const changes = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     if (changes.length === 0) return reply.code(409).send({ error: 'nothing_to_commit' });
 
-    // Auto, then review (owner's call): the emitted code that lands in the repo must
-    // match the documents landing with it, so commit runs a fresh transpile first —
-    // landing its files and retiring stale ones into pending — then commits the
-    // result. The memo makes this identical to the transpile the author reviewed in
-    // the diff, so what they saw is what commits. A transpile failure fails the
-    // commit rather than writing an inconsistent HEAD. Skipped with no runner
-    // configured (examples, a runner-less deploy): the raw pending set commits as before.
-    let toCommit = changes;
-    if (config.runnerUrl) {
-      try {
-        const source = await openSource(request.identity.id, project);
-        const overlay = new OverlaySource(source, changes);
-        await transpileProject({ config, pool }, request.identity.id, project, source, overlay);
-      } catch (error) {
-        if (error instanceof RunnerError) return reply.code(error.status).send(error.body);
-        if (error instanceof ContentTooLargeError) {
-          return reply.code(413).send({ error: 'content_too_large', message: error.message });
-        }
-        if (error instanceof SourceError) {
-          return reply.code(error.status).send({ error: error.code, message: error.message });
-        }
-        throw error;
-      }
-      // Transpilation may have added emitted files and retired stale ones — re-read.
-      // Single-user note: the transpile ran against the `changes` snapshot; `toCommit`
-      // is re-read fresh, so a document edit landing in this window (another tab, a
-      // retry) could pair a new document with code from the old one. Accepted for the
-      // one-editor-per-project model (docs/roadmap.md); a per-project commit lock is
-      // the fix if that ever stops holding.
-      toCommit = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
-      if (toCommit.length === 0) {
-        // The pending set existed but transpilation retired all of it (stale emissions
-        // with no surviving edit) — a different answer than "you changed nothing".
+    // Nothing generated on commit (owner's call, 2026-10-01: no automatic steps in the
+    // git flow). The code that lands must match the documents landing with it, so a
+    // sketch with unapplied changes is refused — the author presses Apply changes,
+    // reviews what it produced, and commits that. Superseded: commit used to run a
+    // transpile itself and commit the result unseen.
+    const toCommit = changes;
+    try {
+      const source = await openSource(request.identity.id, project);
+      const overlay = new OverlaySource(source, changes);
+      const maintained = await maintainedPaths(pool, request.identity.id, project.id);
+      const inputs = await gatherInputs(overlay, maintained);
+      await overlay.ensure?.([REGISTRY_PATH]);
+      if (applyState(overlay, sketchFingerprint(inputs)) === 'stale') {
         return reply.code(409).send({
-          error: 'nothing_to_commit',
-          message: 'Your pending changes were superseded by transpilation; nothing remains to commit.',
+          error: 'apply_needed',
+          message: 'The sketch has changes not yet applied. Apply changes, review the result, then commit.',
         });
       }
+    } catch (error) {
+      if (error instanceof SourceError) {
+        return reply.code(error.status).send({ error: error.code, message: error.message });
+      }
+      throw error;
     }
 
     try {
@@ -420,10 +404,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         branch: project.defaultBranch,
         message,
         changes: toCommit,
-        // The owner's rule: the Civil UI is canon. A branch that moved is re-parented
-        // rather than refused, which keeps Civil's version of the files it touched
-        // without discarding anything that landed in between.
-        onBranchMoved: 'reparent',
+        // Built on exactly the commit the author has been editing against. If the
+        // branch moved, this refuses (branch_moved, below) and the author syncs.
+        expectedHead: project.headSha,
       });
 
       // Only after the ref moved. Clearing first would lose the edits if the commit
@@ -443,9 +426,6 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         commit: result.commitSha,
         url: result.url,
         files: toCommit.length,
-        // Surfaced rather than silent: the author should know their commit landed on
-        // top of work that arrived while they were editing.
-        reparentedOnto: result.reparentedOnto ?? null,
       };
     } catch (error) {
       if (error instanceof BranchMovedError) {
@@ -453,7 +433,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         // author decides what to do with it.
         return reply.code(409).send({
           error: 'branch_moved',
-          message: error.message,
+          message:
+            `${project.defaultBranch} has new commits on GitHub since you last synced ` +
+            `(now at ${error.currentSha.slice(0, 7)}). Sync, resolve any files you both ` +
+            'changed, then commit.',
           currentSha: error.currentSha,
         });
       }

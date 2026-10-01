@@ -305,9 +305,17 @@ what a project may point at.
 
 ### Richer conflict resolution
 
-**Trigger: the first time re-parenting produces a result the author did not want.**
+**SUPERSEDED 2026-10-01 — the trigger fired as a policy decision.** The owner's
+rule now: no automated git interactions, and very visible UI to control the git
+flow. Commit no longer re-parents: it is built on exactly the head the author has
+been editing against (`expectedHead`) and refuses with `branch_moved` before writing
+anything if the branch moved. Sync then lists the files both sides changed, and the
+author picks mine or theirs per file (stage C of the source-control panel). The
+history below is kept for the reasoning.
 
-The owner's rule is that the Civil UI is canon. When the branch has moved, a commit is
+**Was:** the first time re-parenting produces a result the author did not want.
+
+The owner's rule was that the Civil UI is canon. When the branch has moved, a commit is
 re-parented onto the new HEAD and the pending changes re-applied: files Civil touched
 take Civil's version, files it did not keep whatever landed. Nothing is destroyed and
 history stays linear, which is force-push's outcome without force-push's cost.
