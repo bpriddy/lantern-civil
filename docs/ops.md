@@ -119,8 +119,14 @@ model to copy.
 ### The pending row is the durable edit
 
 Not the container filesystem — see `CLAUDE.md`. `savePending` writes the whole new
-file content with the `base_blob_sha` it was derived from, which is what later detects
-that the branch moved under an edit.
+file content, and the row records `base_commit_sha`: the head the edit was made
+against, set on first save and kept across re-saves. After a sync moves the head,
+an edit whose base is behind it, on a file that changed upstream in between (blob ids
+compared, `project/conflicts.ts`), is a **conflict**: listed in Source control, decided
+by the author — *Take theirs* discards the edit, *Keep mine* moves its base to the
+head — and a commit is refused until none remain. Civil never merges and never picks.
+(Superseded: this paragraph used to promise `base_blob_sha` would detect a moved
+branch; nothing ever wrote it, and commit silently built on the branch's live tip.)
 
 ### Validation arrives one request later, on purpose
 

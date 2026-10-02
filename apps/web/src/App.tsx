@@ -57,6 +57,7 @@ import {
   syncProject,
   checkGit,
   fetchGit,
+  resolveConflict,
   type GitCheck,
   type GitInfo,
   transpileProject,
@@ -716,6 +717,24 @@ function Workspace({ me }: { me: Me }) {
         report({ title: 'Discard change', detail: `${path} is back to the committed version.` });
       } catch (error) {
         report({ title: 'Discard change', detail: (error as Error).message, refused: true });
+      }
+    },
+    [activeId, refresh, report],
+  );
+
+  const doResolve = useCallback(
+    async (path: string, side: 'mine' | 'theirs') => {
+      if (!activeId) return;
+      try {
+        const summary = await resolveConflict(activeId, path, side);
+        if (side === 'theirs') {
+          undoStack.current = undoStack.current.filter((entry) => entry.path !== path);
+          setUndoDepth(undoStack.current.length);
+        }
+        await refresh();
+        report({ title: side === 'mine' ? 'Keep mine' : 'Take theirs', detail: summary });
+      } catch (error) {
+        report({ title: 'Resolve', detail: (error as Error).message, refused: true });
       }
     },
     [activeId, refresh, report],
@@ -1415,6 +1434,7 @@ function Workspace({ me }: { me: Me }) {
             check={gitCheck}
             checking={checking}
             pending={bundle.pending}
+            conflicts={bundle.conflicts ?? []}
             maintained={maintainedSet}
             applyState={bundle.generation?.state}
             applying={applying}
@@ -1429,6 +1449,7 @@ function Workspace({ me }: { me: Me }) {
               setDiffOpen(true);
             }}
             onRevert={(path) => void doRevert(path)}
+            onResolve={(path, side) => void doResolve(path, side)}
           />
         ) : null}
         <ProjectTree

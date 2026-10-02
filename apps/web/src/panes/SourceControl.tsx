@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { GitCheck, GitInfo, PendingChange } from '../project.js';
+import type { Conflict, GitCheck, GitInfo, PendingChange } from '../project.js';
 
 /**
  * The git flow, in one place and always on screen (owner's rule, 2026-10-01: no
@@ -44,6 +44,7 @@ export function SourceControl({
   check,
   checking,
   pending,
+  conflicts,
   maintained,
   applyState,
   applying,
@@ -55,6 +56,7 @@ export function SourceControl({
   onCommit,
   onReview,
   onRevert,
+  onResolve,
 }: {
   sourceKind: 'github' | 'local' | 'example';
   git: GitInfo | undefined;
@@ -62,6 +64,7 @@ export function SourceControl({
   check: GitCheck | undefined;
   checking: boolean;
   pending: PendingChange[];
+  conflicts: Conflict[];
   maintained: ReadonlySet<string>;
   applyState: ApplyStateValue;
   applying: boolean;
@@ -74,6 +77,7 @@ export function SourceControl({
   onCommit: (message: string) => void;
   onReview: (path?: string) => void;
   onRevert: (path: string) => void;
+  onResolve: (path: string, side: 'mine' | 'theirs') => void;
 }) {
   const [message, setMessage] = useState('');
   const committable = sourceKind === 'github';
@@ -88,6 +92,8 @@ export function SourceControl({
       : 'This project has no repository.'
     : pending.length === 0
       ? 'Nothing to commit.'
+      : conflicts.length > 0
+        ? `${conflicts.length} file${conflicts.length === 1 ? '' : 's'} changed on both sides — choose mine or theirs.`
       : unapplied
         ? 'The sketch has changes not yet applied — Apply first.'
         : behind > 0
@@ -104,8 +110,13 @@ export function SourceControl({
     setMessage('');
   };
 
+  // A conflicted file is listed once, under Conflicts, where it has to be decided.
+  const conflicted = new Set(conflicts.map((c) => c.path));
   const groups = (['Sketch', 'Generated', 'Your code'] as const)
-    .map((group) => ({ group, files: pending.filter((p) => groupOf(p.path, maintained) === group) }))
+    .map((group) => ({
+      group,
+      files: pending.filter((p) => !conflicted.has(p.path) && groupOf(p.path, maintained) === group),
+    }))
     .filter((g) => g.files.length > 0);
 
   return (
@@ -223,6 +234,31 @@ export function SourceControl({
             </button>
           ) : null}
         </div>
+        {conflicts.length > 0 ? (
+          <div className="scm-group scm-conflicts">
+            <div className="scm-group-title">Changed on both sides</div>
+            <ul className="scm-list">
+              {conflicts.map((c) => (
+                <li key={c.path} className="scm-conflict">
+                  <button type="button" className="scm-path" onClick={() => onReview(c.path)} title="Show your version against GitHub's">
+                    {c.path}
+                  </button>
+                  <div className="scm-conflict-what muted">
+                    you {c.mine === 'add' ? 'added' : c.mine === 'delete' ? 'deleted' : 'changed'} it · GitHub {c.theirs} it
+                  </div>
+                  <div className="scm-conflict-actions">
+                    <button type="button" className="link" onClick={() => onResolve(c.path, 'mine')} title="Keep your version; committing replaces the GitHub change">
+                      Keep mine
+                    </button>
+                    <button type="button" className="link" onClick={() => onResolve(c.path, 'theirs')} title="Discard your edit; keep what GitHub has">
+                      Take theirs
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
         {groups.map(({ group, files }) => (
           <div key={group} className="scm-group">
             <div className="scm-group-title">{group}</div>

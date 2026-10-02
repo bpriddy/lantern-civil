@@ -16,6 +16,13 @@ export interface PendingChange {
   contentRef: string | null;
   sizeBytes: number;
   baseBlobSha: string | null;
+  /**
+   * The commit this edit was made against: the project's head when the row was
+   * first saved, kept across re-saves. When it differs from the head now and the
+   * file changed upstream in between, the file is in conflict (conflicts.ts).
+   * Null for rows saved before it was recorded — those cannot be checked.
+   */
+  baseCommitSha: string | null;
   updatedAt: string;
 }
 
@@ -44,6 +51,7 @@ const SELECT = `path,
                 content_ref    AS "contentRef",
                 size_bytes     AS "sizeBytes",
                 base_blob_sha  AS "baseBlobSha",
+                base_commit_sha AS "baseCommitSha",
                 updated_at     AS "updatedAt"`;
 
 export async function listPending(
@@ -79,10 +87,15 @@ export async function savePending(pool: pg.Pool, input: SaveInput): Promise<Pend
 
   const { rows } = await pool.query<PendingChange>(
     `INSERT INTO pending_changes
-       (owner_id, project_id, branch, path, kind, content, size_bytes, base_blob_sha)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       (owner_id, project_id, branch, path, kind, content, size_bytes, base_blob_sha,
+        base_commit_sha)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+             (SELECT head_sha FROM projects WHERE id = $2 AND owner_id = $1))
      ON CONFLICT (project_id, branch, path) DO UPDATE
        SET content = EXCLUDED.content,
+           -- An edit keeps the base it started from; only resolving a conflict
+           -- (rebasePending) or a commit moves it.
+           base_commit_sha = COALESCE(pending_changes.base_commit_sha, EXCLUDED.base_commit_sha),
            size_bytes = EXCLUDED.size_bytes,
            updated_at = now(),
            -- kind is NOT refreshed: a file added in this pending set stays an add
@@ -117,10 +130,13 @@ export async function deletePending(
   path: string,
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO pending_changes (owner_id, project_id, branch, path, kind, content, size_bytes)
-     VALUES ($1, $2, $3, $4, 'delete', NULL, 0)
+    `INSERT INTO pending_changes
+       (owner_id, project_id, branch, path, kind, content, size_bytes, base_commit_sha)
+     VALUES ($1, $2, $3, $4, 'delete', NULL, 0,
+             (SELECT head_sha FROM projects WHERE id = $2 AND owner_id = $1))
      ON CONFLICT (project_id, branch, path) DO UPDATE
-       SET kind = 'delete', content = NULL, content_ref = NULL, size_bytes = 0, updated_at = now()`,
+       SET kind = 'delete', content = NULL, content_ref = NULL, size_bytes = 0, updated_at = now(),
+           base_commit_sha = COALESCE(pending_changes.base_commit_sha, EXCLUDED.base_commit_sha)`,
     [ownerId, projectId, branch, path],
   );
 }
@@ -174,6 +190,30 @@ export async function clearCommitted(
       committed.map((c) => c.content),
       committed.map((c) => c.contentRef),
     ],
+  );
+  return rowCount ?? 0;
+}
+
+/**
+ * Moves edits onto a new base commit. Two callers, both meaning "this edit now
+ * stands on that commit": resolving a conflict as mine (the author has seen the
+ * upstream change and keeps their version over it), and a commit, after which the
+ * rows it spared — edits saved while it was in flight — sit on top of what was just
+ * committed. `paths` undefined means every row on the branch.
+ */
+export async function rebasePending(
+  pool: pg.Pool,
+  ownerId: string,
+  projectId: string,
+  branch: string,
+  headSha: string,
+  paths?: readonly string[],
+): Promise<number> {
+  const { rowCount } = await pool.query(
+    `UPDATE pending_changes SET base_commit_sha = $4
+      WHERE owner_id = $1 AND project_id = $2 AND branch = $3
+        AND ($5::text[] IS NULL OR path = ANY($5::text[]))`,
+    [ownerId, projectId, branch, headSha, paths ?? null],
   );
   return rowCount ?? 0;
 }

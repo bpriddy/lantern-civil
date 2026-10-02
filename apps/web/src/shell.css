@@ -1578,3 +1578,9 @@ select.field { cursor: pointer; }
 .scm-commit .commit-message { flex: 1; min-width: 0; }
 .scm-why { margin-top: 4px; font-size: 11px; }
 .scm-note { margin-top: 6px; font-size: 11px; color: var(--text); }
+.scm-conflicts { border-left: 2px solid var(--danger); padding-left: 8px; margin-left: -2px; }
+.scm-conflicts .scm-group-title { color: var(--danger); }
+.scm-conflict { display: block; white-space: normal; padding: 2px 0; }
+.scm-conflict .scm-path { display: block; width: 100%; }
+.scm-conflict-what { font-size: 11px; }
+.scm-conflict-actions { display: flex; gap: 12px; }

@@ -115,6 +115,8 @@ export interface ProjectBundle {
    * generated_from against the sketch now). Optional: an older server omits it.
    */
   generation?: { state: 'never' | 'stale' | 'current' };
+  /** Files both the author and upstream changed — chosen one by one before committing. */
+  conflicts?: Conflict[];
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
   contracts: Record<string, ContractResult>;
 }
@@ -629,4 +631,25 @@ export async function checkGit(projectId: string): Promise<GitCheck> {
   const response = await apiFetch(`/api/projects/${projectId}/git/check`, { method: 'POST' });
   if (!response.ok) throw new Error(await describeFailure(response, 'could not check GitHub'));
   return (await response.json()) as GitCheck;
+}
+
+export interface Conflict {
+  path: string;
+  mine: PendingChange['kind'];
+  theirs: 'added' | 'modified' | 'deleted';
+}
+
+/** Mine keeps the author's edit over the upstream change; theirs discards it. */
+export async function resolveConflict(
+  projectId: string,
+  path: string,
+  side: 'mine' | 'theirs',
+): Promise<string> {
+  const response = await apiFetch(`/api/projects/${projectId}/conflicts/resolve`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path, side }),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, `could not resolve ${path}`));
+  return ((await response.json()) as { summary: string }).summary;
 }

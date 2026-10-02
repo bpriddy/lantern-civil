@@ -11,9 +11,12 @@ import {
   clearCommitted,
   deletePending,
   listPending,
+  rebasePending,
   revertPending,
   savePending,
+  type PendingChange,
 } from '../project/pending.js';
+import { findConflicts, type Conflict } from '../project/conflicts.js';
 import {
   createGitHubProject,
   getProject,
@@ -66,6 +69,28 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
   const openSource = (ownerId: string, project: ProjectRow): Promise<ProjectSource> =>
     openProjectSource({ pool, githubApp }, ownerId, project);
+
+  /**
+   * Files both the author and upstream changed since the author's edits were made
+   * (conflicts.ts). Costs nothing unless some edit's base is behind the head — the
+   * aftermath of a sync — and then one tree read per distinct base, cached per sha.
+   */
+  const conflictsFor = async (
+    ownerId: string,
+    project: ProjectRow,
+    pending: readonly PendingChange[],
+  ): Promise<Conflict[]> => {
+    const { repoOwner, repoName, headSha } = project;
+    if (project.sourceKind !== 'github' || !githubApp || !repoOwner || !repoName || !headSha) return [];
+    if (!pending.some((p) => p.baseCommitSha && p.baseCommitSha !== headSha)) return [];
+    const connection = await getGitHubConnection(pool, ownerId);
+    const installationId = connection?.installationId;
+    if (!installationId) return [];
+    return findConflicts(pending, headSha, async (sha) => {
+      const tree = await GitHubSource.load(githubApp, installationId, repoOwner, repoName, sha);
+      return (path) => tree.blobShaFor(path);
+    });
+  };
 
   app.get('/api/projects', async (request) => ({
     projects: await listProjects(pool, request.identity.id),
@@ -196,6 +221,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const inputs = await gatherInputs(overlay, maintained);
     await overlay.ensure?.([REGISTRY_PATH]);
     const generation = { state: applyState(overlay, sketchFingerprint(inputs)) };
+    const conflicts = await conflictsFor(request.identity.id, project, pending);
 
     return {
       project: {
@@ -213,6 +239,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // graph, not the file. Union of every emission this project has produced.
       maintained: [...maintained],
       generation,
+      // Files the author and upstream both changed — resolved one by one, mine or
+      // theirs, before a commit is accepted.
+      conflicts,
       // Maintained orchestration files whose current content is no emission Civil
       // ever produced — edited outside Civil, and lift's to reconcile (docs/lift.md).
       drifted,
@@ -371,6 +400,19 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const changes = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
     if (changes.length === 0) return reply.code(409).send({ error: 'nothing_to_commit' });
 
+    // Every file both sides changed has to have been decided — mine or theirs — by the
+    // author. Civil does not pick.
+    const conflicts = await conflictsFor(request.identity.id, project, changes);
+    if (conflicts.length > 0) {
+      return reply.code(409).send({
+        error: 'conflicts_unresolved',
+        message:
+          `${conflicts.length} file${conflicts.length === 1 ? ' was' : 's were'} changed both here and ` +
+          'on GitHub. Choose mine or theirs for each in Source control, then commit.',
+        conflicts,
+      });
+    }
+
     // Nothing generated on commit (owner's call, 2026-10-01: no automatic steps in the
     // git flow). The code that lands must match the documents landing with it, so a
     // sketch with unapplied changes is refused — the author presses Apply changes,
@@ -417,6 +459,10 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // Civil is now editing against what it just wrote. Without this the next read
       // would serve the tree from before the commit.
       await setHeadSha(pool, request.identity.id, project.id, result.commitSha);
+      // Edits the commit spared (saved while it was in flight) now stand on the commit
+      // that was just written — on top of their own earlier version, not in conflict
+      // with it.
+      await rebasePending(pool, request.identity.id, project.id, project.defaultBranch, result.commitSha);
 
       request.log.info(
         { projectId: project.id, commit: result.commitSha, files: toCommit.length },
@@ -792,6 +838,42 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       pool, request.identity.id, project.id, project.defaultBranch, filePath,
     );
     return reply.code(reverted ? 204 : 404).send();
+  });
+
+  /**
+   * Resolves a file both sides changed. Theirs: the author's edit is discarded and
+   * the file is what GitHub has. Mine: the author has seen the upstream change and
+   * keeps their version — the edit moves onto the current head, and committing it
+   * replaces what landed upstream, by the author's explicit choice.
+   */
+  app.post('/api/projects/:id/conflicts/resolve', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { path?: unknown; side?: unknown };
+    if (typeof body?.path !== 'string') return reply.code(400).send({ error: 'path_required' });
+    if (body.side !== 'mine' && body.side !== 'theirs') {
+      return reply.code(400).send({ error: 'side_required', message: 'side must be "mine" or "theirs".' });
+    }
+
+    const project = await getProject(pool, request.identity.id, id);
+    if (!project) return reply.code(404).send({ error: 'not_found' });
+    if (!project.headSha) return reply.code(409).send({ error: 'no_head' });
+
+    if (body.side === 'theirs') {
+      const reverted = await revertPending(
+        pool, request.identity.id, project.id, project.defaultBranch, body.path,
+      );
+      if (!reverted) return reply.code(404).send({ error: 'not_pending' });
+      return { path: body.path, side: 'theirs', summary: `${body.path}: took the GitHub version.` };
+    }
+    const moved = await rebasePending(
+      pool, request.identity.id, project.id, project.defaultBranch, project.headSha, [body.path],
+    );
+    if (moved === 0) return reply.code(404).send({ error: 'not_pending' });
+    return {
+      path: body.path,
+      side: 'mine',
+      summary: `${body.path}: kept your version — committing it replaces the GitHub change.`,
+    };
   });
 
   /** Marks a committed file for deletion. Distinct from discarding an edit. */

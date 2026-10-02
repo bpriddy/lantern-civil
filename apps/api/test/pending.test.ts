@@ -5,6 +5,7 @@ import {
   MAX_INLINE_BYTES,
   clearCommitted,
   deletePending,
+  rebasePending,
   listPending,
   revertPending,
   savePending,
@@ -249,4 +250,31 @@ test('clearCommitted with nothing committed issues no query', async () => {
   const result = await clearCommitted(pool as never, 'owner-1', 'proj-1', 'main', []);
   assert.equal(pool.calls.length, 0);
   assert.equal(result, 0);
+});
+
+// --- base commits: what conflict detection compares against --------------------
+
+test('savePending records the head as the base on insert and keeps it across re-saves', async () => {
+  const pool = mockPool({ rows: [{ path: 'x' }] });
+  await savePending(pool as never, {
+    ownerId: 'o', projectId: 'p', branch: 'main', path: 'x', content: 'y', existsAtHead: true,
+  });
+  const { sql } = pool.calls[0]!;
+  assert.match(sql, /\(SELECT head_sha FROM projects WHERE id = \$2 AND owner_id = \$1\)/);
+  assert.match(sql, /base_commit_sha = COALESCE\(pending_changes\.base_commit_sha, EXCLUDED\.base_commit_sha\)/);
+});
+
+test('deletePending records a base the same way', async () => {
+  const pool = mockPool();
+  await deletePending(pool as never, 'o', 'p', 'main', 'gone.py');
+  assert.match(pool.calls[0]!.sql, /base_commit_sha = COALESCE\(pending_changes\.base_commit_sha/);
+});
+
+test('rebasePending moves named rows, or every row, onto a head', async () => {
+  const pool = mockPool({ rowCount: 1 });
+  assert.equal(await rebasePending(pool as never, 'o', 'p', 'main', 'h2', ['a.py']), 1);
+  assert.match(pool.calls[0]!.sql, /UPDATE pending_changes SET base_commit_sha = \$4/);
+  assert.deepEqual(pool.calls[0]!.params, ['o', 'p', 'main', 'h2', ['a.py']]);
+  await rebasePending(pool as never, 'o', 'p', 'main', 'h2');
+  assert.deepEqual(pool.calls[1]!.params, ['o', 'p', 'main', 'h2', null], 'no paths means the whole branch');
 });
