@@ -3,7 +3,15 @@ import type pg from 'pg';
 import type { Config } from '../config.js';
 import { GitHubApp, GitHubError, describeGitHubError } from '../github/app.js';
 import { getGitHubConnection } from '../project/connections.js';
-import { getProject, type ProjectRow } from '../project/repository.js';
+import { movePending } from '../project/pending.js';
+import {
+  getProject,
+  listProjectBranches,
+  setBranchPr,
+  switchBranch,
+  type ProjectRow,
+} from '../project/repository.js';
+import { GitHubSource } from '../github/source.js';
 
 /**
  * The source-control panel's reads (owner's rule, 2026-10-01: no automated git
@@ -51,6 +59,28 @@ export const toCommit = (c: GitHubCommit): GitCommit => ({
   url: c.html_url,
 });
 
+export interface PullRequest {
+  number: number;
+  url: string;
+  title: string;
+  /** open, closed, or merged — GitHub reports merged as a closed state plus a flag. */
+  state: 'open' | 'closed' | 'merged';
+}
+
+/**
+ * A branch name git and GitHub will both accept, conservatively: path-like segments
+ * of letters, digits, and . _ -, nothing git reserves (.., @{, a trailing .lock).
+ */
+export function validBranchName(name: string): boolean {
+  return (
+    /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(name) &&
+    !name.includes('..') &&
+    !name.startsWith('-') &&
+    !name.split('/').some((seg) => seg.startsWith('.') || seg.endsWith('.lock')) &&
+    name.length <= 200
+  );
+}
+
 export interface CheckResult {
   /** The branch's tip on GitHub now; null when the branch does not exist yet. */
   tip: string | null;
@@ -61,6 +91,8 @@ export interface CheckResult {
   diverged: boolean;
   /** The newest first, at most CHECK_LIST_LENGTH. */
   commits: GitCommit[];
+  /** The branch's pull request as GitHub has it now, when one was opened. */
+  pr?: PullRequest | null;
 }
 
 /** GitHub's compare answer, reduced to what the panel says. Pure, so it is tested. */
@@ -119,6 +151,18 @@ export function registerGitRoutes(app: FastifyInstance, deps: GitDeps): void {
     return reply.code(described.status).send({ error: described.code, message: described.message });
   };
 
+  /** The branch's pull request now — read as part of Check, never on its own. */
+  const prStatus = async (
+    project: ProjectRow & { repoOwner: string; repoName: string },
+    installationId: string,
+  ): Promise<PullRequest | null> => {
+    if (!project.prNumber) return null;
+    const pr = await githubApp!.asInstallation<{
+      number: number; html_url: string; title: string; state: 'open' | 'closed'; merged: boolean;
+    }>(installationId, `/repos/${project.repoOwner}/${project.repoName}/pulls/${project.prNumber}`);
+    return { number: pr.number, url: pr.html_url, title: pr.title, state: pr.merged ? 'merged' : pr.state };
+  };
+
   app.get('/api/projects/:id/git', async (request, reply) => {
     const { id } = request.params as { id: string };
     const resolved = await resolve(request.identity.id, id);
@@ -130,7 +174,16 @@ export function registerGitRoutes(app: FastifyInstance, deps: GitDeps): void {
       name: project.repoName,
       url: `https://github.com/${project.repoOwner}/${project.repoName}`,
     };
-    const base = { repo, branch: project.defaultBranch };
+    const base = {
+      repo,
+      branch: project.branch,
+      defaultBranch: project.defaultBranch,
+      // Where this branch's pull request goes: the branch it was cut from.
+      baseBranch: project.branch === project.defaultBranch ? null : (project.baseBranch ?? project.defaultBranch),
+      pr: project.prNumber
+        ? { number: project.prNumber, url: `${repo.url}/pull/${project.prNumber}` }
+        : null,
+    };
     // No pinned head: an empty repository, or one not opened yet. Nothing to describe.
     if (!project.headSha) return { ...base, head: null, history: [] };
 
@@ -164,25 +217,198 @@ export function registerGitRoutes(app: FastifyInstance, deps: GitDeps): void {
       try {
         const ref = await githubApp!.asInstallation<{ object: { sha: string } }>(
           installationId,
-          `${repoPath}/git/ref/heads/${encodeURIComponent(project.defaultBranch)}`,
+          `${repoPath}/git/ref/heads/${encodeURIComponent(project.branch)}`,
         );
         tip = ref.object.sha;
       } catch (error) {
         // An empty repository or a branch not created yet: nothing has landed.
         if (error instanceof GitHubError && (error.status === 404 || error.status === 409)) {
-          return shapeCheck(project.headSha, null);
+          return { ...shapeCheck(project.headSha, null), pr: await prStatus(project, installationId) };
         }
         throw error;
       }
-      if (tip === project.headSha || !project.headSha) return shapeCheck(project.headSha, tip);
+      if (tip === project.headSha || !project.headSha) {
+        return { ...shapeCheck(project.headSha, tip), pr: await prStatus(project, installationId) };
+      }
 
       const compare = await githubApp!.asInstallation<{
         status: 'ahead' | 'behind' | 'diverged' | 'identical';
         ahead_by: number;
         commits: GitHubCommit[];
       }>(installationId, `${repoPath}/compare/${project.headSha}...${tip}`);
-      return shapeCheck(project.headSha, tip, compare);
+      return { ...shapeCheck(project.headSha, tip, compare), pr: await prStatus(project, installationId) };
     } catch (error) {
+      return sendGitHubError(reply, error);
+    }
+  });
+
+  /** GitHub's branches, merged with what Civil knows of each. Read when the menu opens. */
+  app.get('/api/projects/:id/branches', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const resolved = await resolve(request.identity.id, id);
+    if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+    const { project, installationId } = resolved;
+    try {
+      const remote = await githubApp!.asInstallation<{ name: string; commit: { sha: string } }[]>(
+        installationId,
+        `/repos/${project.repoOwner}/${project.repoName}/branches?per_page=100`,
+      );
+      const known = new Map((await listProjectBranches(pool, request.identity.id, project.id)).map((b) => [b.name, b]));
+      const names = [...new Set([...remote.map((b) => b.name), ...known.keys()])].sort((a, b) =>
+        a === project.defaultBranch ? -1 : b === project.defaultBranch ? 1 : a < b ? -1 : a > b ? 1 : 0,
+      );
+      return {
+        current: project.branch,
+        defaultBranch: project.defaultBranch,
+        branches: names.map((name) => ({
+          name,
+          isDefault: name === project.defaultBranch,
+          onGitHub: remote.some((b) => b.name === name),
+          pending: known.get(name)?.pending ?? 0,
+          prNumber: known.get(name)?.prNumber ?? null,
+        })),
+      };
+    } catch (error) {
+      return sendGitHubError(reply, error);
+    }
+  });
+
+  /**
+   * Creates a branch on GitHub at the commit the author is on, carries their pending
+   * edits onto it, and switches to it — git's "checkout -b". Its pull request will
+   * go back into the branch it was cut from.
+   */
+  app.post('/api/projects/:id/branches', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { name?: unknown; carry?: unknown };
+    const name = typeof body?.name === 'string' ? body.name.trim() : '';
+    if (!validBranchName(name)) {
+      return reply.code(400).send({
+        error: 'bad_branch_name',
+        message: 'Use letters, digits, and . _ - / — for example feature/save-record.',
+      });
+    }
+    const resolved = await resolve(request.identity.id, id);
+    if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+    const { project, installationId } = resolved;
+    if (!project.headSha) {
+      return reply.code(409).send({ error: 'no_head', message: 'Commit once before branching — the repository is empty.' });
+    }
+    try {
+      await githubApp!.asInstallation(installationId, `/repos/${project.repoOwner}/${project.repoName}/git/refs`, {
+        method: 'POST',
+        body: JSON.stringify({ ref: `refs/heads/${name}`, sha: project.headSha }),
+      });
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 422) {
+        return reply.code(409).send({ error: 'branch_exists', message: `${name} already exists — switch to it instead.` });
+      }
+      return sendGitHubError(reply, error);
+    }
+    const carried = body.carry === false ? 0 : await movePending(pool, request.identity.id, project.id, project.branch, name);
+    await switchBranch(pool, request.identity.id, project.id, {
+      name,
+      headSha: project.headSha,
+      baseBranch: project.branch,
+    });
+    return {
+      branch: name,
+      carried,
+      summary:
+        `Created ${name} from ${project.branch} at ${project.headSha.slice(0, 7)} and switched to it` +
+        (carried ? `, bringing ${carried} pending change${carried === 1 ? '' : 's'}.` : '.'),
+    };
+  });
+
+  /**
+   * Switches the branch the author works on. Pending edits stay with the branch they
+   * were made on — switching back finds them. A branch Civil has worked on returns to
+   * the commit it was pinned at; moving it forward is Sync's job, never a side effect.
+   */
+  app.post('/api/projects/:id/branches/switch', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { name?: unknown };
+    const name = typeof body?.name === 'string' ? body.name : '';
+    if (!validBranchName(name)) return reply.code(400).send({ error: 'bad_branch_name' });
+    const resolved = await resolve(request.identity.id, id);
+    if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+    const { project, installationId } = resolved;
+    if (name === project.branch) return { branch: name, summary: `Already on ${name}.` };
+
+    const known = (await listProjectBranches(pool, request.identity.id, project.id)).find((b) => b.name === name);
+    let headSha: string | null = null;
+    if (!known?.headSha) {
+      try {
+        headSha = await GitHubSource.resolveHead(githubApp!, installationId, project.repoOwner, project.repoName, name);
+      } catch (error) {
+        if (error instanceof GitHubError && error.status === 404) {
+          return reply.code(404).send({ error: 'no_such_branch', message: `${name} does not exist on GitHub.` });
+        }
+        return sendGitHubError(reply, error);
+      }
+    }
+    await switchBranch(pool, request.identity.id, project.id, {
+      name,
+      headSha,
+      baseBranch: name === project.defaultBranch ? null : project.defaultBranch,
+    });
+    const aside = (await listProjectBranches(pool, request.identity.id, project.id)).find((b) => b.name === project.branch)?.pending ?? 0;
+    return {
+      branch: name,
+      summary:
+        `Switched to ${name}.` +
+        (aside ? ` ${aside} pending change${aside === 1 ? '' : 's'} stay on ${project.branch}.` : ''),
+    };
+  });
+
+  /** Opens a pull request from the current branch into the branch it was cut from. */
+  app.post('/api/projects/:id/pulls', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = request.body as { title?: unknown; body?: unknown };
+    const title = typeof body?.title === 'string' ? body.title.trim() : '';
+    if (!title) return reply.code(400).send({ error: 'title_required' });
+    const resolved = await resolve(request.identity.id, id);
+    if (!resolved.ok) return reply.code(resolved.status).send(resolved.body);
+    const { project, installationId } = resolved;
+    const base = project.baseBranch ?? project.defaultBranch;
+    if (project.branch === base) {
+      return reply.code(409).send({ error: 'same_branch', message: `You are on ${base}; create a branch to propose changes from.` });
+    }
+    const repoPath = `/repos/${project.repoOwner}/${project.repoName}`;
+    try {
+      const pr = await githubApp!.asInstallation<{ number: number; html_url: string }>(installationId, `${repoPath}/pulls`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          head: project.branch,
+          base,
+          ...(typeof body.body === 'string' && body.body.trim() ? { body: body.body.trim() } : {}),
+        }),
+      });
+      await setBranchPr(pool, request.identity.id, project.id, project.branch, pr.number);
+      return { number: pr.number, url: pr.html_url, summary: `Opened pull request #${pr.number} into ${base}.` };
+    } catch (error) {
+      if (error instanceof GitHubError && error.status === 422) {
+        // Either nothing to propose, or a PR already exists for this branch — find it.
+        const open = await githubApp!.asInstallation<{ number: number; html_url: string }[]>(
+          installationId,
+          `${repoPath}/pulls?state=open&head=${encodeURIComponent(`${project.repoOwner}:${project.branch}`)}`,
+        ).catch(() => []);
+        if (open[0]) {
+          await setBranchPr(pool, request.identity.id, project.id, project.branch, open[0].number);
+          return { number: open[0].number, url: open[0].html_url, summary: `Pull request #${open[0].number} is already open.` };
+        }
+        return reply.code(409).send({
+          error: 'nothing_to_propose',
+          message: `${project.branch} has no commits that ${base} does not — commit first.`,
+        });
+      }
+      if (error instanceof GitHubError && error.status === 403) {
+        return reply.code(403).send({
+          error: 'pr_permission',
+          message: 'The Civil GitHub App needs "Pull requests: Read & write" to open pull requests.',
+        });
+      }
       return sendGitHubError(reply, error);
     }
   });

@@ -69,7 +69,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunDeps): void {
       }
       throw error;
     }
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(source, pending);
 
     if (!overlay.exists(body.graph)) {
@@ -79,7 +79,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: RunDeps): void {
     const { run, runnerToken } = await createRun(pool, {
       ownerId: request.identity.id,
       projectId: project.id,
-      branch: project.defaultBranch,
+      branch: project.branch,
       graphPath: body.graph,
       commitSha: project.headSha,
       input: body.input ?? null,

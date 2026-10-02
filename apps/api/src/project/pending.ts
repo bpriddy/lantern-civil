@@ -90,7 +90,8 @@ export async function savePending(pool: pg.Pool, input: SaveInput): Promise<Pend
        (owner_id, project_id, branch, path, kind, content, size_bytes, base_blob_sha,
         base_commit_sha)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-             (SELECT head_sha FROM projects WHERE id = $2 AND owner_id = $1))
+             (SELECT head_sha FROM project_branches
+               WHERE project_id = $2 AND owner_id = $1 AND name = $3))
      ON CONFLICT (project_id, branch, path) DO UPDATE
        SET content = EXCLUDED.content,
            -- An edit keeps the base it started from; only resolving a conflict
@@ -133,7 +134,8 @@ export async function deletePending(
     `INSERT INTO pending_changes
        (owner_id, project_id, branch, path, kind, content, size_bytes, base_commit_sha)
      VALUES ($1, $2, $3, $4, 'delete', NULL, 0,
-             (SELECT head_sha FROM projects WHERE id = $2 AND owner_id = $1))
+             (SELECT head_sha FROM project_branches
+               WHERE project_id = $2 AND owner_id = $1 AND name = $3))
      ON CONFLICT (project_id, branch, path) DO UPDATE
        SET kind = 'delete', content = NULL, content_ref = NULL, size_bytes = 0, updated_at = now(),
            base_commit_sha = COALESCE(pending_changes.base_commit_sha, EXCLUDED.base_commit_sha)`,
@@ -214,6 +216,28 @@ export async function rebasePending(
       WHERE owner_id = $1 AND project_id = $2 AND branch = $3
         AND ($5::text[] IS NULL OR path = ANY($5::text[]))`,
     [ownerId, projectId, branch, headSha, paths ?? null],
+  );
+  return rowCount ?? 0;
+}
+
+/**
+ * Carries every pending edit from one branch to another — creating a branch from
+ * where you are takes your uncommitted work with you, as git does. Only into a
+ * branch with no pending edits of its own, so nothing is overwritten.
+ */
+export async function movePending(
+  pool: pg.Pool,
+  ownerId: string,
+  projectId: string,
+  from: string,
+  to: string,
+): Promise<number> {
+  const { rowCount } = await pool.query(
+    `UPDATE pending_changes SET branch = $4
+      WHERE owner_id = $1 AND project_id = $2 AND branch = $3
+        AND NOT EXISTS (SELECT 1 FROM pending_changes t
+                         WHERE t.project_id = $2 AND t.branch = $4)`,
+    [ownerId, projectId, from, to],
   );
   return rowCount ?? 0;
 }

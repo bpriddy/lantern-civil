@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { Conflict, GitCheck, GitInfo, PendingChange } from '../project.js';
+import { useEffect, useState } from 'react';
+import type { BranchList, Conflict, GitCheck, GitInfo, PendingChange } from '../project.js';
 
 /**
  * The git flow, in one place and always on screen (owner's rule, 2026-10-01: no
@@ -57,6 +57,16 @@ export function SourceControl({
   onReview,
   onRevert,
   onResolve,
+  branchMenuOpen,
+  branches,
+  branchesError,
+  onToggleBranchMenu,
+  onSwitchBranch,
+  onCreateBranch,
+  prFormOpen,
+  onTogglePrForm,
+  onOpenPr,
+  gitBusy,
 }: {
   sourceKind: 'github' | 'local' | 'example';
   git: GitInfo | undefined;
@@ -78,8 +88,28 @@ export function SourceControl({
   onReview: (path?: string) => void;
   onRevert: (path: string) => void;
   onResolve: (path: string, side: 'mine' | 'theirs') => void;
+  branchMenuOpen: boolean;
+  /** Read from GitHub when the menu opens; undefined while loading. */
+  branches: BranchList | undefined;
+  branchesError: string | null;
+  onToggleBranchMenu: () => void;
+  onSwitchBranch: (name: string) => void;
+  onCreateBranch: (name: string) => void;
+  prFormOpen: boolean;
+  onTogglePrForm: () => void;
+  onOpenPr: (title: string) => void;
+  /** A branch switch, branch creation, or pull request is in flight. */
+  gitBusy: boolean;
 }) {
   const [message, setMessage] = useState('');
+  const [newBranch, setNewBranch] = useState('');
+  const [prTitle, setPrTitle] = useState('');
+  // However the form was opened — its button or the P command — it starts from the
+  // last commit's message, the usual first draft of a PR title.
+  const draftTitle = git?.head?.message ?? git?.branch ?? '';
+  useEffect(() => {
+    if (prFormOpen) setPrTitle(draftTitle);
+  }, [prFormOpen, draftTitle]);
   const committable = sourceKind === 'github';
   const unapplied = applyState === 'stale' || applying;
   const behind = check?.behind ?? 0;
@@ -131,8 +161,67 @@ export function SourceControl({
               <a href={git.repo.url} target="_blank" rel="noreferrer">
                 {git.repo.owner}/{git.repo.name}
               </a>
-              <span className="scm-branch">{git.branch}</span>
+              <button
+                type="button"
+                className={`scm-branch${branchMenuOpen ? ' open' : ''}`}
+                onClick={onToggleBranchMenu}
+                title="Switch branch or create one (B)"
+              >
+                {git.branch} ▾
+              </button>
             </div>
+            {branchMenuOpen ? (
+              <div className="scm-branch-menu">
+                {branchesError ? (
+                  <div className="muted">{branchesError}</div>
+                ) : !branches ? (
+                  <div className="muted">Reading branches…</div>
+                ) : (
+                  <ul className="scm-list">
+                    {branches.branches.map((b) => (
+                      <li key={b.name}>
+                        <button
+                          type="button"
+                          className={`scm-branch-row${b.name === branches.current ? ' current' : ''}`}
+                          disabled={gitBusy || b.name === branches.current}
+                          onClick={() => onSwitchBranch(b.name)}
+                          title={b.name === branches.current ? 'You are on this branch' : `Switch to ${b.name}`}
+                        >
+                          <span className="scm-grow">
+                            {b.name === branches.current ? '✓ ' : ''}
+                            {b.name}
+                          </span>
+                          {b.isDefault ? <span className="muted">default</span> : null}
+                          {b.pending ? <span className="scm-badge">{b.pending} pending</span> : null}
+                          {b.prNumber ? <span className="scm-badge">#{b.prNumber}</span> : null}
+                          {!b.onGitHub ? <span className="muted">not on GitHub</span> : null}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <form
+                  className="scm-commit"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (newBranch.trim() && !gitBusy) {
+                      onCreateBranch(newBranch.trim());
+                      setNewBranch('');
+                    }
+                  }}
+                >
+                  <input
+                    className="commit-message"
+                    placeholder="New branch from here"
+                    value={newBranch}
+                    onChange={(e) => setNewBranch(e.target.value)}
+                  />
+                  <button type="submit" className="connect" disabled={gitBusy || !newBranch.trim()} title="Create it at this commit, bring your pending changes, and switch to it">
+                    Create
+                  </button>
+                </form>
+              </div>
+            ) : null}
             {git.head ? (
               <a className="scm-head" href={git.head.url} target="_blank" rel="noreferrer" title="The commit your edits are made against">
                 <code>{git.head.sha.slice(0, 7)}</code> {git.head.message}
@@ -198,6 +287,52 @@ export function SourceControl({
               ))}
             </ul>
           ) : null}
+        </div>
+      ) : null}
+
+      {/* A branch's way back: its pull request. */}
+      {committable && git?.baseBranch ? (
+        <div className="scm-block">
+          {git.pr ? (
+            <div className="scm-row">
+              <span className={`dot ${check?.pr ? (check.pr.state === 'merged' ? 'ok' : check.pr.state === 'open' ? 'warn' : '') : ''}`} />
+              <a className="scm-grow" href={check?.pr?.url ?? git.pr.url} target="_blank" rel="noreferrer">
+                Pull request #{git.pr.number} → {git.baseBranch}
+              </a>
+              <span className="muted">{check?.pr ? check.pr.state : 'Check for status'}</span>
+            </div>
+          ) : (
+            <>
+              <div className="scm-row">
+                <span className="scm-grow">No pull request into {git.baseBranch}</span>
+                <button
+                  type="button"
+                  className="link"
+                  onClick={onTogglePrForm}
+                  title="Propose this branch's commits for merging (P)"
+                >
+                  {prFormOpen ? 'Cancel' : 'Open PR'}
+                </button>
+              </div>
+              {prFormOpen ? (
+                <form
+                  className="scm-commit"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (prTitle.trim() && !gitBusy) onOpenPr(prTitle.trim());
+                  }}
+                >
+                  <input className="commit-message" placeholder="Pull request title" value={prTitle} onChange={(e) => setPrTitle(e.target.value)} />
+                  <button type="submit" className="connect" disabled={gitBusy || !prTitle.trim()}>
+                    Open
+                  </button>
+                </form>
+              ) : null}
+              {prFormOpen && pending.length > 0 ? (
+                <div className="scm-why muted">Pending changes are not part of a pull request until committed.</div>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
 

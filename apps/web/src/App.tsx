@@ -58,6 +58,11 @@ import {
   checkGit,
   fetchGit,
   resolveConflict,
+  fetchBranches,
+  createBranch,
+  switchToBranch,
+  openPullRequest,
+  type BranchList,
   type GitCheck,
   type GitInfo,
   transpileProject,
@@ -197,6 +202,11 @@ function Workspace({ me }: { me: Me }) {
   const [checking, setChecking] = useState(false);
   const [gitRevision, setGitRevision] = useState(0);
   const [diffFocus, setDiffFocus] = useState<string | undefined>(undefined);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [branchList, setBranchList] = useState<BranchList | undefined>(undefined);
+  const [branchesError, setBranchesError] = useState<string | null>(null);
+  const [prFormOpen, setPrFormOpen] = useState(false);
+  const [gitBusy, setGitBusy] = useState(false);
   const applyingRef = useRef(false);
   // Drift banners the user waved off this session, by orchestration path.
   const [driftDismissed, setDriftDismissed] = useState<Set<string>>(new Set());
@@ -598,6 +608,17 @@ function Workspace({ me }: { me: Me }) {
         void doSync();
         return 'Checking the repository…';
       },
+      'git.branch': () => {
+        if (!canCommit) return undefined;
+        setBranchMenuOpen((open) => !open);
+        return 'Branches';
+      },
+      'git.pullRequest': () => {
+        if (!canCommit) return undefined;
+        if (!gitInfo?.baseBranch) return 'You are on the default branch — create a branch to propose changes from.';
+        setPrFormOpen((open) => !open);
+        return 'Pull request';
+      },
       'git.check': () => {
         if (!canCommit) return undefined;
         void doCheck();
@@ -755,6 +776,46 @@ function Workspace({ me }: { me: Me }) {
       });
     return () => controller.abort();
   }, [activeId, bundle?.project.id, bundle?.project.sourceKind, gitRevision]);
+
+  // The branch list is GitHub's, so it is read when the author opens the menu — not
+  // before, and not again until they reopen it.
+  useEffect(() => {
+    if (!branchMenuOpen || !activeId) return;
+    setBranchList(undefined);
+    setBranchesError(null);
+    const controller = new AbortController();
+    fetchBranches(activeId)
+      .then((list) => !controller.signal.aborted && setBranchList(list))
+      .catch((error: unknown) => !controller.signal.aborted && setBranchesError((error as Error).message));
+    return () => controller.abort();
+  }, [branchMenuOpen, activeId]);
+
+  /**
+   * One shape for every action that moves the author to another branch or opens a
+   * pull request: run it, then let go of everything tied to where they were — the
+   * undo history, the last Check, the open menus — and re-read.
+   */
+  const runGitAction = useCallback(
+    async (title: string, action: (projectId: string) => Promise<string>) => {
+      if (!activeId || gitBusy) return;
+      setGitBusy(true);
+      try {
+        const summary = await action(activeId);
+        setBranchMenuOpen(false);
+        setPrFormOpen(false);
+        clearUndo();
+        setGitCheck(undefined);
+        setGitRevision((n) => n + 1);
+        await refresh();
+        report({ title, detail: summary });
+      } catch (error) {
+        report({ title, detail: (error as Error).message, refused: true });
+      } finally {
+        setGitBusy(false);
+      }
+    },
+    [activeId, gitBusy, clearUndo, refresh, report],
+  );
 
   const doSync = useCallback(async () => {
     if (!activeId) return;
@@ -1450,6 +1511,16 @@ function Workspace({ me }: { me: Me }) {
             }}
             onRevert={(path) => void doRevert(path)}
             onResolve={(path, side) => void doResolve(path, side)}
+            branchMenuOpen={branchMenuOpen}
+            branches={branchList}
+            branchesError={branchesError}
+            onToggleBranchMenu={() => setBranchMenuOpen((open) => !open)}
+            onSwitchBranch={(name) => void runGitAction('Switch branch', (id) => switchToBranch(id, name))}
+            onCreateBranch={(name) => void runGitAction('Create branch', (id) => createBranch(id, name))}
+            prFormOpen={prFormOpen}
+            onTogglePrForm={() => setPrFormOpen((open) => !open)}
+            onOpenPr={(title) => void runGitAction('Pull request', (id) => openPullRequest(id, title))}
+            gitBusy={gitBusy}
           />
         ) : null}
         <ProjectTree

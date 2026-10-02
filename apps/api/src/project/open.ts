@@ -55,7 +55,7 @@ export async function openProjectSource(
           connection.installationId,
           project.repoOwner,
           project.repoName,
-          project.defaultBranch,
+          project.branch,
         );
         await setHeadSha(pool, ownerId, project.id, sha);
       }
@@ -77,7 +77,7 @@ export async function openProjectSource(
           described.status,
           described.code,
           error.status === 404
-            ? `${project.repoOwner}/${project.repoName} has no branch "${project.defaultBranch}", or the installation cannot see it.`
+            ? `${project.repoOwner}/${project.repoName} has no branch "${project.branch}", or the installation cannot see it.`
             : described.message,
         );
       }

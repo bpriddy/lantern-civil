@@ -231,7 +231,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionDeps): 
     project: ProjectRow,
   ): Promise<{ source: ProjectSource; overlay: OverlaySource }> => {
     const source = await openProjectSource({ pool, githubApp }, ownerId, project);
-    const pending = await listPending(pool, ownerId, project.id, project.defaultBranch);
+    const pending = await listPending(pool, ownerId, project.id, project.branch);
     return { source, overlay: new OverlaySource(source, pending) };
   };
 

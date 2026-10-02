@@ -260,7 +260,8 @@ test('savePending records the head as the base on insert and keeps it across re-
     ownerId: 'o', projectId: 'p', branch: 'main', path: 'x', content: 'y', existsAtHead: true,
   });
   const { sql } = pool.calls[0]!;
-  assert.match(sql, /\(SELECT head_sha FROM projects WHERE id = \$2 AND owner_id = \$1\)/);
+  // The base is the head of the branch the row belongs to ($3), not some other branch's.
+  assert.match(sql, /SELECT head_sha FROM project_branches\s+WHERE project_id = \$2 AND owner_id = \$1 AND name = \$3/);
   assert.match(sql, /base_commit_sha = COALESCE\(pending_changes\.base_commit_sha, EXCLUDED\.base_commit_sha\)/);
 });
 

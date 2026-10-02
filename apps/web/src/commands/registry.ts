@@ -31,6 +31,8 @@ export type CommandId =
   | 'project.commit'
   | 'project.sync'
   | 'git.check'
+  | 'git.branch'
+  | 'git.pullRequest'
   | 'project.apply'
   | 'help.keys';
 
@@ -258,6 +260,24 @@ export const COMMANDS: readonly Command[] = [
       '— nothing changes until you sync. Civil never checks on its own.',
     keys: ['g'],
     enabled: (c) => c.where !== 'home' && c.canCommit,
+  },
+  {
+    id: 'git.branch',
+    title: 'Branches',
+    description:
+      'Show the branches, to switch to one or create a new one from where you are. ' +
+      'Pending edits stay with the branch they were made on.',
+    keys: ['b'],
+    enabled: (c) => c.where !== 'home' && c.where !== 'diff' && c.canCommit,
+  },
+  {
+    id: 'git.pullRequest',
+    title: 'Pull request',
+    description:
+      'Open a pull request from this branch into the branch it was cut from, or show ' +
+      'the one already open.',
+    keys: ['p'],
+    enabled: (c) => c.where !== 'home' && c.where !== 'diff' && c.canCommit,
   },
   {
     id: 'project.sync',

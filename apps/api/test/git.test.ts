@@ -47,3 +47,14 @@ test('a force push under the pinned head is called out', () => {
 test('with no pinned head, how far behind is unknowable rather than zero', () => {
   assert.equal(shapeCheck(null, 't').behind, null);
 });
+
+import { validBranchName } from '../dist/http/git-routes.js';
+
+test('branch names git and GitHub both accept, and nothing they reserve', () => {
+  for (const ok of ['feature/save-record', 'fix-123', 'ben/try.this', 'v2_0']) {
+    assert.ok(validBranchName(ok), ok);
+  }
+  for (const bad of ['', 'has space', 'a..b', '-lead', 'x/.hidden', 'name.lock', 'trail/', '/lead', 'a@{b', 'x'.repeat(201)]) {
+    assert.ok(!validBranchName(bad), bad);
+  }
+});

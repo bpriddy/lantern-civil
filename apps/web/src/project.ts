@@ -98,6 +98,8 @@ export interface ProjectBundle {
     defaultBranch: string;
     /** An example has no repository, so it has nowhere to commit to. */
     sourceKind: 'github' | 'local' | 'example';
+    /** The branch being worked on (optional: an older server omits it). */
+    branch?: string;
   };
   compositionPath: string;
   composition: Composition | undefined;
@@ -606,6 +608,11 @@ export interface GitCommit {
 export interface GitInfo {
   repo: { owner: string; name: string; url: string };
   branch: string;
+  defaultBranch: string;
+  /** Where this branch's pull request goes; null on the default branch. */
+  baseBranch: string | null;
+  /** The pull request opened from this branch, as Civil recorded it. */
+  pr: { number: number; url: string } | null;
   /** The commit edits are made against; null for a repository with no commits. */
   head: GitCommit | null;
   history: GitCommit[];
@@ -617,7 +624,60 @@ export interface GitCheck {
   behind: number | null;
   diverged: boolean;
   commits: GitCommit[];
+  /** The branch's pull request as GitHub has it now — read only as part of Check. */
+  pr?: PullRequest | null;
 }
+
+export interface PullRequest {
+  number: number;
+  url: string;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+}
+
+export interface BranchEntry {
+  name: string;
+  isDefault: boolean;
+  onGitHub: boolean;
+  /** Edits set aside on this branch. */
+  pending: number;
+  prNumber: number | null;
+}
+
+export interface BranchList {
+  current: string;
+  defaultBranch: string;
+  branches: BranchEntry[];
+}
+
+/** GitHub's branches with Civil's notes on each. Read when the branch menu opens. */
+export async function fetchBranches(projectId: string): Promise<BranchList> {
+  const response = await apiFetch(`/api/projects/${projectId}/branches`);
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not list branches'));
+  return (await response.json()) as BranchList;
+}
+
+const postSummary = async (url: string, body: unknown, failure: string): Promise<string> => {
+  const response = await apiFetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await describeFailure(response, failure));
+  return ((await response.json()) as { summary: string }).summary;
+};
+
+/** Creates a branch at the current commit, carrying pending edits onto it, and switches. */
+export const createBranch = (projectId: string, name: string): Promise<string> =>
+  postSummary(`/api/projects/${projectId}/branches`, { name }, `could not create ${name}`);
+
+/** Switches branch; pending edits stay with the branch they were made on. */
+export const switchToBranch = (projectId: string, name: string): Promise<string> =>
+  postSummary(`/api/projects/${projectId}/branches/switch`, { name }, `could not switch to ${name}`);
+
+/** Opens a pull request from the current branch into the one it was cut from. */
+export const openPullRequest = (projectId: string, title: string): Promise<string> =>
+  postSummary(`/api/projects/${projectId}/pulls`, { title }, 'could not open the pull request');
 
 /** What Civil is editing against. A read of the pinned commit — never the remote's present. */
 export async function fetchGit(projectId: string, signal?: AbortSignal): Promise<GitInfo> {

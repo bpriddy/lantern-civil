@@ -157,7 +157,7 @@ async function analyzePatterns(
   await savePending(pool, {
     ownerId,
     projectId: project.id,
-    branch: project.defaultBranch,
+    branch: project.branch,
     path: PATTERNS_PATH,
     content: patterns,
     existsAtHead: source.exists(PATTERNS_PATH),
@@ -316,7 +316,7 @@ export async function transpileProject(
     await savePending(pool, {
       ownerId,
       projectId: project.id,
-      branch: project.defaultBranch,
+      branch: project.branch,
       path,
       content: output.files[path]!,
       existsAtHead: source.exists(path),
@@ -336,9 +336,9 @@ export async function transpileProject(
     .sort();
   for (const path of retired) {
     if (source.exists(path)) {
-      await deletePending(pool, ownerId, project.id, project.defaultBranch, path);
+      await deletePending(pool, ownerId, project.id, project.branch, path);
     } else {
-      await revertPending(pool, ownerId, project.id, project.defaultBranch, path);
+      await revertPending(pool, ownerId, project.id, project.branch, path);
     }
   }
 
@@ -400,7 +400,7 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
     project: ProjectRow,
   ): Promise<{ source: ProjectSource; overlay: OverlaySource }> => {
     const source = await openProjectSource({ pool, githubApp }, ownerId, project);
-    const pending = await listPending(pool, ownerId, project.id, project.defaultBranch);
+    const pending = await listPending(pool, ownerId, project.id, project.branch);
     return { source, overlay: new OverlaySource(source, pending) };
   };
 
@@ -604,7 +604,7 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
     await savePending(pool, {
       ownerId: request.identity.id,
       projectId: project.id,
-      branch: project.defaultBranch,
+      branch: project.branch,
       path: graphPath,
       content: applied.source,
       existsAtHead: source.exists(graphPath),

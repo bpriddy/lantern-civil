@@ -194,7 +194,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
     // Uncommitted work is applied as a source, so the validator and both canvases
     // see edited manifests without knowing pending edits exist.
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(source, pending);
 
     // Ownership + drift, both keyed on what Civil has emitted for this project.
@@ -228,6 +228,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         id: project.id,
         name: project.name,
         defaultBranch: project.defaultBranch,
+        // The branch being worked on; pending, commit, and sync are all its.
+        branch: project.branch,
         // The client needs this to know whether committing is even possible.
         sourceKind: project.sourceKind,
       },
@@ -270,7 +272,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       }
       throw error;
     }
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(base, pending);
 
     // Reads are sync; anything not prefetched — source files, mostly — is hydrated
@@ -295,8 +297,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     if (!project) return reply.code(404).send({ error: 'not_found' });
 
     return {
-      branch: project.defaultBranch,
-      changes: await listPending(pool, request.identity.id, project.id, project.defaultBranch),
+      branch: project.branch,
+      changes: await listPending(pool, request.identity.id, project.id, project.branch),
     };
   });
 
@@ -346,7 +348,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       const change = await savePending(pool, {
         ownerId: request.identity.id,
         projectId: project.id,
-        branch: project.defaultBranch,
+        branch: project.branch,
         path: body.path,
         content: body.content,
         existsAtHead: base.exists(body.path),
@@ -397,7 +399,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const connection = await getGitHubConnection(pool, request.identity.id);
     if (!connection?.installationId) return reply.code(409).send({ error: 'github_not_connected' });
 
-    const changes = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const changes = await listPending(pool, request.identity.id, project.id, project.branch);
     if (changes.length === 0) return reply.code(409).send({ error: 'nothing_to_commit' });
 
     // Every file both sides changed has to have been decided — mine or theirs — by the
@@ -443,7 +445,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         installationId: connection.installationId,
         owner: project.repoOwner,
         repo: project.repoName,
-        branch: project.defaultBranch,
+        branch: project.branch,
         message,
         changes: toCommit,
         // Built on exactly the commit the author has been editing against. If the
@@ -454,7 +456,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // Only after the ref moved. Clearing first would lose the edits if the commit
       // failed, and these rows are the only copy. Only the rows as committed: an edit
       // saved while the commit was in flight is still the only copy of itself.
-      await clearCommitted(pool, request.identity.id, project.id, project.defaultBranch, toCommit);
+      await clearCommitted(pool, request.identity.id, project.id, project.branch, toCommit);
 
       // Civil is now editing against what it just wrote. Without this the next read
       // would serve the tree from before the commit.
@@ -462,7 +464,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // Edits the commit spared (saved while it was in flight) now stand on the commit
       // that was just written — on top of their own earlier version, not in conflict
       // with it.
-      await rebasePending(pool, request.identity.id, project.id, project.defaultBranch, result.commitSha);
+      await rebasePending(pool, request.identity.id, project.id, project.branch, result.commitSha);
 
       request.log.info(
         { projectId: project.id, commit: result.commitSha, files: toCommit.length },
@@ -480,7 +482,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         return reply.code(409).send({
           error: 'branch_moved',
           message:
-            `${project.defaultBranch} has new commits on GitHub since you last synced ` +
+            `${project.branch} has new commits on GitHub since you last synced ` +
             `(now at ${error.currentSha.slice(0, 7)}). Sync, resolve any files you both ` +
             'changed, then commit.',
           currentSha: error.currentSha,
@@ -531,7 +533,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
         connection.installationId,
         project.repoOwner,
         project.repoName,
-        project.defaultBranch,
+        project.branch,
       );
 
       const moved = latest !== project.headSha;
@@ -574,7 +576,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       throw error;
     }
 
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(base, pending);
 
     // Refuse rather than overwrite. A repository that already has a civil.yaml —
@@ -595,7 +597,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       await savePending(pool, {
         ownerId: request.identity.id,
         projectId: project.id,
-        branch: project.defaultBranch,
+        branch: project.branch,
         path: file.path,
         content: file.content,
         existsAtHead: false,
@@ -628,7 +630,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       throw error;
     }
 
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(base, pending);
     await overlay.ensure?.(migrationInputs(overlay));
 
@@ -640,7 +642,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       savePending(pool, {
         ownerId: request.identity.id,
         projectId: project.id,
-        branch: project.defaultBranch,
+        branch: project.branch,
         path,
         content,
         existsAtHead: base.exists(path),
@@ -649,8 +651,8 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     // only ever pending (a revert leaves nothing behind).
     const retire = (path: string): Promise<unknown> =>
       base.exists(path)
-        ? deletePending(pool, request.identity.id, project.id, project.defaultBranch, path)
-        : revertPending(pool, request.identity.id, project.id, project.defaultBranch, path);
+        ? deletePending(pool, request.identity.id, project.id, project.branch, path)
+        : revertPending(pool, request.identity.id, project.id, project.branch, path);
 
     const civilPlan = planMigration(overlay);
     const moved: { from: string; to: string }[] = [];
@@ -665,7 +667,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const dissolveOverlay = moved.length
       ? new OverlaySource(
           base,
-          await listPending(pool, request.identity.id, project.id, project.defaultBranch),
+          await listPending(pool, request.identity.id, project.id, project.branch),
         )
       : overlay;
     await dissolveOverlay.ensure?.(dissolutionInputs(dissolveOverlay));
@@ -740,7 +742,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
     // Ops apply on top of pending work, not on top of HEAD: editing twice before
     // committing must build on the first edit rather than discard it.
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     const overlay = new OverlaySource(base, pending);
 
     const current = overlay.read(body.path);
@@ -761,7 +763,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const change = await savePending(pool, {
       ownerId: request.identity.id,
       projectId: project.id,
-      branch: project.defaultBranch,
+      branch: project.branch,
       path: body.path,
       content: applied.source,
       existsAtHead: base.exists(body.path),
@@ -810,12 +812,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       throw error;
     }
 
-    const pending = await listPending(pool, request.identity.id, project.id, project.defaultBranch);
+    const pending = await listPending(pool, request.identity.id, project.id, project.branch);
     // The base half of each diff can be a source file outside the manifest
     // prefetch; hydrate them so "original" is the text and not a blank pane.
     await base.ensure?.(pending.map((change) => change.path));
     return {
-      branch: project.defaultBranch,
+      branch: project.branch,
       files: pending.map((change) => ({
         path: change.path,
         kind: change.kind,
@@ -835,7 +837,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     if (!project) return reply.code(404).send({ error: 'not_found' });
 
     const reverted = await revertPending(
-      pool, request.identity.id, project.id, project.defaultBranch, filePath,
+      pool, request.identity.id, project.id, project.branch, filePath,
     );
     return reply.code(reverted ? 204 : 404).send();
   });
@@ -860,13 +862,13 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
 
     if (body.side === 'theirs') {
       const reverted = await revertPending(
-        pool, request.identity.id, project.id, project.defaultBranch, body.path,
+        pool, request.identity.id, project.id, project.branch, body.path,
       );
       if (!reverted) return reply.code(404).send({ error: 'not_pending' });
       return { path: body.path, side: 'theirs', summary: `${body.path}: took the GitHub version.` };
     }
     const moved = await rebasePending(
-      pool, request.identity.id, project.id, project.defaultBranch, project.headSha, [body.path],
+      pool, request.identity.id, project.id, project.branch, project.headSha, [body.path],
     );
     if (moved === 0) return reply.code(404).send({ error: 'not_pending' });
     return {
@@ -885,7 +887,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     const project = await getProject(pool, request.identity.id, id);
     if (!project) return reply.code(404).send({ error: 'not_found' });
 
-    await deletePending(pool, request.identity.id, project.id, project.defaultBranch, body.path);
+    await deletePending(pool, request.identity.id, project.id, project.branch, body.path);
     return reply.code(204).send();
   });
 }

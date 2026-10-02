@@ -118,6 +118,23 @@ Every change the UI can make is expressible as a structured op (PRD §7.1). No
 UI-only shortcuts — that op vocabulary is the seam the future agent copilot plugs
 into, and a shortcut today is a rewrite later.
 
+## Git flow
+
+Owner's rule, 2026-10-01: **no automated git interactions, and very visible UI to
+control the git flow.** Every git action is one the author takes in Source control (or
+its named command): Check reads GitHub, Sync moves the head, Commit writes, branches
+are created and switched, pull requests are opened — nothing polls, syncs, merges,
+re-parents, or commits on its own.
+
+- A commit is built on exactly the head the author is on (`expectedHead`) and refused
+  if the branch moved. Civil never decides whose version of a file wins.
+- A file changed both here and upstream is a conflict the author resolves, mine or
+  theirs; commit is refused until none remain.
+- A sketch with unapplied changes cannot be committed. Generation is Apply's job,
+  never a side effect of committing.
+- Pending edits belong to the branch they were made on; a branch returns to the
+  commit it was pinned at. Moving a head forward is always an explicit Sync.
+
 ## Deploys
 
 `./scripts/deploy.sh` only. It builds, migrates as a Cloud Run job from the same
