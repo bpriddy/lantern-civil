@@ -325,3 +325,22 @@ test('the sketch fingerprint moves with the sketch and the code it uses, never w
   // No model id or prompt version is an input at all: upgrading Civil cannot move it.
   assert.equal(sketchFingerprint.length, 1);
 });
+
+test("a lifted registry's repo files are never offered to the model for revision", async () => {
+  // docs/lift-repo.md: role `repo` marks the project's own code, which is the
+  // implementation. Apply refuses a non-python project anyway; this keeps any other
+  // path that reaches currentEmission from treating authored code as Civil's to edit.
+  const registry = [
+    'apiVersion: civil/v1',
+    'kind: Registry',
+    'units:',
+    '  app/tasks:',
+    '    kind: service',
+    '    source: civil/app.yaml',
+    '    files:',
+    '      server/src/tasks/tasks.service.ts: { role: repo, hash: "sha256:00" }',
+    '',
+  ].join('\n');
+  const project = { [REGISTRY_PATH]: registry, 'server/src/tasks/tasks.service.ts': 'export class TasksService {}\n' };
+  assert.deepEqual(await currentEmission(sourceWith(project) as never), []);
+});

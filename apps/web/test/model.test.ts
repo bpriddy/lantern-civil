@@ -368,7 +368,7 @@ test('client, process and boundary faces read their own manifest fields', () => 
   assert.equal(nodes.api!.data.descent, undefined);
 });
 
-test('composition edges: routes-to is arrowed, depends-on is dashed and labelled', () => {
+test('composition edges: routes-to is arrowed, depends-on is dashed and unlabelled', () => {
   const c = composition(
     [
       { id: 'web', type: 'client', path: 'apps/web' },
@@ -389,5 +389,40 @@ test('composition edges: routes-to is arrowed, depends-on is dashed and labelled
 
   assert.equal(edges.d1!.className, 'edge-depends');
   assert.deepEqual(edges.d1!.style, { strokeDasharray: '2 4' });
-  assert.equal(edges.d1!.label, 'depends on');
+  // The dashed stroke says it; a label chip per dependency buried dense canvases.
+  assert.equal(edges.d1!.label, undefined);
+});
+
+test('a lifted service opens every file the registry lists, and a graph with no io says what it holds', () => {
+  const lifted = {
+    apiVersion: 'civil/v1',
+    kind: 'Graph',
+    metadata: { id: 'jobs' },
+    spec: {
+      nodes: [
+        { id: 'jobs-module', type: 'code', include: ['src/jobs.ts'], entrypoint: 'src/jobs.ts' },
+        { id: 'grader', type: 'agent' },
+        { id: 'critic', type: 'agent' },
+      ],
+      edges: [],
+    },
+    layout: { nodes: {} },
+  };
+  const c = composition([
+    { id: 'kilns', type: 'service', impl: { entrypoint: 'src/kilns/kilns.service.ts' } },
+    { id: 'jobs', type: 'service', impl: { graph: 'civil/graphs/jobs.graph.yaml' } },
+  ]);
+  const nodes = byId(
+    compositionToFlow(c, 'civil/app.yaml', [], context({
+      graphs: { 'civil/graphs/jobs.graph.yaml': lifted },
+      files: ['src/kilns/kilns.service.ts'],
+      repoUnits: { kilns: { files: ['src/kilns/kilns.module.ts', 'src/kilns/kilns.service.ts', 'src/kilns/paths.ts'] } },
+    })).nodes,
+  );
+  // The card counts the unit's files, entrypoint first, not the one impl names.
+  assert.deepEqual(nodes.kilns!.data.descent.files, ['src/kilns/kilns.service.ts', 'src/kilns/kilns.module.ts', 'src/kilns/paths.ts']);
+  assert.equal(nodes.kilns!.data.descent.note, 'from the repo');
+  // No io nodes is normal for a lifted graph; its face says what is inside instead.
+  assert.deepEqual(nodes.jobs!.data.descent.ports, []);
+  assert.equal(nodes.jobs!.data.descent.summary, '3 nodes · 2 agents');
 });

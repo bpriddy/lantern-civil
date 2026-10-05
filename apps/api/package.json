@@ -20,6 +20,7 @@
     "node-pg-migrate": "^9.0.0",
     "pg": "^8.13.1",
     "pino": "^9.6.0",
+    "typescript": "^5.7.3",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

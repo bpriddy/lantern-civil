@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto';
 import { Document, parse } from 'yaml';
-import { zComposition, zGraph, type Composition, type Graph } from '@civil/schema';
+import {
+  zComposition,
+  zGraph,
+  zProject,
+  type Composition,
+  type Graph,
+  type Language,
+} from '@civil/schema';
+import { CIVIL_DIR, civilYamlPath } from './bundle.js';
 import type { ProjectSource } from './source.js';
 import type { TranspileOutput } from './transpile.js';
 
@@ -203,14 +211,49 @@ export function attachRegistry(
   output.units[REGISTRY_PATH] = SHARED_UNIT;
 }
 
+/** Both places civil.yaml can live — what a caller ensures before projectLanguage. */
+export const CIVIL_YAML_PATHS = [`${CIVIL_DIR}/civil.yaml`, 'civil.yaml'] as const;
+
+/**
+ * The language civil.yaml declares. Absent, unreadable, or invalid reads as python —
+ * the default every project had before the field widened — so a broken civil.yaml
+ * never silently switches generation off; the validator reports it instead.
+ */
+export function projectLanguage(source: ProjectSource): Language {
+  const raw = source.read(civilYamlPath(source));
+  const parsed = zProject.safeParse(raw === undefined ? undefined : parseSafely(raw));
+  return parsed.success ? parsed.data.spec.language : 'python';
+}
+
+/**
+ * Civil generates Python only (PRD 15). A project lifted from a TypeScript codebase
+ * (docs/lift-repo.md) has its own code as the implementation, and Python emitted
+ * beside it would be a second, wrong implementation — so generation is refused, in
+ * words the author can act on. Null when generation is available.
+ */
+export function generationRefusal(source: ProjectSource): { error: string; message: string } | null {
+  const language = projectLanguage(source);
+  if (language === 'python') return null;
+  return {
+    error: 'language_unsupported',
+    message:
+      `Code generation isn't available for ${language === 'typescript' ? 'TypeScript' : language} ` +
+      "projects — the repo's code is the implementation. The canvas describes it; edit the code directly.",
+  };
+}
+
 /**
  * Whether the sketch has changes the generated code does not reflect yet — what the
  * Apply changes button shows. `never`: nothing has been generated (no registry, or
- * one from before generated_from existed); `stale`: the sketch moved since; `current`.
+ * one from before generated_from existed); `stale`: the sketch moved since; `current`;
+ * `unsupported`: the project is not Python (civil.yaml's language), so nothing is ever
+ * generated and nothing is ever owed — Apply is not offered and commit is not held.
+ * Callers ensure CIVIL_YAML_PATHS alongside the registry before asking.
  */
-export type ApplyState = 'never' | 'stale' | 'current';
+export type ApplyState = 'never' | 'stale' | 'current' | 'unsupported';
 
 export function applyState(source: ProjectSource, fingerprint: string): ApplyState {
+  if (projectLanguage(source) !== 'python') return 'unsupported';
   const raw = source.read(REGISTRY_PATH);
   const doc = raw === undefined ? undefined : (parseSafely(raw) as { generated_from?: unknown } | undefined);
   if (!doc || typeof doc.generated_from !== 'string') return 'never';
@@ -225,8 +268,12 @@ export interface CurrentFile {
   content: string;
 }
 
-/** Generated API-side, never by the model, so never offered to it for revision. */
-const NOT_REVISABLE = new Set(['boundary-client', 'registry']);
+/**
+ * Never offered to the model for revision: the first two are generated API-side, not
+ * by the model; `repo` marks a lifted project's own code (docs/lift-repo.md) — the
+ * implementation the author wrote, which a transpile must never rewrite.
+ */
+const NOT_REVISABLE = new Set(['boundary-client', 'registry', 'repo']);
 
 /** The same ceiling context files have: a revision prompt stays proportionate. */
 const CURRENT_MAX_BYTES = 200 * 1024;

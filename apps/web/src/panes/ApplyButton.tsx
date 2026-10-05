@@ -1,3 +1,5 @@
+import { GENERATION_UNSUPPORTED } from './SourceControl.js';
+
 /**
  * Generation is explicit (owner's call, 2026-10-01): edits change the sketch at
  * once, and the code catches up when the author asks. This is the asking — and the
@@ -8,7 +10,7 @@ export function ApplyButton({
   applying,
   onApply,
 }: {
-  state: 'never' | 'stale' | 'current' | undefined;
+  state: 'never' | 'stale' | 'current' | 'unsupported' | undefined;
   applying: boolean;
   onApply: () => void;
 }) {
@@ -17,6 +19,16 @@ export function ApplyButton({
       <span className="chip chip-applying" title="Generating code for the sketch — this takes a little while">
         <span className="dot warn pulse" />
         Applying…
+      </span>
+    );
+  }
+  if (state === 'unsupported') {
+    // Civil generates Python only; a project lifted from a TypeScript repo keeps its
+    // own code as the implementation. No button — there is nothing it could do.
+    return (
+      <span className="chip chip-unsupported" title={GENERATION_UNSUPPORTED}>
+        <span className="dot" />
+        No code generation
       </span>
     );
   }

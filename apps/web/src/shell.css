@@ -702,6 +702,9 @@ body {
 .chip-pending, .chip-note { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
 .chip-apply { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; border-color: var(--warn); }
 .chip-applying { font-family: var(--mono); font-size: 11px; }
+/* A non-Python project: nothing to apply, said rather than offered (registry.ts). */
+.chip-unsupported { font-family: var(--mono); font-size: 11px; cursor: help; }
+.scm-unsupported { font-size: 11px; line-height: 1.5; color: var(--text-dim); }
 .dot.pulse { animation: civil-pulse 1.2s ease-in-out infinite; }
 @keyframes civil-pulse { 50% { opacity: 0.3; } }
 .dot.warn { background: var(--warn); }
@@ -998,6 +1001,31 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 .toast.is-leaving { opacity: 0; transform: translate(-50%, -50%) scale(0.97); }
 .toast.is-refused { border-color: var(--border); }
 
+/* A result to read rather than glance at (a lift's summary): wider, left-aligned, and
+   — the one exception to "never interactive" — it stays and takes a click to dismiss,
+   since it waits for the author rather than passing over their work. */
+.toast.is-sticky {
+  width: min(560px, calc(100vw - 48px));
+  height: auto;
+  max-height: 70vh;
+  overflow: auto;
+  align-items: stretch;
+  text-align: left;
+  pointer-events: auto;
+}
+.toast.is-sticky .toast-detail { white-space: pre-line; font-size: 12px; }
+.toast-dismiss {
+  align-self: flex-end;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .toast-chord {
   font-family: var(--mono);
   font-size: 30px;
@@ -1139,6 +1167,11 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 }
 
 .add-civil-note code { font-family: var(--mono); color: var(--text-dim); }
+
+/* The second way in: read the repo's own code into a sketch (project.liftRepo). */
+.add-civil-or { margin: 14px 0 8px; font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.add-civil-button.is-lift { border-style: dashed; }
+.add-civil-button.is-busy { color: var(--warn); border-color: var(--warn); background: none; }
 
 /* Files are buttons now, so they need to stop looking like paragraph text. */
 .tree-file {
@@ -1540,6 +1573,10 @@ select.field { cursor: pointer; }
 .scm-block { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .scm-block:last-child { border-bottom: 0; }
 .scm-row { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.scm-row.is-wrap { flex-wrap: wrap; row-gap: 4px; }
+.scm-row.is-wrap > .scm-grow { flex: 1 0 auto; }
+.scm-row.is-wrap > .connect { margin-left: auto; }
+.scm-nowrap { white-space: nowrap; }
 .scm .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
 .scm .dot.ok { background: var(--ok); }
 .scm .dot.warn { background: var(--warn); }
@@ -1577,6 +1614,10 @@ select.field { cursor: pointer; }
 .scm-commit { display: flex; gap: 6px; margin-top: 8px; }
 .scm-commit .commit-message { flex: 1; min-width: 0; }
 .scm-why { margin-top: 4px; font-size: 11px; }
+/* The last lift's summary under its row: what was found and written, kept after the
+   toast is dismissed, with the way to the inventory and the diff. */
+.scm-lift-result { margin: 4px 0 0 16px; font-size: 11px; line-height: 1.45; color: var(--text-dim); }
+.scm-lift-result .link { font-size: 11px; padding: 0; margin-right: 10px; }
 .scm-note { margin-top: 6px; font-size: 11px; color: var(--text); }
 .scm-conflicts { border-left: 2px solid var(--danger); padding-left: 8px; margin-left: -2px; }
 .scm-conflicts .scm-group-title { color: var(--danger); }
@@ -1598,3 +1639,8 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
 .scm-branch-row:hover:not(:disabled) { background: var(--bg-raised); }
 .scm-branch-row.current { cursor: default; font-weight: 600; }
 .scm-badge { font-size: 10px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-dim); }
+
+/* A lifted node's repository side in the inspector: the model's sentence, then files. */
+.repo-description { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--text); }
+.repo-files { list-style: none; margin: 4px 0 0; padding: 0; font-size: 11px; line-height: 1.6; }
+.repo-files code { font-family: var(--mono); color: var(--text-dim); }

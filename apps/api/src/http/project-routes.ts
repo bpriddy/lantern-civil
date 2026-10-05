@@ -35,7 +35,8 @@ import {
   markPatternsStale,
   sketchFingerprint,
 } from '../project/transpile.js';
-import { REGISTRY_PATH, applyState } from '../project/registry.js';
+import { CIVIL_YAML_PATHS, REGISTRY_PATH, applyState } from '../project/registry.js';
+import { liftStatus } from '../lift/index.js';
 import { CIVIL_DIR } from '../project/bundle.js';
 import {
   dissolutionInputs,
@@ -219,9 +220,14 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
     // sketch's fingerprint with the one civil/registry.yaml records — so it survives a
     // reload and reads the same on any device, from the repo alone.
     const inputs = await gatherInputs(overlay, maintained);
-    await overlay.ensure?.([REGISTRY_PATH]);
+    // civil.yaml too: a non-Python project's state is 'unsupported' (registry.ts), and
+    // the UI shows why there is no Apply instead of a button that would only refuse.
+    await overlay.ensure?.([REGISTRY_PATH, ...CIVIL_YAML_PATHS]);
     const generation = { state: applyState(overlay, sketchFingerprint(inputs)) };
     const conflicts = await conflictsFor(request.identity.id, project, pending);
+    // Whether "Generate / Update graph from repo" is offered here, and what a lifted
+    // node stands for (docs/lift-repo.md) — read from the documents, like generation.
+    const lift = await liftStatus(overlay);
 
     return {
       project: {
@@ -247,6 +253,7 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       // Maintained orchestration files whose current content is no emission Civil
       // ever produced — edited outside Civil, and lift's to reconcile (docs/lift.md).
       drifted,
+      lift,
     };
   });
 
@@ -426,7 +433,9 @@ export function registerProjectRoutes(app: FastifyInstance, deps: ProjectDeps): 
       const overlay = new OverlaySource(source, changes);
       const maintained = await maintainedPaths(pool, request.identity.id, project.id);
       const inputs = await gatherInputs(overlay, maintained);
-      await overlay.ensure?.([REGISTRY_PATH]);
+      // Only 'stale' holds a commit: a non-Python project reads 'unsupported' — nothing
+      // is ever generated for it, so nothing is owed and its edits commit as they are.
+      await overlay.ensure?.([REGISTRY_PATH, ...CIVIL_YAML_PATHS]);
       if (applyState(overlay, sketchFingerprint(inputs)) === 'stale') {
         return reply.code(409).send({
           error: 'apply_needed',

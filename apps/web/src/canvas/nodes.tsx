@@ -18,7 +18,7 @@ import type { Contract } from '../project.js';
  * should know what kind of context you are entering before you double-click.
  */
 export type Descent =
-  | { into: 'canvas'; ports: { name: string; direction: 'in' | 'out' }[] }
+  | { into: 'canvas'; ports: { name: string; direction: 'in' | 'out' }[]; summary?: string }
   // `note` is carried rather than inferred from the entrypoint: "capability target"
   // is only meaningful for a code node inside a graph, and deriving it made a
   // frontend describe itself as one.
@@ -88,7 +88,7 @@ function Face({
       {descent?.into === 'canvas' ? (
         <div className="node-interior">
           {descent.ports.length === 0 ? (
-            <div className="node-interior-empty">no io nodes</div>
+            <div className="node-interior-empty">{descent.summary ?? 'no io nodes'}</div>
           ) : (
             descent.ports.map((port) => (
               <div key={`${port.direction}-${port.name}`} className={`node-port node-port-${port.direction}`}>

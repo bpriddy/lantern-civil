@@ -290,6 +290,29 @@ def test_unknown_routes_404() -> None:
     ok(status == 404, "an unknown POST route answers 404")
 
 
+def test_the_image_ships_every_module_the_server_imports() -> None:
+    """The runner image copies an explicit list of files (runner/Dockerfile). A new
+    module the server imports but the list omits passes every test here and crashes
+    the deployed runner on boot — it happened once (refine.py), so it is checked."""
+    print("test_the_image_ships_every_module_the_server_imports")
+    import ast
+    import re
+
+    runner_dir = Path(__file__).resolve().parents[1]
+    local = {p.stem for p in runner_dir.glob("*.py")}
+    tree = ast.parse((runner_dir / "server.py").read_text())
+    imported = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            imported.add(node.module.split(".")[0])
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+    needed = {f"{name}.py" for name in imported & local} | {"server.py"}
+    copied = set(re.findall(r"runner/(\w+\.py)", (runner_dir / "Dockerfile").read_text()))
+    missing = sorted(needed - copied)
+    ok(not missing, f"runner/Dockerfile copies every module server.py imports (missing: {missing})")
+
+
 def test_malformed_body_400() -> None:
     print("test_malformed_body_400")
     status, body = request("POST", "/analyze", raw=b"not json at all")

@@ -3,6 +3,7 @@ import type { Effect } from './Toast.js';
 import {
   formatChord,
   resolve,
+  titleOf,
   type Command,
   type CommandContext,
   type CommandId,
@@ -36,7 +37,7 @@ export function useCommands(context: CommandContext, handlers: CommandHandlers) 
     if (!handler) {
       setEffect({
         seq: seq.current,
-        title: command.title,
+        title: titleOf(command, latest.current.context),
         detail: 'Not available here.',
         refused: true,
         ...(chord ? { chord } : {}),
@@ -51,7 +52,7 @@ export function useCommands(context: CommandContext, handlers: CommandHandlers) 
     if (outcome === null) return;
     setEffect({
       seq: seq.current,
-      title: command.title,
+      title: titleOf(command, latest.current.context),
       detail: outcome ?? 'Nothing to do.',
       refused: outcome === undefined,
       ...(chord ? { chord } : {}),

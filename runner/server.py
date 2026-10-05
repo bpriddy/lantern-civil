@@ -28,6 +28,7 @@ from agent import DEFAULT_MODEL  # noqa: E402
 from execute import execute_bundle  # noqa: E402
 from patterns import analyze  # noqa: E402
 from lift import LiftError, lift_graph  # noqa: E402
+from refine import KINDS as REFINE_KINDS, RefineValidationError, refine  # noqa: E402
 from transpile import PROMPT_VERSION, TranspileValidationError, transpile  # noqa: E402
 
 
@@ -68,6 +69,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/lift":
             self._lift()
+            return
+        if self.path == "/lift/refine":
+            self._lift_refine()
             return
         # Drain the request body before replying: a POST with a body to an unknown
         # route otherwise leaves unread bytes in the socket, and closing the
@@ -192,6 +196,42 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, lift_graph(graph_path, graph_doc, orchestration))
         except LiftError as error:
             self._json(400, {"error": str(error)})
+
+    def _lift_refine(self) -> None:
+        # The repo lift's optional model pass (refine.py): names, classes and
+        # words for a skeleton the API's reader already built. The API treats
+        # every non-200 as "use the deterministic result", so 422 carries the
+        # issues for its note rather than for a retry.
+        body = self._body()
+        if body is None:
+            return
+        skeleton = body.get("skeleton")
+        docs = body.get("docs") or {}
+        if not isinstance(skeleton, dict) or not all(
+            isinstance(skeleton.get(kind, []), list) for kind in REFINE_KINDS
+        ):
+            self._json(400, {"error": '"skeleton" must be an object of entity lists'})
+            return
+        if not _string_map(docs):
+            self._json(400, {"error": '"docs" must map repo paths to file contents'})
+            return
+
+        client = self._model_client()
+        if client is None:
+            return
+        try:
+            result = refine(skeleton, docs, client, DEFAULT_MODEL)
+        except RefineValidationError as error:
+            self._json(422, {
+                "error": "validation failed",
+                "issues": error.issues,
+                "attempts": error.attempts,
+            })
+            return
+        except Exception as error:  # noqa: BLE001 — the model is the failure domain here
+            self._json(502, {"error": str(error)})
+            return
+        self._json(200, result)
 
     def _body(self) -> dict | None:
         """The parsed JSON object, or None with the 400 already sent."""

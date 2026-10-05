@@ -67,6 +67,11 @@ F — the app actually runs and is trustworthy at both altitudes.
   safety net is less urgent day-to-day than P1/P2.
 - **P4 — Bottom-end ingestion** *(C — completes the value prop, explicitly later).*
   Existing repo → induced graph (the macro of lift); harness import.
+  Built (2026-10-05, `docs/lift-repo.md`): **Generate / Update graph from repo** for a
+  NestJS server + Vite client — a deterministic TypeScript reader, an optional
+  validated model pass, and civil/ documents landed as pending changes; a lifted
+  project is `language: typescript` and generates no code. Not yet: other
+  frameworks, schedules outside Terraform, the GitHub path at scale, harness import.
 - **P5 — Agent piloting** *(operating the layer autonomously — a different context).*
   Intent in, agent edits graph + code through the same diff/commit path. Depends on P1
   (loop) and P3 (lossless reconciliation) being solid.

@@ -27,6 +27,11 @@ export interface FlowContext {
   agents: Record<string, AgentEntry>;
   files: string[];
   contracts: Record<string, ContractResult>;
+  /**
+   * Composition nodes a lift wrote, by id: the repository files each stands for
+   * (civil/registry.yaml, role repo). Optional: only a lifted project has them.
+   */
+  repoUnits?: Record<string, { files: string[]; description?: string }>;
 }
 
 /** Contracts are keyed by the manifest they were found from plus the node id. */
@@ -50,7 +55,14 @@ function canvasDescent(graphs: Record<string, Graph>, ref: string): Descent {
     // Inputs left, outputs right (PRD 5), so inputs read first.
     .sort((a, b) => (a.direction === b.direction ? 0 : a.direction === 'in' ? -1 : 1))
     .map((n) => ({ name: n.name ?? n.id, direction: n.direction }));
-  return { into: 'canvas', ports };
+  // A graph with no io nodes (a lifted one never has them: the reader does not invent
+  // a schema) is described by what it holds instead of by an empty interior.
+  const nodes = graph?.spec.nodes ?? [];
+  const agents = nodes.filter((n) => n.type === 'agent').length;
+  const summary = graph
+    ? `${nodes.length} node${nodes.length === 1 ? '' : 's'}${agents ? ` · ${agents} agent${agents === 1 ? '' : 's'}` : ''}`
+    : undefined;
+  return { into: 'canvas', ports, ...(summary ? { summary } : {}) };
 }
 
 const globToRe = (pattern: string) =>
@@ -91,7 +103,13 @@ export function compositionToFlow(
           descent = canvasDescent(context.graphs, node.impl.graph);
         } else {
           detail = node.impl.entrypoint;
-          descent = codeDescent(context.files, [node.impl.entrypoint], 'entrypoint');
+          // A lifted service stands for every file the registry lists for it, not
+          // the one its entrypoint names: open them all, entrypoint first.
+          const unit = context.repoUnits?.[node.id];
+          const entry = node.impl.entrypoint;
+          descent = unit
+            ? { into: 'code', files: [entry, ...unit.files.filter((f) => f !== entry)], note: 'from the repo' }
+            : codeDescent(context.files, [entry], 'entrypoint');
         }
         break;
       case 'process':
@@ -138,7 +156,9 @@ export function compositionToFlow(
       markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
       // Spread rather than an explicit undefined: exactOptionalPropertyTypes treats
       // "absent" and "present but undefined" as different, and Edge wants absent.
-      ...(routes ? {} : { style: { strokeDasharray: '2 4' }, label: 'depends on' }),
+      // No label: the dashed stroke is the relation, and a label chip per dependency
+      // buries a dense canvas (a lifted backend has dozens) in "depends on".
+      ...(routes ? {} : { style: { strokeDasharray: '2 4' } }),
     };
   });
 

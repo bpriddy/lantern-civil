@@ -20,6 +20,12 @@ export interface Effect {
   detail?: string;
   /** Set when a command declined, so the toast can say so rather than look successful. */
   refused?: boolean;
+  /**
+   * Stays until dismissed. For a result the author has to read — a lift's summary of
+   * what it found and wrote runs to several sentences, after an operation that took
+   * most of a minute, and a toast gone in a second says nothing.
+   */
+  sticky?: boolean;
 }
 
 const VISIBLE_MS = 900;
@@ -33,6 +39,7 @@ export function Toast({ effect }: { effect: (Effect & { seq: number }) | undefin
     if (!effect) return;
     setShown(effect);
     setLeaving(false);
+    if (effect.sticky) return;
 
     // Two timers rather than one so the element stays mounted through its fade;
     // unmounting immediately would cut the animation off.
@@ -48,10 +55,18 @@ export function Toast({ effect }: { effect: (Effect & { seq: number }) | undefin
   if (!shown) return null;
 
   return (
-    <div className={`toast${leaving ? ' is-leaving' : ''}${shown.refused ? ' is-refused' : ''}`} role="status">
+    <div
+      className={`toast${leaving ? ' is-leaving' : ''}${shown.refused ? ' is-refused' : ''}${shown.sticky ? ' is-sticky' : ''}`}
+      role="status"
+    >
       {shown.chord ? <div className="toast-chord">{shown.chord}</div> : null}
       <div className="toast-title">{shown.title}</div>
       {shown.detail ? <div className="toast-detail">{shown.detail}</div> : null}
+      {shown.sticky ? (
+        <button type="button" className="toast-dismiss" onClick={() => setShown(undefined)} aria-label="Dismiss">
+          Dismiss
+        </button>
+      ) : null}
     </div>
   );
 }

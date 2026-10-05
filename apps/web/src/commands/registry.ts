@@ -34,6 +34,7 @@ export type CommandId =
   | 'git.branch'
   | 'git.pullRequest'
   | 'project.apply'
+  | 'project.liftRepo'
   | 'help.keys';
 
 export interface CommandContext {
@@ -57,6 +58,12 @@ export interface CommandContext {
   /** An app session is starting or live right now. */
   sessionActive: boolean;
   depth: number;
+  /** The project already has a composition, so reading the repo updates it rather
+   *  than generating one. Optional: absent reads as "no composition yet". */
+  hasComposition?: boolean;
+  /** Reading the repo would be refused on this project (a Python project Civil
+   *  generates for, or documents still at the root). Optional: absent reads as no. */
+  liftRefused?: boolean;
 }
 
 /**
@@ -76,7 +83,15 @@ export interface Command {
   keys: string[];
   /** Whether it applies right now. A command that cannot run is not offered. */
   enabled: (context: CommandContext) => boolean;
+  /** When the name depends on the project's state — the same verb reads "Generate"
+   *  on an empty project and "Update" on one that has documents. `title` is the
+   *  name with no context at all (the keyboard list). */
+  titleIn?: (context: CommandContext) => string;
 }
+
+/** The command's name as it should read right now. */
+export const titleOf = (command: Command, context: CommandContext): string =>
+  command.titleIn?.(context) ?? command.title;
 
 /**
  * `mod` is Cmd on Apple platforms and Ctrl elsewhere, so a binding is written once.
@@ -301,6 +316,23 @@ export const COMMANDS: readonly Command[] = [
     keys: ['a'],
     // Not under the review panel: applying changes the pending set it is showing.
     enabled: (c) => c.where !== 'home' && c.where !== 'diff',
+  },
+  {
+    id: 'project.liftRepo',
+    title: 'Generate graph from repo',
+    titleIn: (c) => (c.hasComposition ? 'Update graph from repo' : 'Generate graph from repo'),
+    description:
+      "Read the repository's own code — a NestJS server, a Vite client — and propose " +
+      'Civil documents for it: the app composition, a graph per service, the registry, ' +
+      'an architecture note. When the project already has them, update them and keep ' +
+      'your node ids, layout, and anything you added. Everything arrives as pending ' +
+      'changes to review in the diff; nothing is committed.',
+    // U for update — G is Check GitHub, and R is Sync.
+    keys: ['u'],
+    // Not under the review panel: it changes the pending set the panel is showing. Not
+    // on a project it would refuse: a Python project Civil generates code for would be
+    // switched to TypeScript (Source control says why instead).
+    enabled: (c) => c.where !== 'home' && c.where !== 'diff' && !c.liftRefused,
   },
   {
     id: 'project.settings',

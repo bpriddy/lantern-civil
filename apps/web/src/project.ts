@@ -115,8 +115,22 @@ export interface ProjectBundle {
   /**
    * Whether the generated code reflects the sketch (civil/registry.yaml's
    * generated_from against the sketch now). Optional: an older server omits it.
+   * `unsupported`: civil.yaml's language is not python (a project lifted from a
+   * TypeScript repo) — its own code is the implementation, so there is no Apply.
    */
-  generation?: { state: 'never' | 'stale' | 'current' };
+  generation?: { state: 'never' | 'stale' | 'current' | 'unsupported' };
+  /**
+   * Reading the repository (docs/lift-repo.md): why it would be refused here (a Python
+   * project Civil generates for, documents still at the root), whether the project's
+   * registry was written by a lift, and — per composition node a lift wrote — the
+   * repository files it stands for and the model's sentence on it. Optional: an older
+   * server omits it.
+   */
+  lift?: {
+    refusal: { error: string; message: string } | null;
+    lifted: boolean;
+    units: Record<string, { files: string[]; description?: string }>;
+  };
   /** Files both the author and upstream changed — chosen one by one before committing. */
   conflicts?: Conflict[];
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
@@ -405,6 +419,30 @@ export async function initializeProject(
   return (await response.json()) as { files: string[]; summary: string };
 }
 
+export interface LiftRepoResult {
+  /** civil/ paths proposed, now sitting in pending changes. */
+  files: string[];
+  /** What was found and written, in words — the toast. */
+  summary: string;
+  /** Why the model pass did not contribute (no runner, a failure), when it did not. */
+  note: string | null;
+  /** What the reader could not resolve — reported, never guessed. */
+  diagnostics: string[];
+  counts: Record<string, number>;
+}
+
+/**
+ * Reads the repository's own code (a NestJS server, a Vite client) and proposes
+ * Civil documents for it — or, when the project already has them, updates them while
+ * keeping the author's ids, layout, and hand additions. Everything lands as pending
+ * changes to review; nothing is committed. Can take a while: a model pass names and
+ * describes what the reader found.
+ */
+export async function liftRepo(projectId: string): Promise<LiftRepoResult> {
+  const response = await apiFetch(`/api/projects/${projectId}/lift-repo`, { method: 'POST' });
+  if (!response.ok) throw new Error(await describeFailure(response, 'could not read the repository'));
+  return (await response.json()) as LiftRepoResult;
+}
 
 export interface TranspileResult {
   /** Every emitted path, now sitting in pending changes. */

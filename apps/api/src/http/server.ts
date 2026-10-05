@@ -9,6 +9,7 @@ import { checkConnection } from '../db/pool.js';
 import { registerAuthRoutes } from './auth-routes.js';
 import { registerGitHubRoutes } from './github-routes.js';
 import { registerGitRoutes } from './git-routes.js';
+import { registerLiftRoutes } from './lift-routes.js';
 import { registerProjectRoutes } from './project-routes.js';
 import { registerRunRoutes } from './run-routes.js';
 import { registerSessionRoutes } from './session-routes.js';
@@ -143,6 +144,7 @@ export async function createServer(deps: ServerDeps) {
   registerSessionRoutes(app, { config, pool });
   registerGitHubRoutes(app, { config, pool });
   registerGitRoutes(app, { config, pool });
+  registerLiftRoutes(app, { config, pool });
 
   // IAP fronted one service, and so does this: the SPA is served from the same origin
   // as the API. Registered after the auth hook, so static assets are behind it too.

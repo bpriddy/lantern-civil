@@ -38,7 +38,13 @@ import {
   planBoundaryClient,
 } from '../project/boundary-client.js';
 import { idTokenFor } from './runner-auth.js';
-import { attachRegistry, currentEmission, deriveUnits } from '../project/registry.js';
+import {
+  CIVIL_YAML_PATHS,
+  attachRegistry,
+  currentEmission,
+  deriveUnits,
+  generationRefusal,
+} from '../project/registry.js';
 import { transpileAndSync } from './session-routes.js';
 
 /**
@@ -66,7 +72,7 @@ export class RunnerError extends Error {
 }
 
 /** POST with a payload, GET without one; auth and error mapping are the same seam. */
-async function callRunner(
+export async function callRunner(
   runnerUrl: string,
   path: string,
   payload?: unknown,
@@ -209,6 +215,14 @@ export async function transpileProject(
   overlay: OverlaySource,
 ): Promise<TranspileFlow> {
   const { config, pool } = deps;
+
+  // Python only (PRD 15): a project whose civil.yaml says otherwise — one lifted from
+  // a TypeScript repo, whose own code is the implementation — is never generated for.
+  // Checked here, before any model work, so every caller (Apply, composition Run)
+  // refuses the same way; the 409 reaches the client through sendRunnerError.
+  await overlay.ensure?.([...CIVIL_YAML_PATHS]);
+  const refusal = generationRefusal(overlay);
+  if (refusal) throw new RunnerError(409, refusal);
 
   const maintained = await maintainedPaths(pool, ownerId, project.id);
   const inputs = await gatherInputs(overlay, maintained);
@@ -409,15 +423,6 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
     const project = await getProject(pool, request.identity.id, id);
     if (!project) return reply.code(404).send({ error: 'not_found' });
 
-    if (!config.runnerUrl) {
-      // Transpilation is model work and models live only in the runner (PRD 12).
-      // Honest beats silent, same as run dispatch.
-      return reply.code(503).send({
-        error: 'runner_not_configured',
-        message: 'No runner is configured (CIVIL_RUNNER_URL).',
-      });
-    }
-
     let source: ProjectSource;
     let overlay: OverlaySource;
     try {
@@ -427,6 +432,22 @@ export function registerTranspileRoutes(app: FastifyInstance, deps: TranspileDep
         return reply.code(error.status).send({ error: error.code, message: error.message });
       }
       throw error;
+    }
+
+    // The language answer comes before the runner's: a TypeScript project is never
+    // generated for, runner or not, and "no runner" would send the author looking
+    // for the wrong fix. transpileProject refuses the same way for every other caller.
+    await overlay.ensure([...CIVIL_YAML_PATHS]);
+    const refusal = generationRefusal(overlay);
+    if (refusal) return reply.code(409).send(refusal);
+
+    if (!config.runnerUrl) {
+      // Transpilation is model work and models live only in the runner (PRD 12).
+      // Honest beats silent, same as run dispatch.
+      return reply.code(503).send({
+        error: 'runner_not_configured',
+        message: 'No runner is configured (CIVIL_RUNNER_URL).',
+      });
     }
 
     // Transpile, then push to a live session best-effort (docs/app-session.md): a

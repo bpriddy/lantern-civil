@@ -221,6 +221,17 @@ const parseList = (text: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
+/** Enough of a lifted node's files to see what it is; the registry has the rest. */
+const REPO_FILES_SHOWN = 12;
+
+/** The directory every path shares ("apps/server/src/modules/tasks/"), so the list reads short. */
+function commonDir(paths: readonly string[]): string {
+  if (paths.length < 2) return '';
+  let prefix = paths[0]!.slice(0, paths[0]!.lastIndexOf('/') + 1);
+  for (const p of paths) while (prefix && !p.startsWith(prefix)) prefix = prefix.slice(0, prefix.slice(0, -1).lastIndexOf('/') + 1);
+  return prefix;
+}
+
 function NodeDetail({
   node,
   bundle,
@@ -370,6 +381,10 @@ function NodeDetail({
 
   const agent =
     node.type === 'agent' && graphPath ? bundle?.agents[`${graphPath}#${node.id}`] : undefined;
+  // A composition node a lift wrote: what it stands for in the repository — the
+  // model's sentence on it and the files the registry lists — which otherwise lives
+  // only in civil/architecture.md (docs/lift-repo.md).
+  const fromRepo = graphPath === undefined ? bundle?.lift?.units[node.id] : undefined;
 
   return (
     <>
@@ -386,6 +401,27 @@ function NodeDetail({
         </dd>
         {fields}
       </dl>
+
+      {fromRepo ? (
+        <>
+          <h3 className="section">From the repo</h3>
+          {fromRepo.description ? <p className="repo-description">{fromRepo.description}</p> : null}
+          <p className="muted">
+            {fromRepo.files.length} file{fromRepo.files.length === 1 ? '' : 's'} implement it (civil/registry.yaml); its
+            routes are listed in civil/architecture.md.
+          </p>
+          <ul className="repo-files">
+            {fromRepo.files.slice(0, REPO_FILES_SHOWN).map((file) => (
+              <li key={file} title={file}>
+                <code>{file.slice(commonDir(fromRepo.files).length)}</code>
+              </li>
+            ))}
+            {fromRepo.files.length > REPO_FILES_SHOWN ? (
+              <li className="muted">and {fromRepo.files.length - REPO_FILES_SHOWN} more</li>
+            ) : null}
+          </ul>
+        </>
+      ) : null}
 
       {agent ? (
         <>

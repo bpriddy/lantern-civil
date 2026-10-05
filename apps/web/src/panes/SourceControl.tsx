@@ -11,7 +11,12 @@ import type { BranchList, Conflict, GitCheck, GitInfo, PendingChange } from '../
  * so an agent drives the same flow through the same handlers.
  */
 
-export type ApplyStateValue = 'never' | 'stale' | 'current' | undefined;
+/** `unsupported`: a non-Python project (lifted from a TypeScript repo) — no Apply. */
+export type ApplyStateValue = 'never' | 'stale' | 'current' | 'unsupported' | undefined;
+
+/** Said wherever Apply would otherwise be offered to a project Civil cannot generate. */
+export const GENERATION_UNSUPPORTED =
+  "Code generation isn't available for TypeScript projects — the repo's code is the implementation.";
 
 const relativeTime = (iso: string): string => {
   const then = Date.parse(iso);
@@ -53,6 +58,13 @@ export function SourceControl({
   onCheck,
   onSync,
   onApply,
+  onLiftRepo,
+  lifting,
+  liftTitle,
+  liftRefusal = null,
+  lifted = false,
+  lastLift = null,
+  onOpenFile,
   onCommit,
   onReview,
   onRevert,
@@ -84,6 +96,20 @@ export function SourceControl({
   onCheck: () => void;
   onSync: () => void;
   onApply: () => void;
+  /** Read the repo's code into civil/ documents, as pending changes (project.liftRepo). */
+  onLiftRepo: () => void;
+  /** A read of the repo is in flight — it can take a while with the model pass. */
+  lifting: boolean;
+  /** "Generate graph from repo" or "Update graph from repo", from the command. */
+  liftTitle: string;
+  /** Why reading the repo is not offered on this project, in words; null when it is. */
+  liftRefusal?: string | null;
+  /** The project's documents were read from the repo (its registry records a lift). */
+  lifted?: boolean;
+  /** The last lift's result in words, kept here after its toast is dismissed. */
+  lastLift?: string | null;
+  /** Opens a file in the editor: the lift's inventory, civil/architecture.md. */
+  onOpenFile?: (path: string) => void;
   onCommit: (message: string) => void;
   onReview: (path?: string) => void;
   onRevert: (path: string) => void;
@@ -338,23 +364,86 @@ export function SourceControl({
 
       {/* The sketch and its code. */}
       <div className="scm-block">
-        <div className="scm-row">
-          <span className={`dot ${applying ? 'warn pulse' : applyState === 'current' ? 'ok' : 'warn'}`} />
-          <span className="scm-grow">
-            {applying
-              ? 'Applying the sketch…'
-              : applyState === 'current'
-                ? 'Code matches the sketch'
-                : applyState === 'never'
-                  ? 'No code generated yet'
-                  : 'Sketch has changes not yet applied'}
-          </span>
-          {applyState !== 'current' && !applying ? (
-            <button type="button" className="connect" onClick={onApply}>
-              {applyState === 'never' ? 'Generate' : 'Apply'}
-            </button>
-          ) : null}
-        </div>
+        {applyState === 'unsupported' ? (
+          // A project lifted from a TypeScript repo: its own code is the
+          // implementation, so there is nothing to apply — and saying so beats an
+          // Apply button that could only refuse.
+          <div className="scm-row">
+            <span className="dot" />
+            <span className="scm-grow scm-unsupported">{GENERATION_UNSUPPORTED}</span>
+          </div>
+        ) : (
+          <div className="scm-row">
+            <span className={`dot ${applying ? 'warn pulse' : applyState === 'current' ? 'ok' : 'warn'}`} />
+            <span className="scm-grow">
+              {applying
+                ? 'Applying the sketch…'
+                : applyState === 'current'
+                  ? 'Code matches the sketch'
+                  : applyState === 'never'
+                    ? 'No code generated yet'
+                    : 'Sketch has changes not yet applied'}
+            </span>
+            {applyState !== 'current' && !applying ? (
+              <button type="button" className="connect" onClick={onApply}>
+                {/* "Generate code", not "Generate": the row below generates the graph
+                    from the code, the opposite direction, and two bare "Generate"
+                    buttons a line apart do not say which is which. */}
+                {applyState === 'never' ? 'Generate code' : 'Apply'}
+              </button>
+            ) : null}
+          </div>
+        )}
+        {/* The other direction: the code read back into the sketch. Proposes civil/
+            documents as pending changes — reviewed below, never committed for you. */}
+        {liftRefusal ? (
+          // Not offered here, and why — a button that could only refuse is worse.
+          <div title={liftRefusal}>
+            <div className="scm-row">
+              <span className="dot" />
+              <span className="scm-grow scm-unsupported">Reading the graph from the repo isn't offered here</span>
+            </div>
+            <div className="scm-why muted">{liftRefusal.split('. ')[0]}.</div>
+          </div>
+        ) : (
+          // Wraps rather than squeezing: the button carries the command's full title,
+          // and the status beside it should read as one line, not a word per line.
+          <div className="scm-row is-wrap">
+            <span className={`dot ${lifting ? 'warn pulse' : lifted ? 'ok' : ''}`} />
+            <span className="scm-grow scm-nowrap">
+              {lifting
+                ? 'Reading the repository — this can take a minute…'
+                : lifted
+                  ? 'Graph read from the repo'
+                  : 'Not read from the repo yet'}
+            </span>
+            {!lifting ? (
+              <button
+                type="button"
+                className="connect"
+                onClick={onLiftRepo}
+                title={`${liftTitle} (U) — proposes civil/ documents as pending changes to review; nothing is committed`}
+              >
+                {liftTitle}
+              </button>
+            ) : null}
+          </div>
+        )}
+        {lastLift && !lifting ? (
+          <div className="scm-lift-result">
+            <div>{lastLift}</div>
+            {onOpenFile ? (
+              <button type="button" className="link" onClick={() => onOpenFile('civil/architecture.md')}>
+                Open architecture.md
+              </button>
+            ) : null}
+            {pending.length > 0 ? (
+              <button type="button" className="link" onClick={() => onReview()}>
+                Review the diff
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* What would be committed. */}

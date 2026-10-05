@@ -127,6 +127,7 @@ function Surface({
       agents: bundle.agents,
       files: bundle.files,
       contracts: bundle.contracts,
+      ...(bundle.lift ? { repoUnits: bundle.lift.units } : {}),
     };
 
     if (current.kind === 'composition') {

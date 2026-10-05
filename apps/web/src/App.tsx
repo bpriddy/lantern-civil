@@ -17,11 +17,12 @@ const DiffPanel = lazy(() =>
   import('./panes/DiffPanel.js').then((m) => ({ default: m.DiffPanel })),
 );
 import { ApplyButton } from './panes/ApplyButton.js';
-import { SourceControl } from './panes/SourceControl.js';
+import { GENERATION_UNSUPPORTED, SourceControl } from './panes/SourceControl.js';
 import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
 import { Toast } from './commands/Toast.js';
 import { useCommands } from './commands/useCommands.js';
+import { commandById, titleOf, type CommandContext } from './commands/registry.js';
 import { Home } from './panes/Home.js';
 import { AddNode } from './panes/AddNode.js';
 import { ProjectPicker } from './panes/ProjectPicker.js';
@@ -43,6 +44,7 @@ import {
   applyOps,
   commitProject,
   initializeProject,
+  liftRepo,
   fetchBundle,
   fetchExamples,
   fetchProjects,
@@ -254,6 +256,13 @@ function Workspace({ me }: { me: Me }) {
   const [keyHelpOpen, setKeyHelpOpen] = useState(false);
   const [addNodeOpen, setAddNodeOpen] = useState(false);
   const [initializing, setInitializing] = useState(false);
+  // Generate / Update graph from repo is in flight. Its ref guards re-entry the way
+  // applyingRef does: a second press would read the repo and call the model twice.
+  const [lifting, setLifting] = useState(false);
+  // The last lift's summary, kept under its row in Source control once the toast is
+  // dismissed. Per project: opening another clears it.
+  const [lastLift, setLastLift] = useState<{ projectId: string; text: string } | null>(null);
+  const liftingRef = useRef(false);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -485,32 +494,44 @@ function Workspace({ me }: { me: Me }) {
   // canvas": composition Run runs the APP — the session — while graph Run keeps the
   // module loop untouched. PRD 6.4 still holds on a graph: a flow cycle blocks Run
   // without failing the save, and validation errors block both altitudes.
-  const sessionReady = current.kind === 'composition' && load.status === 'ready' && fatalCount === 0;
+  const sessionReady =
+    current.kind === 'composition' && load.status === 'ready' && fatalCount === 0 && bundle?.generation?.state !== 'unsupported';
   const sessionActive = appSession.phase === 'starting' || appSession.phase === 'live';
+  // A project whose own TypeScript is the implementation has nothing Civil can run:
+  // Run transpiles to Python first. Disabled, with the reason as its title, rather
+  // than a red 409 and a "Try again" that can never succeed.
+  const generationUnsupported = bundle?.generation?.state === 'unsupported';
   const runDisabled =
-    current.kind === 'graph' ? runBlockedCount > 0 || fatalCount > 0 : !sessionReady;
+    generationUnsupported || (current.kind === 'graph' ? runBlockedCount > 0 || fatalCount > 0 : !sessionReady);
 
   /**
    * The keyboard dispatches into the command registry, and an agent will dispatch
    * into the same one (CLAUDE.md). Each handler returns what it did in words, which
    * is what the toast shows — and what an agent transcript will show later.
    */
+  const commandContext: CommandContext = {
+    // The diff panel is a location, not an overlay: while it is open, canvas
+    // commands must not fire underneath it, or the diff on screen stops being
+    // the diff that commits.
+    where: atHome ? 'home' : diffOpen ? 'diff' : current.kind === 'code' ? 'code' : 'canvas',
+    hasSelection: selectedIds.length > 0 || selectedEdgeIds.length > 0,
+    pendingCount,
+    canCommit,
+    canUndo: undoDepth > 0,
+    canRun: current.kind === 'graph' && !runDisabled,
+    runActive: activeRun?.status === 'queued' || activeRun?.status === 'running',
+    canSession: sessionReady,
+    sessionActive,
+    depth: stack.length - 1,
+    // Decides whether reading the repo is "Generate" or "Update" (project.liftRepo).
+    hasComposition: bundle?.composition !== undefined,
+    // A project the lift would refuse is not offered it (Source control says why).
+    liftRefused: !!bundle?.lift?.refusal,
+  };
+  // One name for the verb everywhere it appears — buttons, title attributes, toasts.
+  const liftTitle = titleOf(commandById('project.liftRepo'), commandContext);
   const { effect, report } = useCommands(
-    {
-      // The diff panel is a location, not an overlay: while it is open, canvas
-      // commands must not fire underneath it, or the diff on screen stops being
-      // the diff that commits.
-      where: atHome ? 'home' : diffOpen ? 'diff' : current.kind === 'code' ? 'code' : 'canvas',
-      hasSelection: selectedIds.length > 0 || selectedEdgeIds.length > 0,
-      pendingCount,
-      canCommit,
-      canUndo: undoDepth > 0,
-      canRun: current.kind === 'graph' && !runDisabled,
-      runActive: activeRun?.status === 'queued' || activeRun?.status === 'running',
-      canSession: sessionReady,
-      sessionActive,
-      depth: stack.length - 1,
-    },
+    commandContext,
     {
       'nav.home': () => {
         goHome();
@@ -537,6 +558,7 @@ function Workspace({ me }: { me: Me }) {
           agents: bundle.agents,
           files: bundle.files,
           contracts: bundle.contracts,
+          ...(bundle.lift ? { repoUnits: bundle.lift.units } : {}),
         };
         const flow =
           current.kind === 'composition'
@@ -625,8 +647,19 @@ function Workspace({ me }: { me: Me }) {
         return 'Asking GitHub…';
       },
       'project.apply': () => {
+        // A TypeScript project's own code is the implementation (registry.ts): say so
+        // here too, so the keyboard and an agent hear what the button area shows.
+        if (bundle?.generation?.state === 'unsupported') {
+          report({ title: 'Apply changes', detail: GENERATION_UNSUPPORTED, refused: true });
+          return null;
+        }
         void doApply();
         return 'Transpiling the civil documents…';
+      },
+      'project.liftRepo': () => {
+        if (!activeId || liftingRef.current) return undefined;
+        void doLiftRepo();
+        return 'Reading the repository — proposed documents arrive as pending changes to review.';
       },
       'project.settings': () => {
         setSettingsOpen((v) => !v);
@@ -665,8 +698,9 @@ function Workspace({ me }: { me: Me }) {
     },
   );
 
-  const runTitle =
-    current.kind === 'composition'
+  const runTitle = generationUnsupported
+    ? `Run isn't available: ${GENERATION_UNSUPPORTED}`
+    : current.kind === 'composition'
       ? fatalCount > 0
         ? `${fatalCount} validation error${fatalCount === 1 ? '' : 's'}`
         : sessionActive
@@ -864,6 +898,45 @@ function Workspace({ me }: { me: Me }) {
       setApplying(false);
     }
   }, [activeId, refresh, report]);
+
+  /**
+   * Generate / Update graph from repo (docs/lift-repo.md): the server reads the
+   * repository's code and lands proposed civil/ documents as pending changes. The
+   * refresh shows them in the tree and the commit count; the canvas opens on the
+   * composition so the result is seen at once, and the diff is one click away —
+   * nothing reaches the repository until the author commits it.
+   */
+  const doLiftRepo = useCallback(async () => {
+    if (!activeId || liftingRef.current) return;
+    liftingRef.current = true;
+    setLifting(true);
+    const title = liftTitle;
+    try {
+      const result = await liftRepo(activeId);
+      await refresh();
+      // Back to the top: the composition is what was just written or updated.
+      setDiffOpen(false);
+      ascendTo(0);
+      const extras = [
+        result.note,
+        result.diagnostics.length > 0
+          ? `${result.diagnostics.length} thing${result.diagnostics.length === 1 ? '' : 's'} could not be resolved — see civil/architecture.md.`
+          : null,
+      ].filter(Boolean);
+      const detail = [result.summary, ...extras].join('\n');
+      // A result to read, after an operation that took a while: it stays until
+      // dismissed, and stays in Source control after that.
+      report({ title, detail, sticky: true });
+      setLastLift({ projectId: activeId, text: detail });
+      // Show the whole composition just written, not whatever part of it fits.
+      window.setTimeout(() => canvasActions.current?.fit(), 300);
+    } catch (error) {
+      report({ title, detail: (error as Error).message, refused: true, sticky: true });
+    } finally {
+      liftingRef.current = false;
+      setLifting(false);
+    }
+  }, [activeId, liftTitle, refresh, report, ascendTo]);
 
   /**
    * The open graph's orchestration, when Civil emitted it and it was then changed
@@ -1313,7 +1386,7 @@ function Workspace({ me }: { me: Me }) {
     return (
       <>
         <Toast effect={effect} />
-        {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
+        {keyHelpOpen ? <KeyHelp context={commandContext} onClose={() => setKeyHelpOpen(false)} /> : null}
         <Home
           me={me}
           projects={projects}
@@ -1329,7 +1402,7 @@ function Workspace({ me }: { me: Me }) {
   return (
     <div className={`shell${previewOpen ? ' with-preview' : ''}`}>
       <Toast effect={effect} />
-      {keyHelpOpen ? <KeyHelp onClose={() => setKeyHelpOpen(false)} /> : null}
+      {keyHelpOpen ? <KeyHelp context={commandContext} onClose={() => setKeyHelpOpen(false)} /> : null}
       {diffOpen && bundle ? (
         <Suspense fallback={null}>
           <DiffPanel
@@ -1504,6 +1577,13 @@ function Workspace({ me }: { me: Me }) {
             onCheck={() => void doCheck()}
             onSync={() => void doSync()}
             onApply={() => void doApply()}
+            onLiftRepo={() => void doLiftRepo()}
+            lifting={lifting}
+            liftTitle={liftTitle}
+            liftRefusal={bundle.lift?.refusal?.message ?? null}
+            lifted={bundle.lift?.lifted ?? false}
+            lastLift={lastLift && lastLift.projectId === activeId ? lastLift.text : null}
+            onOpenFile={openFile}
             onCommit={(message) => void commit(message)}
             onReview={(path) => {
               setDiffFocus(path);
@@ -1528,6 +1608,8 @@ function Workspace({ me }: { me: Me }) {
           onOpenFile={openFile}
           onInitialize={() => void initialize()}
           initializing={initializing}
+          onLiftRepo={() => void doLiftRepo()}
+          lifting={lifting}
         />
       </aside>
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commandById, resolve, type CommandContext } from '../src/commands/registry.ts';
+import { COMMANDS, commandById, resolve, titleOf, type CommandContext } from '../src/commands/registry.ts';
 
 /**
  * docs/app-session.md: Run is one gesture whose meaning follows the altitude — the
@@ -54,4 +54,23 @@ test('shift+escape prefers cancelling the run over stopping the session', () => 
     'run.cancel',
   );
   assert.equal(resolve(shiftEscape(), context({ sessionActive: true }))?.id, 'session.stop');
+});
+
+test('U is "Generate graph from repo", or "Update" once there is a composition', () => {
+  // docs/lift-repo.md: one command, named for what it will do to this project — the
+  // first lift generates the documents, every later one merges into them.
+  const lift = commandById('project.liftRepo');
+  assert.equal(resolve(key('u'), context())?.id, 'project.liftRepo');
+  assert.equal(titleOf(lift, context()), 'Generate graph from repo');
+  assert.equal(titleOf(lift, context({ hasComposition: true })), 'Update graph from repo');
+  // It changes the pending set, so not under the review panel showing it, nor at home.
+  assert.equal(resolve(key('u'), context({ where: 'diff' })), undefined);
+  assert.equal(resolve(key('u'), context({ where: 'home' })), undefined);
+  // Not offered on a project it would refuse (a Python project Civil generates for).
+  assert.equal(resolve(key('u'), context({ liftRefused: true })), undefined);
+  // And no other command claims U.
+  assert.deepEqual(
+    COMMANDS.filter((c) => c.keys.includes('u')).map((c) => c.id),
+    ['project.liftRepo'],
+  );
 });

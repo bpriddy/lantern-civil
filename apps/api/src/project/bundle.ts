@@ -185,10 +185,15 @@ async function discoverProjectContracts(
     }
   }
 
-  await source.ensure?.(wanted.map((w) => w.file));
+  // The reader is Python's (contracts.ts), so only Python sources have a contract to
+  // discover. A project lifted from a TypeScript repo (docs/lift-repo.md) points its
+  // nodes at .ts files: those show no ports rather than a Python parse error on
+  // every node — the code is fine, it is just not the language discovery reads.
+  const discoverable = wanted.filter((w) => w.file.endsWith('.py'));
+  await source.ensure?.(discoverable.map((w) => w.file));
 
   const requests: ContractRequest[] = [];
-  for (const w of wanted) {
+  for (const w of discoverable) {
     const text = source.read(w.file);
     // A file the source cannot read yields no contract rather than an error: it is
     // usually a manifest pointing at something that does not exist yet, which the

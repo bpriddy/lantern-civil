@@ -13,11 +13,17 @@ export function ProjectTree({
   onOpenFile,
   onInitialize,
   initializing,
+  onLiftRepo,
+  lifting,
 }: {
   bundle: ProjectBundle | undefined;
   onOpenFile: (path: string) => void;
   onInitialize: () => void;
   initializing: boolean;
+  /** Generate graph from repo (project.liftRepo): read the code into civil/ documents. */
+  onLiftRepo: () => void;
+  /** A read of the repo is in flight; it can take a while with the model pass. */
+  lifting: boolean;
 }) {
   const grouped = useMemo(() => groupByDirectory(bundle?.files ?? []), [bundle]);
 
@@ -47,6 +53,25 @@ export function ProjectTree({
                   Creates <code>civil.yaml</code>, <code>app.yaml</code> and{' '}
                   <code>CIVIL.md</code> as pending changes. Nothing is committed until
                   you say so.
+                </p>
+                {/* The other way in, for a repo that already has an app in it: read
+                    the code and propose the sketch it implies. */}
+                <div className="add-civil-or">or, from the code already here</div>
+                <button
+                  type="button"
+                  className={`add-civil-button is-lift${lifting ? ' is-busy' : ''}`}
+                  onClick={onLiftRepo}
+                  disabled={lifting || initializing}
+                  title="Generate graph from repo (U)"
+                >
+                  {lifting ? 'Reading the repository…' : 'Generate graph from repo'}
+                </button>
+                <p className="add-civil-note">
+                  {lifting
+                    ? 'Reading the NestJS server and Vite client, then naming what it found. This can take a minute.'
+                    : <>Reads a NestJS server and Vite client and proposes <code>civil/</code>{' '}
+                      documents — the app, a graph per service, the registry — as pending
+                      changes to review. Nothing is committed.</>}
                 </p>
               </div>
             ) : null}
