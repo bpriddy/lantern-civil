@@ -214,3 +214,18 @@ test('liftStatus tells the canvas what a lifted node stands for', async () => {
   assert.equal(python.refusal?.error, 'python_project');
   assert.equal(python.lifted, false);
 });
+
+test('each drawn unit records how sure Civil is and where in the code that rests', async () => {
+  const result = await liftRepository(source(REPO) as never, { projectName: 'Ledger' });
+  const units = parse(result.files['civil/registry.yaml']!).units as Record<
+    string,
+    { confidence?: string; evidence?: string[] }
+  >;
+  // The reader read these exactly, so they rest on code: high, with a place to look.
+  assert.equal(units['app/accounts']!.confidence, 'high');
+  assert.deepEqual(units['app/accounts']!.evidence, [`${S}/accounts/accounts.module.ts:3`]);
+  assert.equal(units['app/web']!.confidence, 'high');
+  // Re-running over unchanged code writes the same bytes: provenance is deterministic.
+  const again = await liftRepository(source({ ...REPO, ...result.files }) as never, { projectName: 'Ledger' });
+  assert.equal(again.files['civil/registry.yaml'], result.files['civil/registry.yaml']);
+});

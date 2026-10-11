@@ -89,6 +89,8 @@ export interface ModelNode {
   description?: string;
   /** Present for a service that uses agents: its dataflow canvas. */
   graph?: ModelGraph;
+  /** The skeleton entity it was drawn from, so its provenance (claims.ts) can follow it. */
+  entity?: string;
 }
 
 export interface ModelEdge {
@@ -107,6 +109,8 @@ export interface ModelGraphNode {
   anchors: string[];
   /** For an agent: the registry unit graph/<graph>/<agent>'s files. */
   files: string[];
+  /** For an agent: the skeleton agent it was drawn from. */
+  entity?: string;
 }
 
 export interface ModelGraph {
@@ -271,6 +275,7 @@ function graphFor(
       id,
       type: 'agent',
       node: { id, type: 'agent', name: nameFrom(descriptions[agent.id], titleOf(agent.id)) },
+      entity: agent.id,
       column,
       anchors: [agent.source.file],
       files: sortedUnique([...agent.files, agent.source.file, ...agent.tools.map((t) => t.file)]),
@@ -387,6 +392,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     nodes.push({
       id,
       type: 'client',
+      entity: client.id,
       node,
       column: 0,
       anchors: [client.source.file],
@@ -418,6 +424,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     nodes.push({
       id,
       type: 'boundary',
+      entity: server.id,
       node: { id, type: 'boundary', boundary: 'api', exposes },
       column: 1,
       anchors: [server.source.file],
@@ -441,6 +448,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     nodes.push({
       id,
       type: 'service',
+      entity: service.id,
       // The graph path is decided by the merge (an existing graph keeps its path); the
       // placeholder here is the fresh default.
       node: { id, type: 'service', impl: graph ? { graph: `${GRAPHS_DIR}/${id}.graph.yaml` } : { entrypoint: primary.file } },
@@ -469,6 +477,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     nodes.push({
       id,
       type: 'process',
+      entity: process.id,
       node: { id, type: 'process', trigger: { kind: 'schedule', cron: process.schedule }, calls },
       // An entry point like a boundary, so it sits in the boundaries' column.
       column: 1,

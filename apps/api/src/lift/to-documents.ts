@@ -29,6 +29,7 @@ import {
 } from './documents-model.js';
 import { compositionYaml, graphYaml, projectYaml } from './documents-yaml.js';
 import { LIFT_ROLE, liftRegistry, readLiftProvenance, type LiftProvenance } from './documents-registry.js';
+import type { Provenance } from './claims.js';
 import type { FileMap, Refinement, Skeleton } from './skeleton.js';
 
 /**
@@ -77,6 +78,12 @@ export interface DocumentsOptions {
    * whether the code changed (an additive option; see LiftProvenance).
    */
   liftedFrom?: LiftProvenance;
+  /**
+   * What each skeleton entity rests on (claims.ts): confidence and evidence, recorded
+   * per unit in the registry so the graph can say how sure Civil is and why. An
+   * additive option; without it the registry carries no provenance.
+   */
+  provenance?: Readonly<Record<string, Provenance>>;
   /**
    * Every path in the project (an additive option: liftRepository has the listing).
    * Validation checks the documents' paths against these, so a reference to a file the
@@ -437,6 +444,11 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
 
   const filesOf = new Map<string, string[]>();
   const descriptionOf = new Map<string, string>();
+  const provenanceOf = new Map<string, Provenance>();
+  const believed = (unit: string, entity: string | undefined) => {
+    const p = entity ? opts.provenance?.[entity] : undefined;
+    if (p) provenanceOf.set(unit, p);
+  };
   const attribute = (unit: string, paths: readonly string[]) =>
     filesOf.set(unit, sortedUnique([...(filesOf.get(unit) ?? []), ...paths]));
   const removedUnits = new Set([...removedBefore, ...removedNow]);
@@ -444,6 +456,7 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
     const unit = `app/${ids.get(node.id)!}`;
     if (removedUnits.has(unit)) continue;
     attribute(unit, node.files);
+    believed(unit, node.entity);
     if (node.description) descriptionOf.set(unit, node.description);
     const graphId = graphIds.get(node.id);
     if (!node.graph || !graphId) continue;
@@ -454,6 +467,7 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
       const agentUnit = `graph/${graphId}/${nodeIds.get(g.id)!}`;
       if (removedUnits.has(agentUnit)) continue;
       attribute(agentUnit, g.files);
+      believed(agentUnit, g.entity);
       const agent = model.skeleton.agents.find((a) => g.anchors.includes(a.source.file));
       const said = agent ? model.descriptions[agent.id] : undefined;
       if (said) descriptionOf.set(agentUnit, said);
@@ -475,7 +489,7 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
   const present = new Set(units.map((u) => u.id));
   const removed = sortedUnique([...removedUnits].filter((u) => !present.has(u)));
   const liftedFrom = opts.liftedFrom ? { ...opts.liftedFrom, ...(removed.length ? { removed } : {}) } : undefined;
-  files[REGISTRY_PATH] = liftRegistry(units, filesOf, shared, opts.repo, liftedFrom, descriptionOf);
+  files[REGISTRY_PATH] = liftRegistry(units, filesOf, shared, opts.repo, liftedFrom, descriptionOf, provenanceOf);
 
   // ---- architecture.md ---------------------------------------------------------
 

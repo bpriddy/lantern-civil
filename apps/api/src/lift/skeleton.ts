@@ -87,6 +87,33 @@ export interface SkeletonServer {
    * unowned remainder is an exception the author sees, not a silent gap. Optional.
    */
   sharedFiles?: string[];
+  /**
+   * Services this deployment loads only under a role or feature check — the root's
+   * module factory imports them behind `roles.includes("worker")` or `mode === "api"` —
+   * by the value checked, so a later stage can split the deployment by role. Services
+   * loaded whatever the role are not listed. Optional, absent when nothing is guarded.
+   */
+  roles?: { name: string; services: string[] }[];
+}
+
+/**
+ * A declaration a service makes through a define-style factory (`defineAction({
+ * contract, run })`, `defineTask({ run })`), listed in an exported array. An attribute of
+ * the service, summarised — Civil works at the altitude of services, not functions.
+ */
+export interface SkeletonOperation {
+  /** Its `name` when the source fixes one, else the variable it is bound to. */
+  name: string;
+  file: string;
+  line?: number;
+  /** The factory that builds it, as written: "defineAction", "defineTask". */
+  kind?: string;
+  /** Its `exposure` when a fixed string ("read", "write"). */
+  exposure?: string;
+  /** True when it carries a `tool` key: an agent may call it. */
+  tool?: boolean;
+  /** True when it carries schedule or cron information (it is then also a process). */
+  scheduled?: boolean;
 }
 
 /**
@@ -133,6 +160,17 @@ export interface SkeletonService {
    * task queue or an HTTP call aimed at a worker's /internal/... path. Optional.
    */
   dispatchesTo?: string[];
+  /**
+   * What the service declares through define-style factories in exported arrays (a
+   * registry), grouped by the directory that defines them. Optional.
+   */
+  operations?: SkeletonOperation[];
+  /**
+   * The exported arrays (registries) that list this service's controllers or
+   * operations — the evidence it is served when no @Module of its own declares it.
+   * Optional.
+   */
+  declaredBy?: { name: string; file: string; line?: number }[];
 }
 
 /** An LLM agent the code defines: becomes an `agent` node inside its service's graph. */

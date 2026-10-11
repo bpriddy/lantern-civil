@@ -2,6 +2,7 @@ import { posix } from 'node:path';
 import ts from 'typescript';
 import type {
   SkeletonAgent,
+  SkeletonOperation,
   SkeletonProcess,
   SkeletonRoute,
   SkeletonServer,
@@ -11,6 +12,7 @@ import {
   byString,
   civilId,
   decoratorsOf,
+  hasModifier,
   isUnder,
   propName,
   unwrap,
@@ -18,6 +20,7 @@ import {
   type Pkg,
   type RepoContext,
 } from './read.js';
+import { readRegistries, type DeclaredOperation, type RegistryArray } from './reader-registry.js';
 
 /**
  * The NestJS reader: one server package in, its routes, services, agents and
@@ -114,18 +117,50 @@ interface ModuleRec {
   key: string;
   name: string;
   file: string;
-  node: ts.ClassDeclaration;
+  /** The @Module class, or for a feature the declaration that anchors it. */
+  node: ts.Node;
   global: boolean;
   imports: string[];
   controllers: Decl[];
   providers: ProviderRec[];
+  /**
+   * Features whose registry-listed controllers this module mounts: loaded with it, but
+   * not a dependency of it — mounting a controller is serving it, not using it.
+   */
+  mounts: string[];
+  /**
+   * Role/feature checks guarding an import or mount, by target key: the values checked
+   * (`roles.includes("api")` → "api"), or null when some occurrence is unguarded.
+   */
+  guards: Map<string, Set<string> | null>;
+  /** The same, for the controllers it declares, by file#name. */
+  controllerGuards: Map<string, Set<string> | null>;
+  /** A feature (no @Module: a directory a registry declares) and the directory it owns. */
+  feature?: { dir: string; registries: RegistryArray[] };
 }
 
-type Entry =
+type Entry = (
   | { kind: 'class'; decl: Decl }
   | { kind: 'provider'; rec: ProviderRec }
   | { kind: 'external' }
-  | { kind: 'unresolved'; file: string; node: ts.Node; reason: string };
+  | { kind: 'unresolved'; file: string; node: ts.Node; reason: string }
+) & {
+  /** Values of the role/feature checks this entry is listed behind, when recognisable. */
+  guard?: string[];
+};
+
+/**
+ * What collect() needs beyond the expression: the local consts of the function body it
+ * is reading (a module factory's `const base = SharedModule.forRoot(...)`), and a
+ * hook that queues a static module factory (`X.forProfiles(...)`) to be read into X.
+ */
+interface CollectEnv {
+  locals?: Map<string, { file: string; expr: ts.Expression }> | undefined;
+  /** Queue X.method for reading; false when X has no static method of that name. */
+  factory(cls: Decl, method: string): boolean;
+  /** An inline dynamic module `{ module: X, imports, providers }`: its fields belong to X. */
+  inline(cls: Decl, file: string, obj: ts.ObjectLiteralExpression, guard: string[]): void;
+}
 
 const declKey = (d: { file: string; name: string }) => `${d.file}#${d.name}`;
 
@@ -164,26 +199,56 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
   }
 
   // --- the @Module graph ---
+  // Static module factories (`AppRootModule.forProfiles(profiles)`, `X.forRoot(...)`) are read
+  // into their class: every object literal the factory can return is that module's
+  // metadata, the union over branches, each entry remembering the role check it sits
+  // behind. A factory called inside one (`A.forRoot()` among the imports) is read in
+  // turn; each class#method once, and at most FACTORY_LIMIT in all.
   const modules = new Map<string, ModuleRec>();
+  const factoryQueue: { cls: Decl; method: string; fn: ts.FunctionLikeDeclaration }[] = [];
+  const inlineQueue: { cls: Decl; file: string; obj: ts.ObjectLiteralExpression; guard: string[] }[] = [];
+  const factorySeen = new Set<string>();
+  const env: CollectEnv = {
+    factory(cls, method) {
+      const fn = staticMember(cls, method);
+      if (!fn) return false;
+      const key = `${declKey(cls)}.${method}`;
+      if (!factorySeen.has(key)) {
+        factorySeen.add(key);
+        factoryQueue.push({ cls, method, fn });
+      }
+      return true;
+    },
+    inline(cls, file, obj, guard) {
+      inlineQueue.push({ cls, file, obj, guard });
+    },
+  };
   for (const { file, node } of moduleClasses) {
-    const rec = readModule(ctx, file, node, unresolved);
+    const rec = readModule(ctx, file, node, unresolved, env);
     modules.set(rec.key, rec);
   }
 
   // Roots: whatever the bootstrap hands NestFactory.create. Both arms of a
   // `mode === 'worker' ? WorkerModule : AppModule` are served — but not by the same
   // process: each arm is its own deployment of this package, with its own routes and
-  // its own ingress, so each is read as its own server below.
+  // its own ingress, so each is read as its own server below. A bootstrap helper that
+  // receives the module as a parameter (`createApp(module)`) is read at its callers.
   const roots: string[] = [];
+  const rootCandidates: { file: string; call: ts.CallExpression; entries: Entry[] }[] = [];
   for (const { file, call } of bootstraps) {
     const arg = call.arguments[0];
     if (!arg) continue;
-    for (const e of collect(ctx, file, arg, 0)) {
+    const passed = parameterArguments(ctx, files, file, arg);
+    const entries = passed ? passed.flatMap((p) => collect(ctx, p.file, p.expr, 0, env)) : collect(ctx, file, arg, 0, env);
+    rootCandidates.push({ file, call, entries });
+  }
+  drainFactories(ctx, modules, factoryQueue, inlineQueue, env, unresolved);
+  for (const { file, call, entries } of rootCandidates)
+    for (const e of entries) {
       if (e.kind === 'class' && modules.has(declKey(e.decl))) {
         if (!roots.includes(declKey(e.decl))) roots.push(declKey(e.decl));
       } else if (e.kind === 'unresolved') unresolved.push({ file, line: ctx.line(file, call), reason: `bootstrap module: ${e.reason}` });
     }
-  }
   const bootstrap = bootstraps[0];
   if (!bootstrap)
     unresolved.push({
@@ -198,51 +263,15 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
       const key = queue.shift()!;
       if (seen.has(key) || !modules.has(key)) continue;
       seen.add(key);
-      queue.push(...modules.get(key)!.imports);
+      queue.push(...modules.get(key)!.imports, ...modules.get(key)!.mounts);
     }
     return seen;
   };
-  const reachable = modulesFrom(roots.length ? roots : [...modules.keys()]);
-  for (const m of [...modules.values()].sort((a, b) => byString(a.key, b.key)))
-    if (!reachable.has(m.key))
-      unresolved.push({ file: m.file, line: ctx.line(m.file, m.node), reason: `${m.name} is not imported from the bootstrap's root module, so Nest never loads it; not read` });
+  let reachable = modulesFrom(roots.length ? roots : [...modules.keys()]);
 
-  // --- services: one per reachable module that declares something ---
   const rootDirs = new Set([pkg.dir, posix.join(pkg.dir, 'src')]);
   for (const key of roots) rootDirs.add(posix.dirname(modules.get(key)!.file));
   if (bootstrap) rootDirs.add(posix.dirname(bootstrap.file));
-
-  const serviceMods = [...reachable]
-    .map((k) => modules.get(k)!)
-    .filter((m) => m.controllers.length || m.providers.length)
-    .sort((a, b) => byString(a.key, b.key));
-  const idOf = new Map<string, string>();
-  const usedIds = new Set<string>();
-  for (const m of serviceMods) {
-    let id = civilId(m.name.replace(/Module$/, '') || m.name);
-    if (usedIds.has(id)) id = civilId(`${posix.basename(posix.dirname(m.file))}-${id}`);
-    for (let n = 2; usedIds.has(id); n++) id = civilId(`${m.name}-${n}`);
-    usedIds.add(id);
-    idOf.set(m.key, id);
-  }
-
-  // Which service a file belongs to: a module's directory is its own when it is the
-  // only module there and is not the app's root; otherwise only the files of the
-  // classes it declares. Deepest directory wins, so a nested feature keeps its files.
-  const moduleDirs = new Map<string, string[]>();
-  for (const m of serviceMods) moduleDirs.set(posix.dirname(m.file), [...(moduleDirs.get(posix.dirname(m.file)) ?? []), m.key]);
-  const dirOwner = new Map<string, string>();
-  for (const [dir, keys] of moduleDirs) if (keys.length === 1 && !rootDirs.has(dir)) dirOwner.set(dir, idOf.get(keys[0]!)!);
-  const classFileOwner = new Map<string, string>();
-  for (const m of serviceMods)
-    for (const d of [...m.controllers, ...m.providers.flatMap((p) => (p.cls ? [p.cls] : []))])
-      if (!classFileOwner.has(d.file)) classFileOwner.set(d.file, idOf.get(m.key)!);
-  const serviceOfFile = (file: string): string | undefined => {
-    let best: string | undefined;
-    let bestLen = -1;
-    for (const [dir, id] of dirOwner) if (isUnder(file, dir) && dir.length > bestLen) [best, bestLen] = [id, dir.length];
-    return best ?? classFileOwner.get(file);
-  };
 
   // --- agents ---
   const { agents, agentOfFile } = readAgents(ctx, files, unresolved);
@@ -258,6 +287,136 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
       queue.push(...(agentUses.get(id) ?? []));
     }
     return [...out];
+  };
+
+  // --- registries: controllers and declarations listed in exported arrays ---
+  // A @Controller a registry lists belongs to the directory that defines it; so does a
+  // define-factory declaration. Such a directory that no @Module owns is a feature: a
+  // service of its own, owning the directory, serving its controllers wherever a module
+  // mounts them (or, mounted nowhere, at the root — the registry is the evidence).
+  const registry = readRegistries(ctx, files);
+  const fileSet = new Set(files);
+  const declaringDirs = (): Set<string> => {
+    const count = new Map<string, number>();
+    for (const k of reachable) {
+      const m = modules.get(k)!;
+      if (m.controllers.length || m.providers.length) count.set(posix.dirname(m.file), (count.get(posix.dirname(m.file)) ?? 0) + 1);
+    }
+    return new Set([...count].filter(([d, n]) => n === 1 && !rootDirs.has(d)).map(([d]) => d));
+  };
+  const ownedDirs = declaringDirs();
+  const featureCandidate = (file: string): string | null => {
+    const dir = posix.dirname(file);
+    if (!fileSet.has(file) || agentOfFile.has(file) || rootDirs.has(dir)) return null;
+    if ([...ownedDirs].some((d) => isUnder(file, d))) return null;
+    return dir;
+  };
+  const candidates = new Set<string>();
+  for (const { decl } of registry.controllers.values()) {
+    const dir = featureCandidate(decl.file);
+    if (dir) candidates.add(dir);
+  }
+  for (const { op } of registry.operations.values()) {
+    const dir = featureCandidate(op.file);
+    if (dir) candidates.add(dir);
+  }
+  // A candidate under another is part of it: a feature's ops/ subdirectory is the feature.
+  const featureDirs: string[] = [];
+  for (const dir of [...candidates].sort((a, b) => a.length - b.length || byString(a, b)))
+    if (!featureDirs.some((f) => isUnder(dir, f))) featureDirs.push(dir);
+  const featureOf = (file: string): string | undefined => {
+    const dir = featureDirs.filter((f) => isUnder(file, f)).sort((a, b) => b.length - a.length)[0];
+    return dir ? `feature:${dir}` : undefined;
+  };
+  for (const dir of featureDirs.sort(byString)) {
+    const controllers = [...registry.controllers.values()].filter((c) => isUnder(c.decl.file, dir)).map((c) => c.decl);
+    const ops = [...registry.operations.values()].filter((o) => isUnder(o.op.file, dir));
+    const registries = [...new Set([...registry.controllers.values()].filter((c) => isUnder(c.decl.file, dir)).flatMap((c) => c.registries).concat(ops.flatMap((o) => o.registries)))];
+    // Anchored on the feature's own registry when it keeps one (its index's exported
+    // array), else on its first controller, else on its first declaration.
+    const own = registry.arrays.filter((a) => isUnder(a.file, dir) && registries.includes(a)).sort((a, b) => a.file.length - b.file.length || byString(a.file, b.file))[0];
+    const anchorDecl = own ? ctx.declarations(own.file).get(own.name) : undefined;
+    const firstController = controllers.sort((a, b) => byString(a.file, b.file) || byString(a.name, b.name))[0];
+    let rec: ModuleRec;
+    if (own && anchorDecl) rec = newModuleRec(`feature:${dir}`, own.name, own.file, anchorDecl.node);
+    else if (firstController) rec = newModuleRec(`feature:${dir}`, firstController.name, firstController.file, firstController.node);
+    else {
+      const first = ops.map((o) => o.op).sort((a, b) => byString(a.file, b.file) || a.line - b.line)[0]!;
+      const bound = first.key.includes('#') ? ctx.declarations(first.file).get(first.key.split('#')[1]!) : undefined;
+      rec = newModuleRec(`feature:${dir}`, bound?.name ?? first.name, first.file, bound?.node ?? ctx.sourceFile(first.file)!);
+    }
+    rec.controllers = controllers;
+    rec.feature = { dir, registries: registries.sort((a, b) => byString(a.file, b.file) || a.line - b.line) };
+    modules.set(rec.key, rec);
+  }
+  // Modules that declare a feature's registry-listed controller mount the feature: the
+  // controller is the feature's, served wherever the mounting module is loaded.
+  const mounted = new Set<string>();
+  for (const m of modules.values()) {
+    if (m.feature) continue;
+    const keep: Decl[] = [];
+    for (const c of m.controllers) {
+      const f = registry.controllers.has(declKey(c)) ? featureOf(c.file) : undefined;
+      if (!f || !modules.has(f)) {
+        keep.push(c);
+        continue;
+      }
+      if (!m.mounts.includes(f)) m.mounts.push(f);
+      const g = m.controllerGuards.get(declKey(c));
+      mergeGuard(m.guards, f, g === undefined || g === null ? undefined : [...g]);
+      mounted.add(f);
+    }
+    m.controllers = keep;
+  }
+  // A feature nothing mounts is still declared by its registry: served at the root.
+  for (const dir of featureDirs) {
+    const key = `feature:${dir}`;
+    if (mounted.has(key)) continue;
+    if (roots[0]) {
+      modules.get(roots[0])!.mounts.push(key);
+      mergeGuard(modules.get(roots[0])!.guards, key, undefined);
+    }
+  }
+  reachable = modulesFrom(roots.length ? roots : [...modules.keys()]);
+  for (const m of [...modules.values()].sort((a, b) => byString(a.key, b.key)))
+    if (!reachable.has(m.key))
+      unresolved.push({ file: m.file, line: ctx.line(m.file, m.node), reason: `${m.name} is not imported from the bootstrap's root module, so Nest never loads it; not read` });
+
+  // --- services: one per reachable module that declares something ---
+  const serviceMods = [...reachable]
+    .map((k) => modules.get(k)!)
+    .filter((m) => m.controllers.length || m.providers.length || m.feature)
+    .sort((a, b) => byString(a.key, b.key));
+  const idOf = new Map<string, string>();
+  const usedIds = new Set<string>();
+  for (const m of serviceMods) {
+    let id = civilId(m.feature ? posix.basename(m.feature.dir) : m.name.replace(/Module$/, '') || m.name);
+    if (usedIds.has(id)) id = civilId(`${posix.basename(posix.dirname(m.feature?.dir ?? m.file))}-${id}`);
+    for (let n = 2; usedIds.has(id); n++) id = civilId(`${m.feature ? posix.basename(m.feature.dir) : m.name}-${n}`);
+    usedIds.add(id);
+    idOf.set(m.key, id);
+  }
+
+  // Which service a file belongs to: a module's directory is its own when it is the
+  // only module there and is not the app's root; otherwise only the files of the
+  // classes it declares. Deepest directory wins, so a nested feature keeps its files.
+  // A feature owns its directory.
+  const moduleDirs = new Map<string, string[]>();
+  for (const m of serviceMods) {
+    const dir = m.feature?.dir ?? posix.dirname(m.file);
+    moduleDirs.set(dir, [...(moduleDirs.get(dir) ?? []), m.key]);
+  }
+  const dirOwner = new Map<string, string>();
+  for (const [dir, keys] of moduleDirs) if (keys.length === 1 && !rootDirs.has(dir)) dirOwner.set(dir, idOf.get(keys[0]!)!);
+  const classFileOwner = new Map<string, string>();
+  for (const m of serviceMods)
+    for (const d of [...m.controllers, ...m.providers.flatMap((p) => (p.cls ? [p.cls] : []))])
+      if (!classFileOwner.has(d.file)) classFileOwner.set(d.file, idOf.get(m.key)!);
+  const serviceOfFile = (file: string): string | undefined => {
+    let best: string | undefined;
+    let bestLen = -1;
+    for (const [dir, id] of dirOwner) if (isUnder(file, dir) && dir.length > bestLen) [best, bestLen] = [id, dir.length];
+    return best ?? classFileOwner.get(file);
   };
 
   // --- ownership: every code file of the package, to a service, an agent, or shared ---
@@ -304,6 +463,41 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
     });
 
   const rootKeys = new Set(roots);
+  // --- declared operations: each to the service that owns the file defining it ---
+  const opsOf = new Map<string, SkeletonOperation[]>();
+  const declaredByOf = new Map<string, Set<RegistryArray>>();
+  const credit = (id: string, registries: RegistryArray[]) => {
+    const set = declaredByOf.get(id) ?? new Set<RegistryArray>();
+    for (const r of registries) set.add(r);
+    declaredByOf.set(id, set);
+  };
+  const unattached = new Map<string, DeclaredOperation[]>();
+  const ownerOfOp = (op: DeclaredOperation) => ownerOf.get(op.file) ?? serviceOfFile(op.file);
+  for (const { op, registries } of [...registry.operations.values()].sort((a, b) => byString(a.op.file, b.op.file) || a.op.line - b.op.line)) {
+    const owner = ownerOfOp(op);
+    if (!owner) {
+      unattached.set(op.file, [...(unattached.get(op.file) ?? []), op]);
+      continue;
+    }
+    const entry: SkeletonOperation = { name: op.name, file: op.file, line: op.line, kind: op.kind };
+    if (op.exposure !== undefined) entry.exposure = op.exposure;
+    if (op.tool) entry.tool = true;
+    if (op.scheduled) entry.scheduled = true;
+    opsOf.set(owner, [...(opsOf.get(owner) ?? []), entry]);
+    credit(owner, registries);
+  }
+  for (const [file, ops] of unattached)
+    unresolved.push({
+      file,
+      line: ops[0]!.line,
+      reason: `${ops.length} declared operation${ops.length === 1 ? '' : 's'} (${ops.map((o) => o.name).join(', ')}) in code no service owns; not attributed`,
+    });
+  for (const m of serviceMods)
+    for (const c of m.controllers) {
+      const listed = registry.controllers.get(declKey(c));
+      if (listed) credit(idOf.get(m.key)!, listed.registries);
+    }
+
   const services: SkeletonService[] = serviceMods.map((m) => {
     const id = idOf.get(m.key)!;
     const imported = importedServices(m);
@@ -320,6 +514,8 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
     const reach = reachFrom(ctx, m, id, files, serviceOfFile, agentOfFile);
     for (const s of reach.services) deps.add(s);
     deps.delete(id);
+    // Mounting a feature's controllers is serving them, not depending on the feature.
+    for (const f of m.mounts) if (idOf.has(f) && !m.imports.includes(f)) deps.delete(idOf.get(f)!);
 
     // An agent reached only through another agent's code is that agent's helper, not
     // a second thing the service runs: recorded with the agents that call it.
@@ -354,6 +550,10 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
     if (directory) service.directory = directory;
     if (isRoot) service.root = true;
     if (Object.keys(agentsVia).length) service.agentsVia = agentsVia;
+    const ops = opsOf.get(id);
+    if (ops?.length) service.operations = ops;
+    const declaredBy = [...(declaredByOf.get(id) ?? [])].sort((a, b) => byString(a.file, b.file) || a.line - b.line);
+    if (declaredBy.length) service.declaredBy = declaredBy.map((r) => ({ name: r.name, file: r.file, line: r.line }));
     return service;
   });
 
@@ -402,6 +602,39 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
   if (deployments.length > 1)
     deployments.sort((a, b) => Number(b.public) - Number(a.public) || byString(modules.get(a.root!)!.name, modules.get(b.root!)!.name));
 
+  /**
+   * Services a root loads only behind a role check, by the value checked. A module
+   * reached by some path of unguarded imports is loaded whatever the role; the rest are
+   * credited to the checks on the guarded edges that lead to them.
+   */
+  const rolesFrom = (root: string): { name: string; services: string[] }[] => {
+    const edges = (m: ModuleRec) => [...m.imports, ...m.mounts];
+    const open = new Set<string>();
+    const queue = [root];
+    while (queue.length) {
+      const key = queue.shift()!;
+      if (open.has(key) || !modules.has(key)) continue;
+      open.add(key);
+      const m = modules.get(key)!;
+      for (const t of edges(m)) if (!m.guards.get(t)) queue.push(t);
+    }
+    const byRole = new Map<string, Set<string>>();
+    for (const key of modulesFrom([root])) {
+      const m = modules.get(key)!;
+      for (const t of edges(m)) {
+        const guard = m.guards.get(t);
+        if (!guard) continue;
+        for (const u of modulesFrom([t])) {
+          if (open.has(u) || !idOf.has(u)) continue;
+          for (const label of guard) byRole.set(label, (byRole.get(label) ?? new Set()).add(idOf.get(u)!));
+        }
+      }
+    }
+    return [...byRole]
+      .sort((a, b) => byString(a[0], b[0]))
+      .map(([name, ids]) => ({ name, services: [...ids].sort(byString) }));
+  };
+
   const servers: SkeletonServer[] = deployments.map((d, i) => {
     const rootMod = d.root ? modules.get(d.root)! : undefined;
     const many = deployments.length > 1;
@@ -425,6 +658,8 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
       server.rootModule = rootMod!.name;
       if (anyPublic && !d.public) server.internal = true;
     }
+    const roles = d.root ? rolesFrom(d.root) : [];
+    if (roles.length) server.roles = roles;
     return server;
   });
   // A service belongs to the first deployment that loads it (the public one, when a
@@ -481,6 +716,19 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
     processIds.add(id);
     processes.push({ id, schedule: read.schedule, calls: owner ? [owner] : [], source: { file, line } });
   }
+  // Scheduled declarations (`defineTimer({ ... })`, an object with a `cron`): each is
+  // a process calling the service that declares it.
+  for (const { op } of [...registry.operations.values()].sort((a, b) => byString(a.op.file, b.op.file) || a.op.line - b.op.line)) {
+    if (!op.scheduled) continue;
+    if (op.problem) unresolved.push({ file: op.file, line: op.line, reason: op.problem });
+    const owner = ownerOfOp(op);
+    if (!owner) continue;
+    let id = civilId(op.name);
+    if (processIds.has(id)) id = civilId(`${owner}-${id}`);
+    for (let n = 2; processIds.has(id); n++) id = civilId(`${op.name}-${n}`);
+    processIds.add(id);
+    processes.push({ id, schedule: op.schedule ?? '@unknown', calls: [owner], source: { file: op.file, line: op.line } });
+  }
 
   return { servers, services, agents, processes, unresolved };
 }
@@ -522,50 +770,117 @@ function pathsNamedIn(ctx: RepoContext, file: string): Set<string> {
 // @Module
 // ---------------------------------------------------------------------------------
 
-function readModule(ctx: RepoContext, file: string, node: ts.ClassDeclaration, unresolved: Unresolved[]): ModuleRec {
+const newModuleRec = (key: string, name: string, file: string, node: ts.Node): ModuleRec => ({
+  key,
+  name,
+  file,
+  node,
+  global: false,
+  imports: [],
+  controllers: [],
+  providers: [],
+  mounts: [],
+  guards: new Map(),
+  controllerGuards: new Map(),
+});
+
+function readModule(ctx: RepoContext, file: string, node: ts.ClassDeclaration, unresolved: Unresolved[], env: CollectEnv): ModuleRec {
   const name = node.name!.text;
-  const rec: ModuleRec = {
-    key: `${file}#${name}`,
-    name,
-    file,
-    node,
-    global: decoratorsOf(node).some((d) => d.name === 'Global'),
-    imports: [],
-    controllers: [],
-    providers: [],
-  };
+  const rec = newModuleRec(`${file}#${name}`, name, file, node);
+  rec.global = decoratorsOf(node).some((d) => d.name === 'Global');
   const deco = decoratorsOf(node).find((d) => d.name === 'Module')!;
   const meta = deco.args[0] ? objectLiteralOf(ctx, file, deco.args[0]) : undefined;
   if (deco.args[0] && !meta) {
     unresolved.push({ file, line: ctx.line(file, node), reason: `${name}: @Module metadata is not an object literal; module not read` });
     return rec;
   }
-  for (const prop of meta?.node.properties ?? []) {
-    if (!ts.isPropertyAssignment(prop)) continue;
-    const field = propName(prop.name);
-    if (field !== 'imports' && field !== 'controllers' && field !== 'providers') continue;
-    for (const e of collect(ctx, meta!.file, prop.initializer, 0)) {
-      if (e.kind === 'external') continue;
-      if (e.kind === 'unresolved') {
-        unresolved.push({ file: e.file, line: ctx.line(e.file, e.node), reason: `${name}.${field}: ${e.reason}` });
-        continue;
-      }
-      if (field === 'imports') {
-        if (e.kind === 'class') rec.imports.push(declKey(e.decl));
-      } else if (field === 'controllers') {
-        if (e.kind === 'class') rec.controllers.push(e.decl);
-      } else if (e.kind === 'class') {
-        rec.providers.push({ name: e.decl.name, file: e.decl.file, keys: [declKey(e.decl)], roots: [{ file: e.decl.file, node: e.decl.node }], cls: e.decl });
-      } else rec.providers.push(e.rec);
-    }
-  }
+  if (meta) absorbMetadata(ctx, rec, meta.file, meta.node, [], env, unresolved);
   return rec;
 }
 
-function objectLiteralOf(ctx: RepoContext, file: string, expr: ts.Expression): { file: string; node: ts.ObjectLiteralExpression } | undefined {
+/** Merge a guard into what is recorded for one edge: unguarded anywhere is unguarded. */
+function mergeGuard(map: Map<string, Set<string> | null>, key: string, guard: readonly string[] | undefined): void {
+  if (!guard?.length) {
+    map.set(key, null);
+    return;
+  }
+  if (!map.has(key)) map.set(key, new Set(guard));
+  else {
+    const prev = map.get(key);
+    if (prev) for (const g of guard) prev.add(g);
+  }
+}
+
+/**
+ * Read a module metadata object — @Module({...}) or the object a module factory returns —
+ * into a module: imports, controllers and providers, each entry with the role checks
+ * it is listed behind. Called for every return of a factory, so a factory's result is
+ * the union of its branches; `...base` spreads of another metadata object are followed.
+ */
+function absorbMetadata(
+  ctx: RepoContext,
+  rec: ModuleRec,
+  file: string,
+  obj: ts.ObjectLiteralExpression,
+  guard: string[],
+  env: CollectEnv,
+  unresolved: Unresolved[],
+  depth = 0,
+): void {
+  if (depth > 6) return;
+  for (const prop of obj.properties) {
+    if (ts.isSpreadAssignment(prop)) {
+      const base = objectLiteralOf(ctx, file, prop.expression, env.locals);
+      if (base) absorbMetadata(ctx, rec, base.file, base.node, guard, env, unresolved, depth + 1);
+      continue;
+    }
+    let init: ts.Expression | undefined;
+    if (ts.isPropertyAssignment(prop)) init = prop.initializer;
+    else if (ts.isShorthandPropertyAssignment(prop)) init = prop.name;
+    if (!init || !prop.name) continue;
+    const field = propName(prop.name as ts.PropertyName);
+    if (field !== 'imports' && field !== 'controllers' && field !== 'providers') continue;
+    const entries = collect(ctx, file, init, 0, env).map((e) => (guard.length ? { ...e, guard: [...guard, ...(e.guard ?? [])] } : e));
+    for (const e of entries) {
+      if (e.kind === 'external') continue;
+      if (e.kind === 'unresolved') {
+        if (!unresolved.some((u) => u.file === e.file && u.line === ctx.line(e.file, e.node) && u.reason === `${rec.name}.${field}: ${e.reason}`))
+          unresolved.push({ file: e.file, line: ctx.line(e.file, e.node), reason: `${rec.name}.${field}: ${e.reason}` });
+        continue;
+      }
+      if (field === 'imports') {
+        if (e.kind !== 'class') continue;
+        const key = declKey(e.decl);
+        if (key === rec.key) continue;
+        if (!rec.imports.includes(key)) rec.imports.push(key);
+        mergeGuard(rec.guards, key, e.guard);
+      } else if (field === 'controllers') {
+        if (e.kind !== 'class') continue;
+        const key = declKey(e.decl);
+        if (!rec.controllers.some((c) => declKey(c) === key)) rec.controllers.push(e.decl);
+        mergeGuard(rec.controllerGuards, key, e.guard);
+      } else {
+        const p: ProviderRec =
+          e.kind === 'class'
+            ? { name: e.decl.name, file: e.decl.file, keys: [declKey(e.decl)], roots: [{ file: e.decl.file, node: e.decl.node }], cls: e.decl }
+            : e.rec;
+        if (!rec.providers.some((x) => x.name === p.name && x.file === p.file && x.keys.join() === p.keys.join())) rec.providers.push(p);
+      }
+    }
+  }
+}
+
+function objectLiteralOf(
+  ctx: RepoContext,
+  file: string,
+  expr: ts.Expression,
+  locals?: Map<string, { file: string; expr: ts.Expression }>,
+): { file: string; node: ts.ObjectLiteralExpression } | undefined {
   const e = unwrap(expr);
   if (ts.isObjectLiteralExpression(e)) return { file, node: e };
   if (ts.isIdentifier(e)) {
+    const local = locals?.get(e.text);
+    if (local) return objectLiteralOf(ctx, local.file, local.expr);
     const d = ctx.resolveName(file, e.text);
     if (d && !('external' in d) && ts.isVariableDeclaration(d.node) && d.node.initializer)
       return objectLiteralOf(ctx, d.file, d.node.initializer);
@@ -574,26 +889,75 @@ function objectLiteralOf(ctx: RepoContext, file: string, expr: ts.Expression): {
 }
 
 /**
- * The entries of a module metadata array, as Nest would see them: arrays and spreads
- * flattened, both arms of a conditional, `forwardRef(() => X)` unwrapped, dynamic
- * modules (`X.forRoot(...)`, `.forFeature`, `.register...`) read as X, and provider
- * objects (`{ provide, useClass | useFactory | useValue | useExisting }`) kept whole.
+ * The values a condition checks, when it is a recognisable role or feature check:
+ * `roles.includes("api")`, `flags.has("beta")`, `mode === "worker"` (either side),
+ * combined with && or ||, through local consts (`const isApi = roles.includes("api")`).
+ * Anything else — a negation, a boolean flag, a computed value — gives none: the entry
+ * is then read as unguarded, which is the union every reading of the code includes.
  */
-function collect(ctx: RepoContext, file: string, expr: ts.Expression, depth: number): Entry[] {
+function guardLabels(ctx: RepoContext, file: string, expr: ts.Expression, env: CollectEnv, depth = 0): string[] {
+  if (depth > 6) return [];
+  const e = unwrap(expr);
+  const literal = (x: ts.Expression): string | undefined => {
+    const u = unwrap(x);
+    return ts.isStringLiteral(u) || ts.isNoSubstitutionTemplateLiteral(u) ? u.text : undefined;
+  };
+  if (ts.isIdentifier(e)) {
+    const local = env.locals?.get(e.text);
+    return local ? guardLabels(ctx, local.file, local.expr, env, depth + 1) : [];
+  }
+  if (ts.isBinaryExpression(e)) {
+    const op = e.operatorToken.kind;
+    if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken)
+      return [...guardLabels(ctx, file, e.left, env, depth + 1), ...guardLabels(ctx, file, e.right, env, depth + 1)];
+    if (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken) {
+      const v = literal(e.right) ?? literal(e.left);
+      return v !== undefined ? [v] : [];
+    }
+    return [];
+  }
+  if (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression) && ['includes', 'has'].includes(e.expression.name.text) && e.arguments.length === 1) {
+    const v = literal(e.arguments[0]!);
+    return v !== undefined ? [v] : [];
+  }
+  return [];
+}
+
+const withGuard = (entries: Entry[], labels: string[]): Entry[] =>
+  labels.length ? entries.map((x) => ({ ...x, guard: [...labels, ...(x.guard ?? [])] })) : entries;
+
+/**
+ * The entries of a module metadata array, as Nest would see them: arrays and spreads
+ * flattened, both arms of a conditional (the guarded arm remembering its check),
+ * `forwardRef(() => X)` unwrapped, local consts of the factory being read followed,
+ * dynamic modules from a static factory (`X.forRoot(...)`, `X.forProfiles(...)`) read as
+ * X with the factory queued to be read into X, and provider objects
+ * (`{ provide, useClass | useFactory | useValue | useExisting }`) kept whole.
+ */
+function collect(ctx: RepoContext, file: string, expr: ts.Expression, depth: number, env: CollectEnv): Entry[] {
   if (depth > 8) return [{ kind: 'unresolved', file, node: expr, reason: `"${short(expr)}" nests too deeply to read` }];
   const e = unwrap(expr);
   if (ts.isArrayLiteralExpression(e))
-    return e.elements.flatMap((el) => collect(ctx, file, ts.isSpreadElement(el) ? el.expression : el, depth + 1));
-  if (ts.isConditionalExpression(e)) return [...collect(ctx, file, e.whenTrue, depth + 1), ...collect(ctx, file, e.whenFalse, depth + 1)];
+    return e.elements.flatMap((el) => collect(ctx, file, ts.isSpreadElement(el) ? el.expression : el, depth + 1, env));
+  if (ts.isConditionalExpression(e))
+    return [
+      ...withGuard(collect(ctx, file, e.whenTrue, depth + 1, env), guardLabels(ctx, file, e.condition, env)),
+      ...collect(ctx, file, e.whenFalse, depth + 1, env),
+    ];
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken)
+    return withGuard(collect(ctx, file, e.right, depth + 1, env), guardLabels(ctx, file, e.left, env));
   if (ts.isIdentifier(e)) {
+    const local = env.locals?.get(e.text);
+    if (local) return collect(ctx, local.file, local.expr, depth + 1, env);
     const d = ctx.resolveName(file, e.text);
     if (!d) return [{ kind: 'unresolved', file, node: e, reason: `cannot find where "${e.text}" is defined` }];
     if ('external' in d) return [{ kind: 'external' }];
     if (d.kind === 'class') return [{ kind: 'class', decl: d }];
     if (ts.isVariableDeclaration(d.node) && d.node.initializer) {
       const init = unwrap(d.node.initializer);
-      if (ts.isObjectLiteralExpression(init)) return [providerObject(ctx, d.file, init, d.name)];
-      return collect(ctx, d.file, init, depth + 1);
+      if (ts.isObjectLiteralExpression(init) && !init.properties.some((p) => p.name && propName(p.name as ts.PropertyName) === 'module'))
+        return [providerObject(ctx, d.file, init, d.name)];
+      return collect(ctx, d.file, init, depth + 1, { ...env, locals: undefined });
     }
     return [{ kind: 'unresolved', file, node: e, reason: `"${e.text}" is not a class, array or provider object` }];
   }
@@ -601,19 +965,212 @@ function collect(ctx: RepoContext, file: string, expr: ts.Expression, depth: num
     const callee = unwrap(e.expression);
     if (ts.isIdentifier(callee) && callee.text === 'forwardRef') {
       const fn = e.arguments[0] ? unwrap(e.arguments[0]) : undefined;
-      if (fn && ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return collect(ctx, file, fn.body, depth + 1);
+      if (fn && ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) return collect(ctx, file, fn.body, depth + 1, env);
       return [{ kind: 'unresolved', file, node: e, reason: `forwardRef whose target is not an arrow returning a class` }];
     }
-    if (ts.isPropertyAccessExpression(callee) && /^(forRoot|forFeature|register|forChild)/.test(callee.name.text))
-      return collect(ctx, file, callee.expression, depth + 1);
+    if (ts.isPropertyAccessExpression(callee)) {
+      const method = callee.name.text;
+      const target = unwrap(callee.expression);
+      // `POLICIES.map((g) => ({ provide: APP_GUARD, useClass: g }))`: one binding per class.
+      if (method === 'map' && e.arguments[0]) {
+        const fn = unwrap(e.arguments[0]);
+        const body = (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) && !ts.isBlock(fn.body) ? unwrap(fn.body) : undefined;
+        if (body && ts.isObjectLiteralExpression(body)) {
+          const bound = providerObject(ctx, file, body, undefined);
+          if (bound.kind === 'provider')
+            return collect(ctx, file, target, depth + 1, env).map((x): Entry => {
+              if (x.kind !== 'class') return x;
+              return { kind: 'provider', rec: { ...bound.rec, name: x.decl.name, file: x.decl.file, cls: x.decl }, ...(x.guard ? { guard: x.guard } : {}) };
+            });
+        }
+      }
+      if (ts.isIdentifier(target)) {
+        const d = env.locals?.has(target.text) ? null : ctx.resolveName(file, target.text);
+        if (d && 'external' in d) return [{ kind: 'external' }];
+        if (d && d.kind === 'class') {
+          if (env.factory(d, method) || /^(forRoot|forFeature|register|forChild)/.test(method)) return [{ kind: 'class', decl: d }];
+          return [{ kind: 'unresolved', file, node: e, reason: `"${short(e)}": ${d.name} has no static ${method} the reader can read` }];
+        }
+      }
+      if (/^(forRoot|forFeature|register|forChild)/.test(method)) return collect(ctx, file, callee.expression, depth + 1, env);
+    }
     return [{ kind: 'unresolved', file, node: e, reason: `"${short(e)}" is computed by a call` }];
   }
   if (ts.isObjectLiteralExpression(e)) {
     const moduleProp = e.properties.find((p) => ts.isPropertyAssignment(p) && propName(p.name) === 'module') as ts.PropertyAssignment | undefined;
-    if (moduleProp) return collect(ctx, file, moduleProp.initializer, depth + 1);
+    if (moduleProp) {
+      const found = collect(ctx, file, moduleProp.initializer, depth + 1, env);
+      for (const x of found) if (x.kind === 'class') env.inline(x.decl, file, e, x.guard ?? []);
+      return found;
+    }
     return [providerObject(ctx, file, e, undefined)];
   }
   return [{ kind: 'unresolved', file, node: e, reason: `"${short(e)}" is not a form the reader understands` }];
+}
+
+/** A class's static method (or static arrow property) by name. */
+function staticMember(cls: Decl, method: string): ts.FunctionLikeDeclaration | undefined {
+  if (!ts.isClassDeclaration(cls.node)) return undefined;
+  for (const m of cls.node.members) {
+    if (!hasModifier(m, ts.SyntaxKind.StaticKeyword) || !m.name || propName(m.name as ts.PropertyName) !== method) continue;
+    if (ts.isMethodDeclaration(m) && m.body) return m;
+    if (ts.isPropertyDeclaration(m) && m.initializer) {
+      const init = unwrap(m.initializer);
+      if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) return init;
+    }
+  }
+  return undefined;
+}
+
+const isFunctionLike = (n: ts.Node): boolean =>
+  ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isClassDeclaration(n) || ts.isClassExpression(n);
+
+/**
+ * What a static module factory returns: every object literal any of its return
+ * statements yields — through `if (cond) return …` (the then-branch guarded by cond),
+ * conditional expressions, and local consts — with the local consts of its body, so
+ * the metadata can name them. Nested functions' returns are not the factory's.
+ */
+function readFactory(fn: ts.FunctionLikeDeclaration, file: string, env: CollectEnv, ctx: RepoContext): {
+  returns: { obj: ts.ObjectLiteralExpression; guard: string[] }[];
+  locals: Map<string, { file: string; expr: ts.Expression }>;
+} {
+  const locals = new Map<string, { file: string; expr: ts.Expression }>();
+  const returns: { obj: ts.ObjectLiteralExpression; guard: string[] }[] = [];
+  const body = fn.body;
+  if (!body) return { returns, locals };
+  const scoped: CollectEnv = { ...env, locals };
+  const gatherLocals = (n: ts.Node): void => {
+    if (n !== body && isFunctionLike(n)) return;
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) locals.set(n.name.text, { file, expr: n.initializer });
+    ts.forEachChild(n, gatherLocals);
+  };
+  gatherLocals(body);
+  const returned = (expr: ts.Expression, guard: string[], depth: number): void => {
+    if (depth > 6) return;
+    const e = unwrap(expr);
+    if (ts.isObjectLiteralExpression(e)) returns.push({ obj: e, guard });
+    else if (ts.isConditionalExpression(e)) {
+      returned(e.whenTrue, [...guard, ...guardLabels(ctx, file, e.condition, scoped)], depth + 1);
+      returned(e.whenFalse, guard, depth + 1);
+    } else if (ts.isIdentifier(e) && locals.has(e.text)) returned(locals.get(e.text)!.expr, guard, depth + 1);
+  };
+  const visit = (n: ts.Node, guard: string[]): void => {
+    if (n !== body && isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n)) {
+      if (n.expression) returned(n.expression, guard, 0);
+      return;
+    }
+    if (ts.isIfStatement(n)) {
+      visit(n.thenStatement, [...guard, ...guardLabels(ctx, file, n.expression, scoped)]);
+      if (n.elseStatement) visit(n.elseStatement, guard);
+      return;
+    }
+    ts.forEachChild(n, (c) => visit(c, guard));
+  };
+  if (ts.isBlock(body)) visit(body, []);
+  else returned(body as ts.Expression, [], 0);
+  return { returns, locals };
+}
+
+/** The most static factories one server's read follows: a guard, not a budget. */
+const FACTORY_LIMIT = 64;
+
+/**
+ * Read queued module factories and inline dynamic modules into their classes, until
+ * none are left (a factory's metadata may call further factories). A class with a
+ * factory but no @Module decorator is still a module: Nest takes the dynamic module.
+ */
+function drainFactories(
+  ctx: RepoContext,
+  modules: Map<string, ModuleRec>,
+  factories: { cls: Decl; method: string; fn: ts.FunctionLikeDeclaration }[],
+  inlines: { cls: Decl; file: string; obj: ts.ObjectLiteralExpression; guard: string[] }[],
+  env: CollectEnv,
+  unresolved: Unresolved[],
+): void {
+  const ensure = (cls: Decl): ModuleRec => {
+    const key = declKey(cls);
+    if (!modules.has(key)) modules.set(key, newModuleRec(key, cls.name, cls.file, cls.node));
+    return modules.get(key)!;
+  };
+  const inlineSeen = new Set<ts.Node>();
+  let read = 0;
+  while (factories.length || inlines.length) {
+    if (read++ >= FACTORY_LIMIT) {
+      const next = factories[0] ?? null;
+      if (next)
+        unresolved.push({ file: next.cls.file, line: ctx.line(next.cls.file, next.fn), reason: `more than ${FACTORY_LIMIT} module factories; ${next.cls.name}.${next.method} and later ones not read` });
+      break;
+    }
+    const inline = inlines.shift();
+    if (inline) {
+      if (inlineSeen.has(inline.obj)) continue;
+      inlineSeen.add(inline.obj);
+      absorbMetadata(ctx, ensure(inline.cls), inline.file, inline.obj, inline.guard, env, unresolved);
+      continue;
+    }
+    const { cls, method, fn } = factories.shift()!;
+    const rec = ensure(cls);
+    const { returns, locals } = readFactory(fn, cls.file, env, ctx);
+    if (!returns.length)
+      unresolved.push({ file: cls.file, line: ctx.line(cls.file, fn), reason: `${cls.name}.${method} returns no module object the reader can read` });
+    for (const r of returns) absorbMetadata(ctx, rec, cls.file, r.obj, r.guard, { ...env, locals }, unresolved);
+  }
+}
+
+/**
+ * When the bootstrap is a helper that takes the module as a parameter
+ * (`const createApp = (module) => NestFactory.create(module)`), the modules are what
+ * its callers in the package pass in that position — through a local const of the
+ * calling function when that is how the caller names it. Null when `arg` is not such
+ * a parameter or nothing calls the helper.
+ */
+function parameterArguments(ctx: RepoContext, files: readonly string[], file: string, arg: ts.Expression): { file: string; expr: ts.Expression }[] | null {
+  const e = unwrap(arg);
+  if (!ts.isIdentifier(e) || ctx.resolveName(file, e.text)) return null;
+  let fn: ts.Node | undefined = e.parent;
+  while (fn && !(ts.isFunctionLike(fn) && fn.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === e.text))) fn = fn.parent;
+  if (!fn || !ts.isFunctionLike(fn)) return null;
+  const index = fn.parameters.findIndex((p) => ts.isIdentifier(p.name) && p.name.text === e.text);
+  let declNode: ts.Node | undefined;
+  let name: string | undefined;
+  if (ts.isFunctionDeclaration(fn) && fn.name) [declNode, name] = [fn, fn.name.text];
+  else {
+    let p: ts.Node | undefined = fn.parent;
+    while (p && (ts.isParenthesizedExpression(p) || ts.isAsExpression(p) || ts.isSatisfiesExpression(p))) p = p.parent;
+    if (p && ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) [declNode, name] = [p, p.name.text];
+  }
+  if (!declNode || !name) return null;
+  const out: { file: string; expr: ts.Expression }[] = [];
+  for (const f of files) {
+    if (!(ctx.files[f] ?? '').includes(name)) continue;
+    const sf = ctx.sourceFile(f);
+    if (!sf) continue;
+    const visit = (n: ts.Node): void => {
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === name && n.arguments[index]) {
+        const d = ctx.resolveName(f, name);
+        if (d && !('external' in d) && d.node === declNode) out.push({ file: f, expr: localValue(n.arguments[index]!) });
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  }
+  return out.length ? out : null;
+}
+
+/** An identifier bound by a const in an enclosing function: its initializer; else itself. */
+function localValue(expr: ts.Expression): ts.Expression {
+  const e = unwrap(expr);
+  if (!ts.isIdentifier(e)) return expr;
+  for (let scope: ts.Node | undefined = e.parent; scope; scope = scope.parent) {
+    if (!ts.isBlock(scope)) continue;
+    for (const stmt of scope.statements)
+      if (ts.isVariableStatement(stmt))
+        for (const d of stmt.declarationList.declarations)
+          if (ts.isIdentifier(d.name) && d.name.text === e.text && d.initializer) return d.initializer;
+  }
+  return expr;
 }
 
 function providerObject(ctx: RepoContext, file: string, obj: ts.ObjectLiteralExpression, varName: string | undefined): Entry {

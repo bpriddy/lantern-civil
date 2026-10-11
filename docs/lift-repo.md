@@ -139,6 +139,64 @@ and the note says so: a failed call should not take back names and words the
 author already reviewed. It is recorded under its old fingerprint, so the next
 Update asks the model again.
 
+## Claims
+
+Decided with the owner 2026-10-10. Pillar 2 of Civil's value — interpreting a
+codebase into a graph — is built so that several independent agents can analyse a
+repository without the result depending on any one of them. They do not write
+documents; they propose **claims** (`lift/claims.ts`), and only what survives is
+drawn.
+
+- **Altitude.** Claims are made at the canvas's altitude: servers (deployables),
+  clients, services, agents, background work, and the relations between them
+  (depends-on, exposes, calls, uses-agent). Routes, operations, and functions are
+  attributes of those claims, never claims of their own — Civil verifies what the
+  graph shows, nothing smaller.
+- **Evidence.** Every claim cites where in the code it rests (file, line, an exact
+  quote). Evidence is checked mechanically — no model: the file exists, the line is
+  inside it, the quote appears near the line. Evidence that does not hold counts for
+  nothing.
+- **Weighing.** Claims about the same thing become one belief. High: the reader
+  supports it with sound evidence, or two independent voices do. Medium: one other
+  voice does. Low: contested, or with evidence problems. Dropped: refuted (with sound
+  evidence) by as many voices as support it — a refutation citing nothing never
+  outweighs code read exactly. A relation needs both ends believed.
+- **The reader is one voice.** Its findings enter as claims like any other — strong,
+  because it reads code exactly, but not infallible (a test double is not an agent).
+  Restating them is lossless: reader → claims → skeleton reproduces the reader's
+  skeleton exactly (tested, and checked on real repositories), so the mapper, Update's
+  merge, and the registry see nothing new until another voice speaks.
+- **Provenance on the graph.** Each drawn unit's confidence and a handful of cited
+  places go into civil/registry.yaml (`confidence`, `evidence`), so the graph can say
+  how sure Civil is and why. There is no review step (owner's call): Civil has to be
+  trustworthy on its own, uncertain parts are shown as uncertain, and the author
+  corrects by editing the graph, which Update respects.
+
+Built so far: the claims model, mechanical evidence checks, weighing, assembly, and
+provenance in the registry. Next: area and docs analysts proposing claims, verifiers
+trying to refute them, a completeness critic — run as a background job with
+progress — and the inspector showing provenance.
+
+## Reading composition that is built, not written
+
+Added 2026-10-10, general rules recognised by code shape (never a project's names):
+
+- **Static module factories.** A module produced by `X.m(...)` (forRoot, register, a
+  project's own composition-root factory) is read by following `m` into `X` and taking
+  every object literal it can return — union over branches, spreads, local consts,
+  nested factories. An entry behind a recognisable check (`profiles.includes("web")`,
+  `mode === "worker"`) records the value, so a server lists which services each role
+  loads (`SkeletonServer.roles`).
+- **Declaration registries.** An exported array whose elements are `@Controller`
+  classes, or objects built by a `define*`/`create*`/`make*`/`register*` call with a
+  contract-like argument, is a declaration: listed controllers are served even if no
+  `@Module` names them; a directory of such declarations no module owns becomes a
+  service; declarations attach to their service as `operations` (attributes, never
+  nodes — with which are exposed to an agent as tools); scheduled ones are processes.
+- **Test support is not product code.** testing, test-support, fixtures, `__mocks__`,
+  mocks and fakes directories, and fake/mock/stub/integration/live/e2e files, are left
+  out of path selection and of agent, service, and process detection.
+
 ## Update: the merge
 
 The rules are written out at the top of `documents-merge.ts`; in short:
@@ -226,6 +284,15 @@ it is not a server path and is not part of the product.
 - Run is disabled on a TypeScript project, with the reason as its title.
 
 ## Known gaps
+
+- **Custom route decorators.** A controller whose methods use a project-defined
+  decorator that wraps `@Get`/`@Post` (via `applyDecorators`) has its routes unread.
+- **Agents by convention only.** An agent defined in a `<name>.agent.ts` file outside
+  an agents/ directory, calling a model through an in-house gateway rather than an SDK,
+  is not recognised.
+- **Feature labels.** A service found through a declaration registry is labelled by its
+  exported array or first declaration, not its directory; one nothing mounts is
+  attached to the first root even when there are several.
 
 - **Schedules outside Terraform** (a gcloud YAML, a Kubernetes CronJob) are not
   read; the internal routes they call still show on the internal boundary.

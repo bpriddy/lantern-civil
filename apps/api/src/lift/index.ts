@@ -8,6 +8,7 @@ import { parse } from 'yaml';
 import { zProject } from '@civil/schema';
 import type { FileMap, Skeleton } from './skeleton.js';
 import { skeletonToDocuments } from './to-documents.js';
+import { claimsFromSkeleton, reconcile, toSkeleton } from './claims.js';
 
 /**
  * "Generate graph from repo" / "Update graph from repo" (docs/lift-repo.md): an
@@ -154,7 +155,15 @@ export async function liftRepository(
 
   // 3. Deterministic reading: frameworks detected by package.json, then each app read
   //    with the TypeScript compiler API. This alone is a complete, valid result.
-  const deterministic = readRepo(files);
+  const read = readRepo(files);
+
+  // 3b. Claims (claims.ts): the reader's findings restated as evidence-backed claims,
+  //     checked against the code, weighed, and assembled back into a skeleton. Today
+  //     the reader is the only voice, so this is lossless by construction (a tested
+  //     property); analysts and verifiers add their claims here, and what survives —
+  //     with how sure Civil is and why — is what the graph draws.
+  const beliefs = reconcile(claimsFromSkeleton(read), files, new Set(listed));
+  const { skeleton: deterministic, provenance } = toSkeleton(beliefs, read);
 
   // 4. The project's current civil/ documents, read through the same source, pending
   //    edits included, so an unreviewed earlier lift is what gets merged with rather
@@ -219,6 +228,10 @@ export async function liftRepository(
     repo: files,
     liftedFrom: { fingerprint: recordedFingerprint, refinement },
     listed,
+    // Keyed by the skeleton's ids, which the model pass may have renamed: follow it.
+    provenance: Object.fromEntries(
+      Object.entries(provenance).map(([id, p]) => [refinement?.renames[id] ?? id, p]),
+    ),
   });
 
   const diagnostics = [...mapped.diagnostics];

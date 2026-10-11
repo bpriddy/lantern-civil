@@ -787,3 +787,282 @@ test('two deployments map to two boundaries: the browser reaches one, the schedu
   assert.match(md, /A scheduler job in the infrastructure code posts `POST \/internal\/nightly`/);
   assert.match(md, /\| GET \| `\/healthz` \|.*\| api \(root module AppModule\) \|/);
 });
+
+// --- module factories, registries, test support -------------------------------------
+
+/**
+ * A third synthetic repo, "orchard": one package whose bootstrap is a helper taking the
+ * module as a parameter, handed `CoreModule.forProfiles(roles)` — a static factory with an
+ * early return for a reports-only process, a local const built by a nested forRoot,
+ * and role-guarded spreads. The web role's module mounts controllers from a registry
+ * file; two feature directories (garden, shed) have no @Module at all and declare
+ * their work as define-factory objects in exported arrays — one exposed as an agent
+ * tool, one a schedule. Test support (a fake model client, a fixture controller) sits
+ * beside the product and must not be read as product.
+ */
+const O = 'apps/orchard/src';
+const orchard: Record<string, string> = {
+  'package.json': json({ name: 'orchard', private: true }),
+  'apps/orchard/package.json': json({
+    name: '@orchard/api',
+    dependencies: { '@nestjs/core': '11', '@nestjs/common': '11', '@google/genai': '1' },
+  }),
+  [`${O}/main.ts`]: [
+    "import { CoreModule } from './boot/core.module';",
+    "import { startApp } from './boot/start';",
+    "const roles = (process.env.ROLES ?? 'web').split(',');",
+    'void startApp(CoreModule.forProfiles(roles));',
+  ].join('\n'),
+  [`${O}/boot/start.ts`]: [
+    "import { NestFactory } from '@nestjs/core';",
+    'export const startApp = async (module: unknown) => {',
+    '  const app = await NestFactory.create(module as never);',
+    "  app.setGlobalPrefix('api');",
+    '  await app.listen(3000);',
+    '};',
+  ].join('\n'),
+  [`${O}/boot/core.module.ts`]: [
+    "import { type DynamicModule, Module } from '@nestjs/common';",
+    "import { QueueModule } from '../queue/queue.module';",
+    "import { ReportsModule } from '../reports/reports.module';",
+    "import { StoreModule } from '../store/store.module';",
+    "import { WebRoleModule } from './web-role.module';",
+    '@Module({})',
+    'export class CoreModule {',
+    '  static forProfiles(roles: readonly string[]): DynamicModule {',
+    "    const store = StoreModule.forRoot({ url: 'mem://' });",
+    "    if (roles.length === 1 && roles[0] === 'reports') {",
+    '      return { module: CoreModule, imports: [store, ReportsModule] };',
+    '    }',
+    "    const isWorker = roles.includes('worker');",
+    '    return {',
+    '      module: CoreModule,',
+    '      imports: [',
+    '        store,',
+    "        ...(roles.includes('web') ? [WebRoleModule.forRoot()] : []),",
+    '        ...(isWorker ? [QueueModule] : []),',
+    "        ...(roles.includes('reports') ? [ReportsModule] : []),",
+    '      ],',
+    '    };',
+    '  }',
+    '}',
+  ].join('\n'),
+  [`${O}/boot/web-role.module.ts`]: [
+    "import { type DynamicModule, Module } from '@nestjs/common';",
+    "import { APP_GUARD } from '@nestjs/core';",
+    "import { WEB_CONTROLLERS, WEB_GUARDS } from './registry';",
+    '@Module({})',
+    'export class WebRoleModule {',
+    '  static forRoot(): DynamicModule {',
+    '    return {',
+    '      module: WebRoleModule,',
+    '      controllers: [...WEB_CONTROLLERS],',
+    '      providers: [...WEB_GUARDS.map((guard) => ({ provide: APP_GUARD, useClass: guard }))],',
+    '    };',
+    '  }',
+    '}',
+  ].join('\n'),
+  [`${O}/boot/auth.guard.ts`]: 'export class AuthGuard { canActivate() { return true; } }',
+  [`${O}/boot/registry.ts`]: [
+    "import { GardenController } from '../features/garden/garden.controller';",
+    "import { GARDEN_ACTIONS, waterSchedule } from '../features/garden';",
+    "import { ShedController } from '../features/shed/shed.controller';",
+    "import { SHED_ACTIONS } from '../features/shed';",
+    "import { AuthGuard } from './auth.guard';",
+    'export const WEB_CONTROLLERS = [GardenController, ShedController];',
+    'export const WEB_GUARDS = [AuthGuard];',
+    'export const ACTIONS = [...GARDEN_ACTIONS, ...SHED_ACTIONS];',
+    'export const TIMERS = [waterSchedule];',
+  ].join('\n'),
+  [`${O}/kit/define.ts`]: [
+    'export const defineAction = <T>(action: T): T => action;',
+    'export const defineTimer = <T>(schedule: T): T => schedule;',
+  ].join('\n'),
+  [`${O}/features/garden/index.ts`]: [
+    "import { listBedsOperation } from './list-beds.op';",
+    "import { plantOperation } from './plant.op';",
+    "export { waterSchedule } from './water.schedule';",
+    'export const GARDEN_ACTIONS = [listBedsOperation, plantOperation];',
+  ].join('\n'),
+  [`${O}/features/garden/list-beds.op.ts`]: [
+    "import { defineAction } from '../../kit/define';",
+    'export const listBedsOperation = defineAction({',
+    "  contract: 'beds.list',",
+    "  exposure: 'read',",
+    "  tool: { description: 'Lists the beds.' },",
+    '  run: () => [],',
+    '});',
+  ].join('\n'),
+  [`${O}/features/garden/plant.op.ts`]: [
+    "import { defineAction } from '../../kit/define';",
+    "export const plantOperation = defineAction({ contract: 'beds.plant', exposure: 'write', run: () => 1 });",
+  ].join('\n'),
+  [`${O}/features/garden/water.schedule.ts`]: [
+    "import { defineTimer } from '../../kit/define';",
+    "import { plantOperation } from './plant.op';",
+    "export const waterSchedule = defineTimer({ name: 'garden.water', job: plantOperation, cron: '0 6 * * *' });",
+  ].join('\n'),
+  [`${O}/features/garden/garden.controller.ts`]: [
+    "import { Controller, Get, Post } from '@nestjs/common';",
+    "@Controller('garden')",
+    "export class GardenController { @Get('beds') beds() {} @Post('plant') plant() {} }",
+  ].join('\n'),
+  [`${O}/features/shed/index.ts`]: [
+    "import { listToolsOperation } from './list-tools.op';",
+    'export const SHED_ACTIONS = [listToolsOperation];',
+  ].join('\n'),
+  [`${O}/features/shed/list-tools.op.ts`]: [
+    "import { defineAction } from '../../kit/define';",
+    "export const listToolsOperation = defineAction({ contract: 'tools.list', run: () => [] });",
+  ].join('\n'),
+  [`${O}/features/shed/shed.controller.ts`]: [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('shed')",
+    "export class ShedController { @Get('tools') tools() {} }",
+  ].join('\n'),
+  [`${O}/store/store.module.ts`]: [
+    "import { type DynamicModule, Module } from '@nestjs/common';",
+    "import { StoreService } from './store.service';",
+    "export const STORE_URL = 'STORE_URL';",
+    '@Module({})',
+    'export class StoreModule {',
+    '  static forRoot(options: { url: string }): DynamicModule {',
+    '    return { module: StoreModule, global: true, providers: [StoreService, { provide: STORE_URL, useValue: options.url }], exports: [StoreService] };',
+    '  }',
+    '}',
+  ].join('\n'),
+  [`${O}/store/store.service.ts`]: 'export class StoreService {}',
+  [`${O}/queue/queue.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { QueueService } from './queue.service';",
+    '@Module({ providers: [QueueService] })',
+    'export class QueueModule {}',
+  ].join('\n'),
+  [`${O}/queue/queue.service.ts`]: 'export class QueueService {}',
+  [`${O}/reports/reports.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { ReportsController } from './reports.controller';",
+    '@Module({ controllers: [ReportsController] })',
+    'export class ReportsModule {}',
+  ].join('\n'),
+  [`${O}/reports/reports.controller.ts`]: [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('reports')",
+    'export class ReportsController { @Get() list() {} }',
+  ].join('\n'),
+  // Test support: a fake model client that imports a model SDK and generates, exactly
+  // as an agent would; a fixture controller; a stub. None of it is product.
+  [`${O}/testing/fakes/model.fake.ts`]: [
+    "import { GoogleGenAI } from '@google/genai';",
+    'export class FakeModel { ai = new GoogleGenAI({}); ask(t: string) { return this.ai.models.generateContent({ model: "m", contents: t }); } }',
+  ].join('\n'),
+  [`${O}/kit/fake-model.ts`]: [
+    "import { GoogleGenAI } from '@google/genai';",
+    'export const ask = (t: string) => new GoogleGenAI({}).models.generateContent({ model: "m", contents: t });',
+  ].join('\n'),
+  [`${O}/testing/fixtures/probe.controller.ts`]: [
+    "import { Controller, Get } from '@nestjs/common';",
+    "@Controller('probe')",
+    'export class ProbeController { @Get() probe() {} }',
+  ].join('\n'),
+  [`${O}/store/store.stub.ts`]: 'export class StoreStub {}',
+  [`${O}/reports/reports.int.test.ts`]: 'throw new Error("not read");',
+};
+
+test('test support is not selected: testing/, fixtures/, fakes, mocks, stubs, int and live tests', () => {
+  const extra = [`${O}/mocks/clock.ts`, `${O}/test-support/seed.ts`, `${O}/kit/clock.mock.ts`, `${O}/kit/model-fake.ts`, `${O}/x/y.live.test.ts`, `${O}/x/flow.e2e.ts`, `${O}/__mocks__/db.ts`];
+  const paths = selectLiftPaths([...Object.keys(orchard), ...extra]);
+  for (const gone of [
+    `${O}/testing/fakes/model.fake.ts`,
+    `${O}/kit/fake-model.ts`,
+    `${O}/testing/fixtures/probe.controller.ts`,
+    `${O}/store/store.stub.ts`,
+    `${O}/reports/reports.int.test.ts`,
+    ...extra,
+  ])
+    assert.ok(!paths.includes(gone), `${gone} is test support`);
+  assert.ok(paths.includes(`${O}/kit/define.ts`));
+  assert.ok(paths.includes(`${O}/features/garden/water.schedule.ts`), 'a schedule is not a test');
+});
+
+test('a static module factory is read: union over branches, role guards kept, nested forRoot followed', () => {
+  // Read the whole map, test support included, as a caller that skips selection would.
+  const skeleton = readRepo(orchard);
+  assert.deepEqual(skeleton.unresolved, []);
+  assert.equal(skeleton.servers.length, 1);
+  const server = skeleton.servers[0]!;
+  // The bootstrap helper's parameter is what main.ts passes it: CoreModule.forProfiles(...).
+  assert.equal(server.source.file, `${O}/boot/start.ts`);
+  assert.deepEqual(
+    server.routes.map((r) => `${r.method} ${r.path} ${r.controller}`),
+    ['GET /api/garden/beds GardenController', 'POST /api/garden/plant GardenController', 'GET /api/reports ReportsController', 'GET /api/shed/tools ShedController'],
+  );
+  assert.deepEqual(server.exposes, ['garden', 'reports', 'shed']);
+  // Every branch's imports are served (the union); a service only some role loads is
+  // listed under the value its check names. The store is in both returns: no role.
+  assert.deepEqual(server.roles, [
+    { name: 'reports', services: ['reports'] },
+    { name: 'web', services: ['garden', 'shed', 'web-role'] },
+    { name: 'worker', services: ['queue'] },
+  ]);
+  const svc = (id: string) => skeleton.services.find((s) => s.id === id)!;
+  assert.deepEqual(skeleton.services.map((s) => s.id).sort(), ['garden', 'queue', 'reports', 'shed', 'store', 'web-role']);
+  // StoreModule.forRoot, a local const of the factory, is read into StoreModule.
+  assert.deepEqual(svc('store').providers.map((p) => p.name), ['StoreService', 'STORE_URL']);
+  // The guard bindings mapped over a registry array: one per guard class.
+  assert.deepEqual(svc('web-role').providers, [{ name: 'AuthGuard', file: `${O}/boot/auth.guard.ts` }]);
+  assert.deepEqual(svc('web-role').controllers, [], 'its controllers are the features it mounts');
+  assert.ok(!svc('web-role').dependsOn.includes('garden'), 'mounting a feature is serving it, not depending on it');
+});
+
+test('declaration registries: controllers in exported arrays are served, define-factory objects are operations', () => {
+  const skeleton = readRepo(loaded(orchard));
+  const svc = (id: string) => skeleton.services.find((s) => s.id === id)!;
+  const garden = svc('garden');
+  assert.equal(garden.moduleClass, 'GARDEN_ACTIONS');
+  assert.equal(garden.directory, `${O}/features/garden`);
+  assert.deepEqual(garden.controllers, [{ name: 'GardenController', file: `${O}/features/garden/garden.controller.ts` }]);
+  assert.deepEqual(garden.files, [
+    `${O}/features/garden/garden.controller.ts`,
+    `${O}/features/garden/index.ts`,
+    `${O}/features/garden/list-beds.op.ts`,
+    `${O}/features/garden/plant.op.ts`,
+    `${O}/features/garden/water.schedule.ts`,
+  ]);
+  assert.deepEqual(garden.operations, [
+    { name: 'listBedsOperation', file: `${O}/features/garden/list-beds.op.ts`, line: 2, kind: 'defineAction', exposure: 'read', tool: true },
+    { name: 'plantOperation', file: `${O}/features/garden/plant.op.ts`, line: 2, kind: 'defineAction', exposure: 'write' },
+    { name: 'garden.water', file: `${O}/features/garden/water.schedule.ts`, line: 3, kind: 'defineTimer', scheduled: true },
+  ]);
+  assert.deepEqual(garden.declaredBy!.map((r) => `${r.file.slice(O.length + 1)}#${r.name}`), [
+    'boot/registry.ts#WEB_CONTROLLERS',
+    'boot/registry.ts#ACTIONS',
+    'boot/registry.ts#TIMERS',
+    'features/garden/index.ts#GARDEN_ACTIONS',
+  ]);
+  assert.deepEqual(svc('shed').operations, [{ name: 'listToolsOperation', file: `${O}/features/shed/list-tools.op.ts`, line: 2, kind: 'defineAction' }]);
+  // The scheduled declaration is a process calling the feature that declares it.
+  assert.deepEqual(skeleton.processes, [
+    { id: 'garden-water', schedule: '0 6 * * *', calls: ['garden'], source: { file: `${O}/features/garden/water.schedule.ts`, line: 3 } },
+  ]);
+
+  // Listed in a registry but mounted by no module: still served, at the root, with
+  // the registry as the evidence — and not reported as a controller nobody declares.
+  const unmounted = { ...orchard, [`${O}/boot/web-role.module.ts`]: orchard[`${O}/boot/web-role.module.ts`]!.replace('controllers: [...WEB_CONTROLLERS],', '') };
+  const alone = readRepo(loaded(unmounted));
+  assert.deepEqual(
+    alone.servers[0]!.routes.map((r) => `${r.method} ${r.path}`),
+    ['GET /api/garden/beds', 'POST /api/garden/plant', 'GET /api/reports', 'GET /api/shed/tools'],
+  );
+  assert.ok(alone.services.find((s) => s.id === 'shed')!.declaredBy!.some((r) => r.name === 'WEB_CONTROLLERS'));
+  assert.ok(!alone.unresolved.some((u) => /no served module declares/.test(u.reason)));
+});
+
+test('a fake model client in test support is not an agent; the same code in product is', () => {
+  const skeleton = readRepo(orchard);
+  assert.deepEqual(skeleton.agents, []);
+  assert.ok(!skeleton.servers[0]!.routes.some((r) => r.controller === 'ProbeController'), 'a fixture controller serves nothing');
+  assert.ok(!(skeleton.servers[0]!.sharedFiles ?? []).some((f) => f.includes('testing/') || f.includes('fake')));
+  const product = { ...orchard, [`${O}/kit/model-client.ts`]: orchard[`${O}/testing/fakes/model.fake.ts`]! };
+  assert.deepEqual(readRepo(product).agents.map((a) => a.id), ['model']);
+});

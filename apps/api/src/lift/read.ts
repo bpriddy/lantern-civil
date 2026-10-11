@@ -51,10 +51,31 @@ const EXCLUDED_SEGMENTS = new Set([
 const isTestOrDeclaration = (path: string): boolean =>
   /\.d\.ts$/.test(path) || /\.(spec|test|e2e-spec)\.tsx?$/.test(path);
 
+/**
+ * Test support: code that exists so tests can run, not so the product can. It is never
+ * read as product — a fake model client is not an agent, a fixture controller is not a
+ * route, a stub module is not a service. The rule is by name only, and is this list:
+ *
+ * - any directory named `testing`, `test-support`, `fixtures`, `__mocks__`, `mocks`
+ *   or `fakes` (besides the test, tests, __tests__ and e2e directories excluded above);
+ * - files named `*.fake.ts`, `*-fake.ts`, `fake-*.ts`, `*.mock.ts`, `*.stub.ts`;
+ * - integration, live and end-to-end tests: `*.int.test.ts`, `*.live.test.ts`,
+ *   `*.e2e.ts` (the first two are already `*.test.ts`; listed so the rule reads whole).
+ *
+ * `.tsx`, `.mts`, `.js` and `.mjs` spellings count the same.
+ */
+const TEST_SUPPORT_SEGMENTS = new Set(['testing', 'test-support', 'fixtures', '__mocks__', 'mocks', 'fakes']);
+const TEST_SUPPORT_FILE = /(\.fake|-fake|\.mock|\.stub|\.int\.test|\.live\.test|\.e2e)\.(m?[tj]sx?)$|^fake-[^/]*\.(m?[tj]sx?)$/;
+
+export const isTestSupport = (path: string): boolean => {
+  const segments = path.split('/');
+  return segments.slice(0, -1).some((s) => TEST_SUPPORT_SEGMENTS.has(s)) || TEST_SUPPORT_FILE.test(segments[segments.length - 1]!);
+};
+
 /** Root files that say which package manager runs the workspace (never lockfiles: too big). */
 const WORKSPACE_FILES = new Set(['pnpm-workspace.yaml', '.yarnrc.yml', 'bunfig.toml']);
 
-const isCode = (path: string): boolean => /\.tsx?$/.test(path) && !isTestOrDeclaration(path);
+const isCode = (path: string): boolean => /\.tsx?$/.test(path) && !isTestOrDeclaration(path) && !isTestSupport(path);
 
 /**
  * Which files a lift needs, in priority order so a cap drops the least useful first:
@@ -63,8 +84,8 @@ const isCode = (path: string): boolean => /\.tsx?$/.test(path) && !isTestOrDecla
  * directory plus its vite.config, then Terraform (*.tf: where a cloud scheduler's
  * jobs and the routes they call are declared — small, and the only place external
  * schedules are written down), then prose (README.md, docs/**.md) for the model
- * pass. Tests, declarations, build output and vendored code are never read: they
- * describe the code, they are not it.
+ * pass. Tests, test support (isTestSupport), declarations, build output and vendored
+ * code are never read: they describe the code, they are not it.
  */
 export function selectLiftPathsReport(paths: readonly string[]): {
   paths: string[];
@@ -78,6 +99,7 @@ export function selectLiftPathsReport(paths: readonly string[]): {
   for (const path of paths) {
     const segments = path.split('/');
     if (segments.slice(0, -1).some((s) => EXCLUDED_SEGMENTS.has(s))) continue;
+    if (isTestSupport(path)) continue;
     const base = segments[segments.length - 1]!;
     if (base === 'package.json' || /^tsconfig(\.[\w-]+)?\.json$/.test(base)) manifests.push(path);
     else if (segments.length === 1 && WORKSPACE_FILES.has(base)) manifests.push(path);
@@ -221,7 +243,10 @@ function dedupeIds(reads: NestRead[], clients: SkeletonClient[]): void {
       if (s.agentsVia)
         s.agentsVia = Object.fromEntries(Object.entries(s.agentsVia).map(([a, callers]) => [agent(a), callers.map(agent)]));
     }
-    for (const server of r.servers) server.exposes = server.exposes.map(svc).sort(byString);
+    for (const server of r.servers) {
+      server.exposes = server.exposes.map(svc).sort(byString);
+      if (server.roles) for (const role of server.roles) role.services = role.services.map(svc).sort(byString);
+    }
     for (const p of r.processes) {
       p.calls = p.calls.map(svc);
       p.id = claim(p.id, 'job');

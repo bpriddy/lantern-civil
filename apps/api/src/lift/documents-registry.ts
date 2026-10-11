@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Document } from 'yaml';
 import type { Unit } from '../project/registry.js';
 import { parse } from 'yaml';
+import type { Provenance } from './claims.js';
 import type { FileMap, Refinement } from './skeleton.js';
 
 /**
@@ -70,6 +71,9 @@ const byString = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
  * hash is recorded when the repository's content was read (`repo`); without it the
  * entry carries the role alone rather than a hash of nothing.
  */
+/** Evidence lines kept per unit: enough to go and look, not a second file list. */
+const EVIDENCE_SHOWN = 5;
+
 export function liftRegistry(
   units: readonly Unit[],
   filesOf: ReadonlyMap<string, readonly string[]>,
@@ -78,6 +82,8 @@ export function liftRegistry(
   liftedFrom?: LiftProvenance,
   /** Unit id → the model's sentence on it, shown in the inspector beside the files. */
   descriptionOf: ReadonlyMap<string, string> = new Map(),
+  /** Unit id → what Civil's belief in it rests on (claims.ts), for the inspector. */
+  provenanceOf: ReadonlyMap<string, Provenance> = new Map(),
 ): string {
   const entries = (paths: readonly string[]) => {
     const out: Record<string, { role: string; hash?: string }> = {};
@@ -112,6 +118,14 @@ export function liftRegistry(
           // depends_on and files); the canvas inspector reads it for a lifted node.
           const description = descriptionOf.get(unit.id);
           if (description) entry['description'] = description;
+          // How sure Civil is, and the places in the code that say so — a handful,
+          // enough to go and look; the files below are the full attribution.
+          const believed = provenanceOf.get(unit.id);
+          if (believed) {
+            entry['confidence'] = believed.confidence;
+            const cited = believed.evidence.slice(0, EVIDENCE_SHOWN).map((ev) => (ev.line ? `${ev.file}:${ev.line}` : ev.file));
+            if (cited.length > 0) entry['evidence'] = cited;
+          }
           const files = filesOf.get(unit.id) ?? [];
           if (files.length > 0) entry['files'] = entries(files);
           return [unit.id, entry];
