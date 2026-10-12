@@ -247,3 +247,15 @@ test('a skeleton fingerprints the same however its objects\' keys were ordered',
   assert.equal(canonicalJson(reordered), canonicalJson(first.skeleton));
   assert.equal(liftFingerprint(reordered as never, {}), liftFingerprint(first.skeleton, {}));
 });
+
+test('a node the code no longer shows is kept but marked not found, never silently removed', async () => {
+  const first = await liftRepository(source(REPO), { projectName: 'Ledger' });
+  // The entries module is deleted from the code; its node was drawn by the first lift.
+  const gone = Object.fromEntries(Object.entries(REPO).filter(([p]) => !p.includes('/entries/')));
+  gone[`${S}/app.module.ts`] = REPO[`${S}/app.module.ts`]!.replace(", EntriesModule", '').replace("import { EntriesModule } from './entries/entries.module';\n", '');
+  const after = await liftRepository(source({ ...gone, ...first.files }), { projectName: 'Ledger' });
+  assert.ok(nodeIds(after.files['civil/app.yaml'] ?? first.files['civil/app.yaml']!).includes('entries'), 'still on the canvas');
+  const status = await liftStatus(source({ ...gone, ...first.files, ...after.files }) as never);
+  assert.equal(status.units['entries']?.notFound, true, 'marked so the canvas can say so');
+  assert.equal(status.units['accounts']?.notFound, undefined);
+});

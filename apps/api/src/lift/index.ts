@@ -368,6 +368,8 @@ export interface LiftStatus {
     {
       files: string[];
       description?: string;
+      /** A previous lift drew it; the repository no longer shows it. Kept, never removed silently. */
+      notFound?: boolean;
       /** How sure Civil is (claims.ts), where in the code it rests, and who said so. */
       confidence?: 'high' | 'medium' | 'low';
       evidence?: string[];
@@ -407,6 +409,7 @@ export async function liftStatus(source: ProjectSource): Promise<LiftStatus> {
             confidence?: unknown;
             evidence?: unknown;
             voices?: unknown;
+            status?: unknown;
             files?: Record<string, { role?: unknown } | null>;
           } | null
         >;
@@ -418,9 +421,11 @@ export async function liftStatus(source: ProjectSource): Promise<LiftStatus> {
       .filter(([, f]) => f?.role === 'repo')
       .map(([path]) => path)
       .sort();
-    if (!files.length) continue;
+    const notFound = entry.status === 'not-found';
+    if (!files.length && !notFound) continue;
     units[unit.slice('app/'.length)] = {
       files,
+      ...(notFound ? { notFound: true } : {}),
       ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
       ...(entry.confidence === 'high' || entry.confidence === 'medium' || entry.confidence === 'low'
         ? { confidence: entry.confidence }

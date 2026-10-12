@@ -84,6 +84,8 @@ export function liftRegistry(
   descriptionOf: ReadonlyMap<string, string> = new Map(),
   /** Unit id → what Civil's belief in it rests on (claims.ts), for the inspector. */
   provenanceOf: ReadonlyMap<string, Provenance> = new Map(),
+  /** Units a previous lift drew that the repository no longer shows: status not-found. */
+  notFound: ReadonlySet<string> = new Set(),
 ): string {
   const entries = (paths: readonly string[]) => {
     const out: Record<string, { role: string; hash?: string }> = {};
@@ -116,6 +118,7 @@ export function liftRegistry(
           if (unit.dependsOn.length > 0) entry['depends_on'] = unit.dependsOn;
           // An extra key the registry readers ignore (registry.ts reads kind, source,
           // depends_on and files); the canvas inspector reads it for a lifted node.
+          if (notFound.has(unit.id)) entry['status'] = 'not-found';
           const description = descriptionOf.get(unit.id);
           if (description) entry['description'] = description;
           // How sure Civil is, and the places in the code that say so — a handful,

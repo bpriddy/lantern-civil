@@ -489,7 +489,11 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
   const present = new Set(units.map((u) => u.id));
   const removed = sortedUnique([...removedUnits].filter((u) => !present.has(u)));
   const liftedFrom = opts.liftedFrom ? { ...opts.liftedFrom, ...(removed.length ? { removed } : {}) } : undefined;
-  files[REGISTRY_PATH] = liftRegistry(units, filesOf, shared, opts.repo, liftedFrom, descriptionOf, provenanceOf);
+  // Nodes a previous lift drew that the repository no longer shows: kept (nothing is
+  // removed silently) but marked in the registry, so the canvas draws them as not found
+  // rather than as things the code still has.
+  const notFound = new Set((composition.plan?.stale ?? []).map((id) => `app/${id}`));
+  files[REGISTRY_PATH] = liftRegistry(units, filesOf, shared, opts.repo, liftedFrom, descriptionOf, provenanceOf, notFound);
 
   // ---- architecture.md ---------------------------------------------------------
 
