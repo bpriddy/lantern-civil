@@ -198,7 +198,7 @@ export function validateAnswer(answer: Record<string, unknown>, listed: Readonly
       issues.push(`${kind}:${subject}: no evidence in the repository`);
       continue;
     }
-    const attrs = item['attrs'];
+    const attrs = canonical(item['attrs']);
     claims.push({
       kind: kind as Claim['kind'],
       subject,
@@ -212,6 +212,18 @@ export function validateAnswer(answer: Record<string, unknown>, listed: Readonly
   }
   return { claims, issues };
 }
+
+/** An attribute object with its keys sorted, recursively: a claim reads the same however it was stored. */
+const canonical = (value: unknown): unknown =>
+  Array.isArray(value)
+    ? value.map(canonical)
+    : value && typeof value === 'object'
+      ? Object.fromEntries(
+          Object.entries(value as Record<string, unknown>)
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([k, v]) => [k, canonical(v)]),
+        )
+      : value;
 
 const pascal = (id: string): string => id.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
 const strings = (value: unknown): string[] => (Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []);

@@ -233,3 +233,17 @@ test('each drawn unit records how sure Civil is and where in the code that rests
   const again = await liftRepository(source({ ...REPO, ...result.files }) as never, { projectName: 'Ledger' });
   assert.equal(again.files['civil/registry.yaml'], result.files['civil/registry.yaml']);
 });
+
+test('a skeleton fingerprints the same however its objects\' keys were ordered', async () => {
+  const { canonicalJson } = await import('../dist/lift/index.js');
+  const first = await liftRepository(source(REPO), { projectName: 'Ledger' });
+  // What JSONB does to a stored object: the same keys, a different order.
+  const shuffle = (v: unknown): unknown =>
+    Array.isArray(v) ? v.map(shuffle) : v && typeof v === 'object'
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).reverse().map(([k, x]) => [k, shuffle(x)]))
+      : v;
+  const reordered = shuffle(first.skeleton);
+  assert.notEqual(JSON.stringify(reordered), JSON.stringify(first.skeleton), 'the shuffle really reorders');
+  assert.equal(canonicalJson(reordered), canonicalJson(first.skeleton));
+  assert.equal(liftFingerprint(reordered as never, {}), liftFingerprint(first.skeleton, {}));
+});

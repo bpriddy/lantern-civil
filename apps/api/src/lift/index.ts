@@ -130,9 +130,23 @@ const isDoc = (path: string): boolean =>
  * hash. Both are deterministic for the same repository (the reader is pure and its
  * output ordered), so an unchanged repository gives the same fingerprint.
  */
+/**
+ * JSON with every object's keys sorted: the same value always serialises the same.
+ * A skeleton assembled from claims that came back out of Postgres (JSONB reorders an
+ * object's keys) must fingerprint like the one built from the fresh answer — otherwise
+ * an unchanged repository re-asks the model pass and rewords the graph (found live).
+ */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  );
+}
+
 export function liftFingerprint(skeleton: Skeleton, docs: Record<string, string>): string {
   const sortedDocs = Object.keys(docs).sort().map((path) => [path, docs[path]]);
-  const hash = createHash('sha256').update(JSON.stringify({ skeleton: withoutLines(skeleton), docs: sortedDocs })).digest('hex');
+  const hash = createHash('sha256').update(canonicalJson({ skeleton: withoutLines(skeleton), docs: sortedDocs })).digest('hex');
   return `sha256:${hash.slice(0, 16)}`;
 }
 
