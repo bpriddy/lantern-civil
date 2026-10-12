@@ -96,7 +96,7 @@ export function readCanvas(text: string | undefined, kind: 'Composition' | 'Grap
 export function readPreviousRegistry(text: string | undefined): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
   if (text === undefined) return out;
-  let doc: { units?: Record<string, { files?: Record<string, { role?: unknown } | null> } | null> } | null;
+  let doc: { units?: Record<string, { status?: unknown; files?: Record<string, { role?: unknown } | null> } | null> } | null;
   try {
     doc = parse(text) as typeof doc;
   } catch {
@@ -107,6 +107,9 @@ export function readPreviousRegistry(text: string | undefined): Map<string, Set<
       .filter(([, f]) => f?.role === 'repo')
       .map(([path]) => path);
     if (files.length) out.set(unit, new Set(files));
+    // Drawn by a lift and not found since: still the lift's, so it stays marked not
+    // found on every Update until the code shows it again or the author removes it.
+    else if (entry?.status === 'not-found') out.set(unit, new Set());
   }
   return out;
 }
