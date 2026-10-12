@@ -11,7 +11,7 @@
  *
  * Usage (after `npm run build --workspace @civil/api`):
  *
- *   node apps/api/scripts/lift-dir.mjs <repo-dir> <out-dir> [--runner <url>] [--name <project name>]
+ *   node apps/api/scripts/lift-dir.mjs <repo-dir> <out-dir> [--runner <url>] [--analyze <url>] [--name <project name>]
  *
  * - The repository is only read (lazily, file by file, through a minimal source). Documents go to <out-dir>/civil/…, plus
  *   <out-dir>/skeleton.json (what the reader found) and <out-dir>/report.json.
@@ -19,6 +19,9 @@
  *   so a second run is "Update graph from repo" and should rewrite nothing.
  * - --runner <url> adds the model pass through that runner's POST /lift/refine;
  *   without it the result is the deterministic reader's, as on a server with no runner.
+ * - --analyze <url> adds the agent stage through that runner's POST /lift/analyze:
+ *   analysts and verifiers whose claims are weighed with the reader's (analysts.ts).
+ *   Writes analysis.json beside the report: every agent claim and what was disbelieved.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -37,7 +40,7 @@ function parseArgs(argv) {
     else positional.push(argv[i]);
   }
   if (positional.length !== 2) {
-    console.error('usage: lift-dir.mjs <repo-dir> <out-dir> [--runner <url>] [--name <project name>]');
+    console.error('usage: lift-dir.mjs <repo-dir> <out-dir> [--runner <url>] [--analyze <url>] [--name <project name>]');
     process.exit(2);
   }
   return { repoDir: path.resolve(positional[0]), outDir: path.resolve(positional[1]), ...flags };
@@ -61,8 +64,8 @@ function listFiles(root) {
 }
 
 /** The runner's /lift/refine, called the way the API's callRunner does (no auth locally). */
-const askRunner = (runnerUrl) => async (body) => {
-  const response = await fetch(`${runnerUrl.replace(/\/$/, '')}/lift/refine`, {
+const askRunner = (runnerUrl, route = '/lift/refine') => async (body) => {
+  const response = await fetch(`${runnerUrl.replace(/\/$/, '')}${route}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
@@ -101,6 +104,7 @@ try {
   result = await liftRepository(source, {
     projectName: args.name ?? path.basename(args.repoDir),
     ask: args.runner ? askRunner(args.runner) : undefined,
+    analyze: args.analyze ? askRunner(args.analyze, '/lift/analyze') : undefined,
   });
 } catch (error) {
   // Refused before any work (a Python project, documents at the root): the route
@@ -137,12 +141,14 @@ const report = {
   // after reusing the one the registry recorded for unchanged code.
   modelPass: /\n  refinement:/.test(mapped.files['civil/registry.yaml'] ?? '') ? 'applied' : 'not applied',
   note: result.note,
+  ...(result.analysis ? { analysis: { ...result.analysis, disbelieved: result.analysis.disbelieved.length } } : {}),
   diagnostics: mapped.diagnostics,
   documents: Object.keys(mapped.files).sort(),
   changed,
 };
 fs.mkdirSync(args.outDir, { recursive: true });
 fs.writeFileSync(path.join(args.outDir, 'skeleton.json'), `${JSON.stringify(s, null, 2)}\n`);
+if (result.analysis) fs.writeFileSync(path.join(args.outDir, 'analysis.json'), `${JSON.stringify(result.analysis, null, 2)}\n`);
 fs.writeFileSync(path.join(args.outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
 
 console.log(mapped.summary);

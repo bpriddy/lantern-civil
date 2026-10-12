@@ -21,6 +21,7 @@ import {
   type RepoContext,
 } from './read.js';
 import { readRegistries, type DeclaredOperation, type RegistryArray } from './reader-registry.js';
+import { customRoutes, HTTP_METHODS } from './reader-decorators.js';
 
 /**
  * The NestJS reader: one server package in, its routes, services, agents and
@@ -45,16 +46,6 @@ export interface NestRead {
   unresolved: Unresolved[];
 }
 
-const HTTP_METHODS: Record<string, SkeletonRoute['method']> = {
-  Get: 'GET',
-  Post: 'POST',
-  Put: 'PUT',
-  Patch: 'PATCH',
-  Delete: 'DELETE',
-  All: 'ALL',
-  Options: 'OPTIONS',
-  Head: 'HEAD',
-};
 
 /**
  * Model SDKs: importing one of these is what makes code an LLM caller. Prefix
@@ -337,13 +328,16 @@ export function readNestServer(ctx: RepoContext, pkg: Pkg): NestRead {
     const own = registry.arrays.filter((a) => isUnder(a.file, dir) && registries.includes(a)).sort((a, b) => a.file.length - b.file.length || byString(a.file, b.file))[0];
     const anchorDecl = own ? ctx.declarations(own.file).get(own.name) : undefined;
     const firstController = controllers.sort((a, b) => byString(a.file, b.file) || byString(a.name, b.name))[0];
+    // Labelled by its directory ("orders" → OrdersFeature): the directory is the unit,
+    // whatever its registry array or first declaration happens to be called.
+    const label = featureLabel(dir);
     let rec: ModuleRec;
-    if (own && anchorDecl) rec = newModuleRec(`feature:${dir}`, own.name, own.file, anchorDecl.node);
-    else if (firstController) rec = newModuleRec(`feature:${dir}`, firstController.name, firstController.file, firstController.node);
+    if (own && anchorDecl) rec = newModuleRec(`feature:${dir}`, label, own.file, anchorDecl.node);
+    else if (firstController) rec = newModuleRec(`feature:${dir}`, label, firstController.file, firstController.node);
     else {
       const first = ops.map((o) => o.op).sort((a, b) => byString(a.file, b.file) || a.line - b.line)[0]!;
       const bound = first.key.includes('#') ? ctx.declarations(first.file).get(first.key.split('#')[1]!) : undefined;
-      rec = newModuleRec(`feature:${dir}`, bound?.name ?? first.name, first.file, bound?.node ?? ctx.sourceFile(first.file)!);
+      rec = newModuleRec(`feature:${dir}`, label, first.file, bound?.node ?? ctx.sourceFile(first.file)!);
     }
     rec.controllers = controllers;
     rec.feature = { dir, registries: registries.sort((a, b) => byString(a.file, b.file) || a.line - b.line) };
@@ -769,6 +763,15 @@ function pathsNamedIn(ctx: RepoContext, file: string): Set<string> {
 // ---------------------------------------------------------------------------------
 // @Module
 // ---------------------------------------------------------------------------------
+
+/** A feature's label from its directory: "orders" → "OrdersFeature", "user-graph" → "UserGraphFeature". */
+export const featureLabel = (dir: string): string =>
+  `${posix
+    .basename(dir)
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((w) => w[0]!.toUpperCase() + w.slice(1))
+    .join('')}Feature`;
 
 const newModuleRec = (key: string, name: string, file: string, node: ts.Node): ModuleRec => ({
   key,
@@ -1326,11 +1329,14 @@ const importsModelSdk = (ctx: RepoContext, file: string): boolean =>
   [...ctx.imports(file).values()].some((b) => b.target.kind === 'external' && isModelSdk(b.target.pkg));
 
 /**
- * Agents, two ways. A directory under `agents/` with a definition file (agent.ts,
+ * Agents, three ways. A directory under `agents/` with a definition file (agent.ts,
  * <x>-agent.ts, <x>.agent.ts, or a prompt) is one agent per definition, owning the
- * files beside it and its tools/ directory. Outside agents/, a file that imports a
- * model SDK AND asks it to generate is one agent — the second test is what keeps an
- * embedding client or an SDK wrapper from being drawn as one.
+ * files beside it and its tools/ directory. By file convention, a `<name>.agent.ts`
+ * anywhere (or a `<name>.ts` directly in an agent/ or agents/ directory) exporting a
+ * value is the agent <name> with its same-prefix parts, whatever it calls the model
+ * through. Otherwise, a file that imports a model SDK AND asks it to generate is one
+ * agent — the second test is what keeps an embedding client or an SDK wrapper from
+ * being drawn as one.
  */
 function readAgents(
   ctx: RepoContext,
@@ -1375,23 +1381,76 @@ function readAgents(
     for (const n of named) {
       const id = civilId(n.x ?? dirName);
       const agentFiles = (owned.get(n.f) ?? [n.f]).sort(byString);
-      const tools = toolsOf(ctx, n.f, agentFiles, dir);
-      for (const t of tools) if (!agentFiles.includes(t.file)) agentFiles.push(t.file);
+      const { tools, codeFiles } = toolsOf(ctx, n.f, agentFiles, dir);
+      for (const t of codeFiles) if (!agentFiles.includes(t)) agentFiles.push(t);
       agentFiles.sort(byString);
       agents.push({ id, files: agentFiles, tools, source: { file: n.f } });
       for (const f of agentFiles) if (!agentOfFile.has(f)) agentOfFile.set(f, id);
     }
   }
 
+  // By file convention: `<name>.agent.ts` anywhere, or `<name>.ts` directly in an agent/
+  // or agents/ directory, that exports a class, function or object, is the agent <name>
+  // — however it reaches the model (an SDK, or the project's own gateway). It owns the
+  // siblings that share its prefix: <name>.prompt.ts, <name>.output.ts, <name>.tools.ts.
+  const inGroup = (f: string) => [...groups.keys()].some((d) => isUnder(f, d));
+  const conventional = files
+    .filter((f) => !agentOfFile.has(f) && !inGroup(f))
+    .flatMap((f) => {
+      const name = conventionAgentName(f);
+      return name && exportsValue(ctx, f) ? [{ f, name }] : [];
+    });
+  const conventionDefs = new Set(conventional.map((c) => c.f));
+  for (const { f, name } of conventional) {
+    const dir = posix.dirname(f);
+    const siblings = files.filter(
+      (s) => s !== f && posix.dirname(s) === dir && posix.basename(s).startsWith(`${name}.`) && !conventionDefs.has(s) && !agentOfFile.has(s),
+    );
+    const agentFiles = [f, ...siblings].sort(byString);
+    const { tools } = toolsOf(ctx, f, agentFiles, null);
+    const id = civilId(name);
+    agents.push({ id, files: agentFiles, tools, source: { file: f } });
+    for (const x of agentFiles) if (!agentOfFile.has(x)) agentOfFile.set(x, id);
+  }
+
   for (const f of files) {
-    if (agentOfFile.has(f) || [...groups.keys()].some((d) => isUnder(f, d))) continue;
+    if (agentOfFile.has(f) || inGroup(f)) continue;
     if (!importsModelSdk(ctx, f) || !GENERATION_CALL.test(ctx.files[f] ?? '')) continue;
     const id = civilId(posix.basename(f).replace(/\.(m?[tj]sx?)$/, '').replace(/[.-](service|agent|client|provider)$/, ''));
-    agents.push({ id, files: [f], tools: toolsOf(ctx, f, [f], null), source: { file: f } });
+    agents.push({ id, files: [f], tools: toolsOf(ctx, f, [f], null).tools, source: { file: f } });
     agentOfFile.set(f, id);
   }
   agents.sort((a, b) => byString(a.id, b.id));
   return { agents, agentOfFile };
+}
+
+/** Stems that name an agent's parts or a directory's plumbing, never an agent. */
+const NOT_AGENT_STEM = /^(index|types?|utils?|helpers?|constants?|config|shared|common|base|prompts?|tools?|outputs?|schemas?)$/;
+
+/**
+ * The agent a file defines by convention, by name: `<name>.agent.ts` anywhere, or
+ * `<name>.ts` directly in an agent/ or agents/ directory (a part like <name>.prompt.ts,
+ * or plumbing like index.ts, is not one). Null otherwise.
+ */
+function conventionAgentName(file: string): string | null {
+  const base = posix.basename(file).replace(/\.(m?[tj]sx?)$/, '');
+  const suffixed = /^(.+)\.agent$/.exec(base);
+  if (suffixed) return suffixed[1]!;
+  const parent = posix.basename(posix.dirname(file));
+  if (parent !== 'agent' && parent !== 'agents') return null;
+  if (base.includes('.') || NOT_AGENT_STEM.test(base)) return null;
+  return base;
+}
+
+/** True when a file exports a class, a function, or a const holding a value (not only types). */
+function exportsValue(ctx: RepoContext, file: string): boolean {
+  for (const stmt of ctx.sourceFile(file)?.statements ?? []) {
+    if (ts.isExportAssignment(stmt)) return true;
+    if (!hasModifier(stmt, ts.SyntaxKind.ExportKeyword)) continue;
+    if (ts.isClassDeclaration(stmt) || ts.isFunctionDeclaration(stmt)) return true;
+    if (ts.isVariableStatement(stmt) && stmt.declarationList.declarations.some((d) => d.initializer)) return true;
+  }
+  return false;
 }
 
 /**
@@ -1418,32 +1477,72 @@ function agentsUsedByAgents(ctx: RepoContext, agents: SkeletonAgent[], agentOfFi
 }
 
 /**
- * An agent's tools: what its definition passes as `tools: [...]` (resolved to the
- * file that defines each), plus every file in its tools/ directory.
+ * An agent's tools: what its definition (or its <name>.tools.ts part) lists as
+ * `tools: [...]` or in an exported `…tools` array — each entry resolved to the file
+ * that defines it; an array a const holds is read through; a tool written as a name
+ * ('search') or an object with a fixed `name` is that name — plus every file in its
+ * tools/ directory.
  */
-function toolsOf(ctx: RepoContext, def: string, agentFiles: string[], dir: string | null): { name: string; file: string }[] {
+function toolsOf(
+  ctx: RepoContext,
+  def: string,
+  agentFiles: string[],
+  dir: string | null,
+): { tools: { name: string; file: string }[]; codeFiles: string[] } {
   const tools = new Map<string, string>();
-  const sf = ctx.sourceFile(def);
+  /** Files that define a tool as code (not a tool named by a string). */
+  const codeFiles = new Set<string>();
   const toolName = (file: string, ident: string) => (file === def ? ident : civilId(posix.basename(file).replace(/\.(m?[tj]sx?)$/, '')));
-  const visit = (n: ts.Node): void => {
-    if (ts.isPropertyAssignment(n) && propName(n.name) === 'tools' && ts.isArrayLiteralExpression(unwrap(n.initializer))) {
-      for (const el of (unwrap(n.initializer) as ts.ArrayLiteralExpression).elements) {
-        let target = unwrap(ts.isSpreadElement(el) ? el.expression : el);
-        if (ts.isCallExpression(target) || ts.isNewExpression(target)) target = unwrap(target.expression);
-        if (!ts.isIdentifier(target)) continue;
-        const d = ctx.resolveName(def, target.text);
-        if (d && !('external' in d)) tools.set(d.file === def ? `${def}#${target.text}` : d.file, toolName(d.file, target.text));
-      }
+  const entries = (file: string, expr: ts.Expression, depth: number): void => {
+    if (depth > 6) return;
+    const e = unwrap(expr);
+    if (ts.isArrayLiteralExpression(e)) {
+      for (const el of e.elements) entries(file, ts.isSpreadElement(el) ? el.expression : el, depth + 1);
+      return;
     }
-    ts.forEachChild(n, visit);
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+      tools.set(`${file}#${e.text}`, e.text);
+      return;
+    }
+    if (ts.isObjectLiteralExpression(e)) {
+      const n = e.properties.find((p) => ts.isPropertyAssignment(p) && propName(p.name) === 'name') as ts.PropertyAssignment | undefined;
+      const value = n ? ctx.evalString(file, n.initializer) : undefined;
+      if (value) tools.set(`${file}#${value}`, value);
+      return;
+    }
+    let target = e;
+    if (ts.isCallExpression(target) || ts.isNewExpression(target)) target = unwrap(target.expression);
+    if (!ts.isIdentifier(target)) return;
+    const d = ctx.resolveName(file, target.text);
+    if (!d || 'external' in d) return;
+    // A const holding the list itself (`tools: AGENT_TOOLS`) is read through.
+    if (target === e && ts.isVariableDeclaration(d.node) && d.node.initializer && ts.isArrayLiteralExpression(unwrap(d.node.initializer))) {
+      entries(d.file, d.node.initializer, depth + 1);
+      return;
+    }
+    tools.set(d.file === def ? `${def}#${target.text}` : d.file, toolName(d.file, target.text));
+    codeFiles.add(d.file);
   };
-  if (sf) visit(sf);
+  const scan = (file: string) => {
+    const sf = ctx.sourceFile(file);
+    if (!sf) return;
+    const visit = (n: ts.Node): void => {
+      if (ts.isPropertyAssignment(n) && propName(n.name) === 'tools') entries(file, n.initializer, 0);
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && /tools$/i.test(n.name.text) && n.initializer && ts.isArrayLiteralExpression(unwrap(n.initializer)) && n.parent.parent && hasModifier(n.parent.parent, ts.SyntaxKind.ExportKeyword))
+        entries(file, n.initializer, 0);
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+  };
+  scan(def);
+  for (const f of agentFiles) if (f !== def && posix.dirname(f) === posix.dirname(def) && /[.-]tools?\.(m?[tj]sx?)$/.test(f)) scan(f);
   if (dir)
     for (const f of agentFiles)
       if (isUnder(f, posix.join(dir, 'tools')) && !tools.has(f) && !/\/index\.[tj]sx?$/.test(f)) tools.set(f, toolName(f, ''));
-  return [...tools]
-    .map(([key, name]) => ({ name, file: key.split('#')[0]! }))
-    .sort((a, b) => byString(a.name, b.name));
+  const byName = new Map<string, string>();
+  for (const [key, name] of tools) if (!byName.has(name)) byName.set(name, key.split('#')[0]!);
+  const list = [...byName].map(([name, file]) => ({ name, file })).sort((a, b) => byString(a.name, b.name) || byString(a.file, b.file));
+  return { tools: list, codeFiles: [...codeFiles].sort(byString) };
 }
 
 // ---------------------------------------------------------------------------------
@@ -1549,6 +1648,9 @@ function pathsOf(ctx: RepoContext, file: string, arg: ts.Expression | undefined)
   return undefined;
 }
 
+/** The path a route is recorded under when a custom decorator computes it at runtime. */
+const COMPUTED_PATH = '<computed>';
+
 function readController(ctx: RepoContext, c: Decl, prefix: Prefix | null, unresolved: Unresolved[]): SkeletonRoute[] {
   if (!ts.isClassDeclaration(c.node)) return [];
   const deco = decoratorsOf(c.node).find((d) => d.name === 'Controller');
@@ -1565,14 +1667,8 @@ function readController(ctx: RepoContext, c: Decl, prefix: Prefix | null, unreso
   for (const member of c.node.members) {
     if (!ts.isMethodDeclaration(member)) continue;
     const handler = member.name.getText();
-    for (const d of decoratorsOf(member)) {
-      const method = HTTP_METHODS[d.name];
-      if (!method) continue;
-      const methodPaths = pathsOf(ctx, c.file, d.args[0]);
-      if (!methodPaths) {
-        unresolved.push({ file: c.file, line: ctx.line(c.file, member), reason: `${c.name}.${handler}: @${d.name} path is computed at runtime; route not read` });
-        continue;
-      }
+    const line = ctx.line(c.file, member);
+    const mount = (method: SkeletonRoute['method'], methodPaths: string[]) => {
       for (const cp of ctrlPaths)
         for (const mp of methodPaths) {
           const bare = joinPath(cp, mp);
@@ -1582,9 +1678,34 @@ function readController(ctx: RepoContext, c: Decl, prefix: Prefix | null, unreso
             path: prefix && !excluded ? joinPath(prefix.value, bare) : bare,
             controller: c.name,
             handler,
-            source: { file: c.file, line: ctx.line(c.file, member) },
+            source: { file: c.file, line },
           });
         }
+    };
+    for (const d of decoratorsOf(member)) {
+      const method = HTTP_METHODS[d.name];
+      if (!method) {
+        // A project's own decorator wrapping Nest's (applyDecorators(Get(path), ...)).
+        for (const r of customRoutes(ctx, c.file, d.node.expression) ?? []) {
+          if (!r.method) {
+            unresolved.push({ file: c.file, line, reason: `${c.name}.${handler}: @${d.name} mounts a route through ${r.via} whose method is computed at runtime; route not read` });
+            continue;
+          }
+          if (r.paths) {
+            mount(r.method, r.paths);
+            continue;
+          }
+          unresolved.push({ file: c.file, line, reason: `${c.name}.${handler}: @${d.name} mounts ${r.method} through ${r.via} at a path computed at runtime; recorded as ${COMPUTED_PATH}` });
+          routes.push({ method: r.method, path: COMPUTED_PATH, controller: c.name, handler, source: { file: c.file, line } });
+        }
+        continue;
+      }
+      const methodPaths = pathsOf(ctx, c.file, d.args[0]);
+      if (!methodPaths) {
+        unresolved.push({ file: c.file, line, reason: `${c.name}.${handler}: @${d.name} path is computed at runtime; route not read` });
+        continue;
+      }
+      mount(method, methodPaths);
     }
   }
   return routes;

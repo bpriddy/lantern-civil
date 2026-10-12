@@ -9,6 +9,7 @@ import { zProject } from '@civil/schema';
 import type { FileMap, Skeleton } from './skeleton.js';
 import { skeletonToDocuments } from './to-documents.js';
 import { claimsFromSkeleton, reconcile, toSkeleton } from './claims.js';
+import { analysisPaths, analyzeRepository, type AnalysisReport, type AnalyzeAsk } from './analysts.js';
 
 /**
  * "Generate graph from repo" / "Update graph from repo" (docs/lift-repo.md): an
@@ -40,6 +41,8 @@ export interface LiftResult {
   filesRead: number;
   /** Files the reader wanted but left out because the cap was reached; 0 normally. */
   filesDropped: number;
+  /** The agent stage's run, when it was asked: what it said and what was not believed. */
+  analysis?: AnalysisReport & { disbelieved: string[] };
 }
 
 /**
@@ -132,7 +135,16 @@ export function liftFingerprint(skeleton: Skeleton, docs: Record<string, string>
 
 export async function liftRepository(
   source: ProjectSource,
-  opts: { projectName: string; ask?: LiftAsk | undefined },
+  opts: {
+    projectName: string;
+    ask?: LiftAsk | undefined;
+    /**
+     * The runner's POST /lift/analyze: analysts and verifiers (analysts.ts). Opt-in
+     * until their answer is memoised per version of the code — agents word things
+     * differently each run, and an Update over unchanged code must propose nothing.
+     */
+    analyze?: AnalyzeAsk | undefined;
+  },
 ): Promise<LiftResult> {
   // 1. Which files: the reader decides (package.json, app sources, docs), capped so a
   //    large monorepo stays one request's worth of reads. Hitting the cap is said,
@@ -162,8 +174,25 @@ export async function liftRepository(
   //     the reader is the only voice, so this is lossless by construction (a tested
   //     property); analysts and verifiers add their claims here, and what survives —
   //     with how sure Civil is and why — is what the graph draws.
-  const beliefs = reconcile(claimsFromSkeleton(read), files, new Set(listed));
-  const { skeleton: deterministic, provenance } = toSkeleton(beliefs, read);
+  const readerClaims = claimsFromSkeleton(read);
+  // Analysts read any language, so they (and the evidence checks on their claims) get
+  // the other source files too; the reader above saw only what it understands.
+  let seen: FileMap = files;
+  if (opts.analyze) {
+    const extra = analysisPaths(listed, Object.keys(files), LIFT_PATH_CAP);
+    await source.ensure?.(extra);
+    const more: Record<string, string> = {};
+    for (const path of extra) {
+      const content = source.read(path);
+      if (content !== undefined) more[path] = content;
+    }
+    seen = { ...files, ...more };
+  }
+  const analysis = opts.analyze
+    ? await analyzeRepository(opts.analyze, seen, listed, readerClaims, read)
+    : null;
+  const beliefs = reconcile([...readerClaims, ...(analysis?.claims ?? [])], seen, new Set(listed));
+  const { skeleton: deterministic, provenance, dropped: disbelieved } = toSkeleton(beliefs, read);
 
   // 4. The project's current civil/ documents, read through the same source, pending
   //    edits included, so an unreviewed earlier lift is what gets merged with rather
@@ -257,6 +286,9 @@ export async function liftRepository(
     filesListed: listed.length,
     filesRead: Object.keys(files).length,
     filesDropped: dropped,
+    ...(analysis
+      ? { analysis: { ...analysis.report, disbelieved: disbelieved.map((b) => `${b.key} (${[...b.refuters, ...b.issues].join('; ').slice(0, 160)})`) } }
+      : {}),
   };
 }
 

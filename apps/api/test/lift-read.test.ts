@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readRepo, selectLiftPaths, selectLiftPathsReport, LIFT_PATH_CAP } from '../dist/lift/read.js';
-import { cronExpressionName, intervalToCron } from '../dist/lift/nest.js';
+import { cronExpressionName, featureLabel, intervalToCron } from '../dist/lift/nest.js';
 import { skeletonToDocuments } from '../dist/lift/to-documents.js';
 import { parse } from 'yaml';
 
@@ -1019,7 +1019,8 @@ test('declaration registries: controllers in exported arrays are served, define-
   const skeleton = readRepo(loaded(orchard));
   const svc = (id: string) => skeleton.services.find((s) => s.id === id)!;
   const garden = svc('garden');
-  assert.equal(garden.moduleClass, 'GARDEN_ACTIONS');
+  assert.equal(garden.moduleClass, 'GardenFeature', 'labelled by its directory, not its registry array');
+  assert.equal(featureLabel('src/features/seed-bank'), 'SeedBankFeature');
   assert.equal(garden.directory, `${O}/features/garden`);
   assert.deepEqual(garden.controllers, [{ name: 'GardenController', file: `${O}/features/garden/garden.controller.ts` }]);
   assert.deepEqual(garden.files, [
@@ -1065,4 +1066,173 @@ test('a fake model client in test support is not an agent; the same code in prod
   assert.ok(!(skeleton.servers[0]!.sharedFiles ?? []).some((f) => f.includes('testing/') || f.includes('fake')));
   const product = { ...orchard, [`${O}/kit/model-client.ts`]: orchard[`${O}/testing/fakes/model.fake.ts`]! };
   assert.deepEqual(readRepo(product).agents.map((a) => a.id), ['model']);
+});
+
+// --- custom route decorators and agents by convention ---------------------------------
+
+/**
+ * A third synthetic repo, "mill": controllers mount their routes through the
+ * project's own decorators (a wrapper passing its path through, a function returning
+ * applyDecorators with a literal, a decorator const, a factory that returns a decorator,
+ * one reading its path from an endpoint spec object, one whose path cannot be read), and
+ * agents are `<name>.agent.ts` files that call the model through the project's own
+ * model module, not an SDK.
+ */
+const M = 'apps/mill/src';
+const mill: Record<string, string> = {
+  'package.json': json({ name: 'mill', private: true }),
+  'apps/mill/package.json': json({ name: '@mill/api', dependencies: { '@nestjs/core': '11', '@nestjs/common': '11' } }),
+  [`${M}/main.ts`]: [
+    "import { NestFactory } from '@nestjs/core';",
+    "import { MillModule } from './mill.module';",
+    'const app = await NestFactory.create(MillModule);',
+    "app.setGlobalPrefix('api');",
+  ].join('\n'),
+  [`${M}/mill.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { GrainModule } from './grain/grain.module';",
+    "import { SackModule } from './sack/sack.module';",
+    '@Module({ imports: [GrainModule, SackModule] })',
+    'export class MillModule {}',
+  ].join('\n'),
+  [`${M}/kit/routes.ts`]: [
+    "import { applyDecorators, Get, Post, HttpCode, RequestMapping, RequestMethod, UseGuards } from '@nestjs/common';",
+    "import { Gate } from './gate';",
+    '/** Passes its path through. */',
+    'export const ReadRoute = (path: string) => applyDecorators(Get(path), UseGuards(Gate));',
+    '/** A literal path inside a function declaration. */',
+    'export function Grind() {',
+    "  return applyDecorators(Post('grind'), HttpCode(202));",
+    '}',
+    '/** A decorator const. */',
+    "export const Health = applyDecorators(Get('health'));",
+    '/** A factory that returns a decorator; the method is bound when the factory is called. */',
+    'const verb = (method: string) => (path: string) => applyDecorators(RequestMapping({ path, method: RequestMethod[method] }));',
+    "export const Remove = verb('DELETE');",
+    '/** The path is a property of the argument: an endpoint spec object. */',
+    'export const Mount = (spec: { web: { verb: string; at: string } }) => {',
+    '  const web = spec.web;',
+    '  return applyDecorators(RequestMapping({ path: web.at, method: RequestMethod[web.verb] }), HttpCode(200));',
+    '};',
+    '/** A path computed at runtime. */',
+    'export const Dynamic = (seed: string) => applyDecorators(Put(seed.toLowerCase()));',
+    'export const NotARoute = () => applyDecorators(UseGuards(Gate));',
+  ].join('\n').replace('Get, Post,', 'Get, Post, Put,'),
+  [`${M}/kit/gate.ts`]: 'export class Gate { canActivate() { return true; } }',
+  [`${M}/kit/endpoint.ts`]: 'export const defineEndpoint = <T>(c: T): T => c;',
+  [`${M}/kit/index.ts`]: "export * from './routes';",
+  [`${M}/grain/endpoints.ts`]: [
+    "import { defineEndpoint } from '../kit/endpoint';",
+    "export const weighGrain = defineEndpoint({ title: 'grain.weigh', web: { verb: 'PATCH', at: '/grain/weigh' } });",
+  ].join('\n'),
+  [`${M}/grain/grain.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { GrainController } from './grain.controller';",
+    "import { GrainService } from './grain.service';",
+    '@Module({ controllers: [GrainController], providers: [GrainService] })',
+    'export class GrainModule {}',
+  ].join('\n'),
+  [`${M}/grain/grain.controller.ts`]: [
+    "import { Controller, Get } from '@nestjs/common';",
+    "import { Dynamic, Grind, Health, Mount, NotARoute, ReadRoute, Remove } from '../kit';",
+    "import { weighGrain } from './endpoints';",
+    "@Controller('grain')",
+    'export class GrainController {',
+    "  @Get('plain') plain() {}",
+    "  @ReadRoute(':id') one() {}",
+    "  @ReadRoute(['a', 'b']) many() {}",
+    '  @Grind() grind() {}',
+    '  @Health health() {}',
+    "  @Remove(':id') remove() {}",
+    '  @Mount(weighGrain) weigh() {}',
+    "  @Dynamic('X') dyn() {}",
+    '  @NotARoute() guarded() {}',
+    '}',
+  ].join('\n'),
+  [`${M}/grain/grain.service.ts`]: [
+    "import { millerAgent } from './miller.agent';",
+    'export class GrainService { run() { return millerAgent.run(); } }',
+  ].join('\n'),
+  // An agent by convention: the model is reached through the project's own module, not an SDK.
+  [`${M}/grain/miller.agent.ts`]: [
+    "import { oracle } from '../oracle/oracle';",
+    "import { MILLER_PROMPT } from './miller.prompt';",
+    "import { sift } from './miller.tools';",
+    "export const millerAgent = { run: () => oracle.ask(MILLER_PROMPT), tools: [sift, 'weigh'] };",
+  ].join('\n'),
+  [`${M}/grain/miller.prompt.ts`]: "export const MILLER_PROMPT = 'Mill it.';",
+  [`${M}/grain/miller.tools.ts`]: 'export const sift = () => 1;',
+  [`${M}/grain/miller-notes.ts`]: 'export const notes = 1;',
+  [`${M}/oracle/oracle.ts`]: 'export const oracle = { ask: (p: string) => p };',
+  [`${M}/sack/sack.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { SackService } from './sack.service';",
+    '@Module({ providers: [SackService] })',
+    'export class SackModule {}',
+  ].join('\n'),
+  [`${M}/sack/sack.service.ts`]: [
+    "import { Stitcher } from './agents/stitcher';",
+    'export class SackService { s = new Stitcher(); }',
+  ].join('\n'),
+  // Directly in an agents/ directory: <name>.ts is the agent; index.ts and types.ts are not.
+  [`${M}/sack/agents/stitcher.ts`]: [
+    "import { oracle } from '../../oracle/oracle';",
+    "import { STITCH_TOOLS } from './stitcher.tools';",
+    'export class Stitcher { tools = STITCH_TOOLS; run() { return oracle.ask("stitch"); } }',
+  ].join('\n'),
+  [`${M}/sack/agents/stitcher.tools.ts`]: "export const STITCH_TOOLS = [{ name: 'needle' }, { name: 'thread' }];",
+  [`${M}/sack/agents/index.ts`]: "export * from './stitcher';",
+  [`${M}/sack/agents/types.ts`]: 'export interface Stitch { n: number }',
+  // Test support stays out, even when it is named like an agent.
+  [`${M}/testing/decoy.agent.ts`]: 'export const decoy = { run: () => 0 };',
+};
+
+test('custom route decorators: followed to the Nest decorator they wrap, the use-site argument bound', () => {
+  const skeleton = readRepo(mill);
+  const routes = skeleton.servers[0]!.routes.map((r) => `${r.method} ${r.path} ${r.handler}`);
+  assert.deepEqual(routes, [
+    'DELETE /api/grain/:id remove',
+    'GET /api/grain/:id one',
+    'GET /api/grain/a many',
+    'GET /api/grain/b many',
+    'PATCH /api/grain/grain/weigh weigh',
+    'POST /api/grain/grind grind',
+    'GET /api/grain/health health',
+    'GET /api/grain/plain plain',
+    'PUT <computed> dyn',
+  ]);
+  assert.deepEqual(
+    skeleton.unresolved.map((u) => [u.file, u.reason]),
+    [[`${M}/grain/grain.controller.ts`, 'GrainController.dyn: @Dynamic mounts PUT through Put at a path computed at runtime; recorded as <computed>']],
+  );
+  assert.deepEqual(skeleton.servers[0]!.exposes, ['grain']);
+});
+
+test('agents by file convention: <name>.agent.ts and files in agents/, with same-prefix parts and tools', () => {
+  const skeleton = readRepo(mill);
+  assert.deepEqual(skeleton.agents, [
+    {
+      id: 'miller',
+      files: [`${M}/grain/miller.agent.ts`, `${M}/grain/miller.prompt.ts`, `${M}/grain/miller.tools.ts`],
+      tools: [
+        { name: 'miller-tools', file: `${M}/grain/miller.tools.ts` },
+        { name: 'weigh', file: `${M}/grain/miller.agent.ts` },
+      ],
+      source: { file: `${M}/grain/miller.agent.ts` },
+    },
+    {
+      id: 'stitcher',
+      files: [`${M}/sack/agents/stitcher.tools.ts`, `${M}/sack/agents/stitcher.ts`],
+      tools: [
+        { name: 'needle', file: `${M}/sack/agents/stitcher.tools.ts` },
+        { name: 'thread', file: `${M}/sack/agents/stitcher.tools.ts` },
+      ],
+      source: { file: `${M}/sack/agents/stitcher.ts` },
+    },
+  ]);
+  const svc = (id: string) => skeleton.services.find((s) => s.id === id)!;
+  assert.deepEqual(svc('grain').agents, ['miller']);
+  assert.deepEqual(svc('sack').agents, ['stitcher']);
+  assert.ok(svc('grain').files!.includes(`${M}/grain/miller-notes.ts`), 'a hyphenated neighbour is not a part of the agent');
+  assert.ok(!svc('grain').files!.includes(`${M}/grain/miller.agent.ts`), 'the agent owns its files');
 });

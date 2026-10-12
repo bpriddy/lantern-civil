@@ -29,6 +29,7 @@ from execute import execute_bundle  # noqa: E402
 from patterns import analyze  # noqa: E402
 from lift import LiftError, lift_graph  # noqa: E402
 from refine import KINDS as REFINE_KINDS, RefineValidationError, refine  # noqa: E402
+from analyze import analyze as analyze_codebase  # noqa: E402
 from transpile import PROMPT_VERSION, TranspileValidationError, transpile  # noqa: E402
 
 
@@ -72,6 +73,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/lift/refine":
             self._lift_refine()
+            return
+        if self.path == "/lift/analyze":
+            self._lift_analyze()
             return
         # Drain the request body before replying: a POST with a body to an unknown
         # route otherwise leaves unread bytes in the socket, and closing the
@@ -232,6 +236,39 @@ class Handler(BaseHTTPRequestHandler):
             self._json(502, {"error": str(error)})
             return
         self._json(200, result)
+
+    def _lift_analyze(self) -> None:
+        # The repo lift's agent stage (analyze.py): analysts and verifiers propose
+        # claims over the files the API sent. Like refine, any non-200 means "the
+        # reader's claims stand alone" to the API — the lift never depends on it.
+        body = self._body()
+        if body is None:
+            return
+        files, index, claims, areas = (body.get(k) for k in ("files", "index", "claims", "areas"))
+        if not _string_map(files) or not files:
+            self._json(400, {"error": '"files" must map repo paths to file contents'})
+            return
+        if index is not None and not (isinstance(index, list) and all(isinstance(p, str) for p in index)):
+            self._json(400, {"error": '"index" must be a list of repo paths'})
+            return
+        if claims is not None and not (isinstance(claims, list) and all(isinstance(c, dict) for c in claims)):
+            self._json(400, {"error": '"claims" must be a list of claim objects'})
+            return
+        if not (
+            isinstance(areas, list) and areas
+            and all(isinstance(a, dict) and isinstance(a.get("id"), str)
+                    and isinstance(a.get("prefixes"), list) for a in areas)
+        ):
+            self._json(400, {"error": '"areas" must be a non-empty list of {id, prefixes}'})
+            return
+
+        client = self._model_client()
+        if client is None:
+            return
+        try:
+            self._json(200, analyze_codebase(body, client, DEFAULT_MODEL))
+        except Exception as error:  # noqa: BLE001 — the model is the failure domain here
+            self._json(502, {"error": str(error)})
 
     def _body(self) -> dict | None:
         """The parsed JSON object, or None with the 400 already sent."""

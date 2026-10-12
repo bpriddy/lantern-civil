@@ -172,10 +172,34 @@ drawn.
   trustworthy on its own, uncertain parts are shown as uncertain, and the author
   corrects by editing the graph, which Update respects.
 
-Built so far: the claims model, mechanical evidence checks, weighing, assembly, and
-provenance in the registry. Next: area and docs analysts proposing claims, verifiers
-trying to refute them, a completeness critic — run as a background job with
-progress — and the inspector showing provenance.
+### The agent stage (analysts and verifiers)
+
+`lift/analysts.ts` splits the repository into areas by directory (a directory over
+80 source files is split by its subdirectories, small siblings share an analyst, at
+most 12 areas, infrastructure files are an area of their own). The runner
+(`runner/analyze.py`, POST /lift/analyze) gives each area to an **analyst** with
+read-only tools over the files the API sent (list, read with line numbers, search) and
+a bounded budget, ending in one forced `submit_claims`. Each analyst's claims then go to
+a **verifier** that is shown the claims but not their evidence and must check each
+against the code itself: support or refute. Analysts read any language, so when the
+agent stage runs, the lift also loads the source files the reader does not understand.
+
+Nothing the runner returns is trusted: claims are re-validated on the API side (a voice
+may not speak as the reader, evidence must name listed files), and a new entity's
+skeleton fields are filled only from its own claim — a process with no stated schedule
+says "@unknown" rather than a guessed cron. Any failure leaves exactly the reader's lift.
+
+**Opt-in for now** (the CLI's `--analyze`): agents word things differently each run, and
+an Update over unchanged code must propose nothing, so the agent stage reaches the
+button only once its answer is memoised per version of the code — with the background
+job and the inspector's provenance view (stage 3).
+
+First live run, on Civil's own repository (which the reader cannot read at all): 6
+areas, 136 claims, 5 disbelieved by verifiers; the API, runner and session service,
+their services, all six agents, and both kinds of background work were found. Lessons,
+next: merge entities that two voices name differently but anchor in the same code;
+keep example and sample apps out of the product's graph; ask explicitly for the calls
+between deployables.
 
 ## Reading composition that is built, not written
 
@@ -193,6 +217,27 @@ Added 2026-10-10, general rules recognised by code shape (never a project's name
   `@Module` names them; a directory of such declarations no module owns becomes a
   service; declarations attach to their service as `operations` (attributes, never
   nodes — with which are exposed to an agent as tools); scheduled ones are processes.
+- **Custom route decorators.** A controller method's decorator that the repository
+  defines is followed to its definition (imports, consts, a function or a factory that
+  returns one, depth-limited) until it reaches Nest's own `Get`/`Post`/`Put`/`Patch`/
+  `Delete`/`All`/`Options`/`Head` or `RequestMapping`, inside `applyDecorators`, an
+  array, or returned directly. The outer function's parameters are bound to the
+  arguments written at the use site, so a path passed through is the controller's, a
+  literal inside is itself, and a path read from the argument (`spec.web.at`) is
+  read from the object the use site names (a call with one object-literal argument,
+  `defineEndpoint({...})`, is read as that object). A path that cannot be fixed is
+  drawn as `<computed>` and reported.
+- **Agents by file convention.** `<name>.agent.ts` anywhere, or `<name>.ts` directly in
+  an agent/ or agents/ directory (not index, types, prompt, tools and the like), that
+  exports a class, function or object is the agent `<name>` — whatever it calls the
+  model through, an SDK or the project's own gateway. It owns its same-prefix parts
+  (`<name>.prompt.ts`, `<name>.output.ts`, `<name>.tools.ts`); its tools are what a
+  `tools` property or exported `…tools` array lists (code, names, or `{ name }`
+  objects, through a const holding the list). Services that import its files use it,
+  as with every agent. The SDK rule (import a model SDK and generate) still applies to
+  everything else.
+- **Feature labels.** A service found through a declaration registry is labelled by its
+  directory: `orders` → `OrdersFeature`, never its registry array's name.
 - **Test support is not product code.** testing, test-support, fixtures, `__mocks__`,
   mocks and fakes directories, and fake/mock/stub/integration/live/e2e files, are left
   out of path selection and of agent, service, and process detection.
@@ -285,14 +330,11 @@ it is not a server path and is not part of the product.
 
 ## Known gaps
 
-- **Custom route decorators.** A controller whose methods use a project-defined
-  decorator that wraps `@Get`/`@Post` (via `applyDecorators`) has its routes unread.
-- **Agents by convention only.** An agent defined in a `<name>.agent.ts` file outside
-  an agents/ directory, calling a model through an in-house gateway rather than an SDK,
-  is not recognised.
-- **Feature labels.** A service found through a declaration registry is labelled by its
-  exported array or first declaration, not its directory; one nothing mounts is
-  attached to the first root even when there are several.
+- **Unmounted features with several roots.** A service found through a declaration
+  registry that nothing mounts is attached to the first root even when there are several.
+- **Custom route decorators that compute their method** (`RequestMapping({ method })`
+  from a value the source does not fix) are reported, not drawn; one that computes its
+  path is drawn at `<computed>` and reported.
 
 - **Schedules outside Terraform** (a gcloud YAML, a Kubernetes CronJob) are not
   read; the internal routes they call still show on the internal boundary.
