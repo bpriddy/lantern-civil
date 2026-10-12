@@ -125,6 +125,8 @@ export function liftRegistry(
             entry['confidence'] = believed.confidence;
             const cited = believed.evidence.slice(0, EVIDENCE_SHOWN).map((ev) => (ev.line ? `${ev.file}:${ev.line}` : ev.file));
             if (cited.length > 0) entry['evidence'] = cited;
+            // Who said so: the reader, analysts, verifiers — sorted, so the bytes are stable.
+            entry['voices'] = [...believed.supporters].sort(byString);
           }
           const files = filesOf.get(unit.id) ?? [];
           if (files.length > 0) entry['files'] = entries(files);

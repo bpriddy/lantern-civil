@@ -40,6 +40,10 @@ resource "google_cloud_run_v2_service" "civil" {
 
   template {
     service_account = google_service_account.api.email
+    # Generate graph from repo runs inside one request: reading the repository, then
+    # analysts and verifiers area by area — minutes on a first read of a large repo
+    # (later Updates reuse unchanged areas and are quick). The default 300s cut that off.
+    timeout = "900s"
 
     scaling {
       min_instance_count = var.min_instances

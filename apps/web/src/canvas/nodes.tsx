@@ -39,6 +39,12 @@ export interface NodeData extends Record<string, unknown> {
   diagnostics: Diagnostic[];
   detail: string | undefined;
   manifest: CompositionNode | GraphNode;
+  /**
+   * A lifted node's weighed confidence (docs/lift-repo.md, "Claims"). Low is drawn
+   * as uncertain — a dashed edge and a "?" — so the unsure parts of a read read as
+   * unsure; high and medium stay quiet.
+   */
+  confidence?: 'high' | 'medium' | 'low';
 }
 
 function Face({
@@ -64,6 +70,7 @@ function Face({
         fatal ? 'node-error' : '',
         blocked ? 'node-blocked' : '',
         descent ? `node-descends node-descends-${descent.into}` : '',
+        data.confidence === 'low' ? 'node-uncertain' : '',
       ].filter(Boolean).join(' ')}
       title={data.diagnostics.map((d) => d.message).join('\n') || undefined}
     >
@@ -71,6 +78,11 @@ function Face({
       <div className="node-head">
         <span className="node-glyph">{glyph}</span>
         <span className="node-kind">{kind}</span>
+        {data.confidence === 'low' ? (
+          <span className="node-uncertain-mark" title="Low confidence — contested or the evidence was shaky. The inspector says why.">
+            ?
+          </span>
+        ) : null}
         {descent ? (
           <span
             className="node-descend"

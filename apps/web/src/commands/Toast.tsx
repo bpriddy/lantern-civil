@@ -26,12 +26,42 @@ export interface Effect {
    * most of a minute, and a toast gone in a second says nothing.
    */
   sticky?: boolean;
+  /**
+   * Names work still going on after the command returned. While the shell reports
+   * progress under the same name, the toast shows it in place of `detail` — updated
+   * without re-showing a toast the author already dismissed.
+   */
+  live?: string;
+}
+
+/** Progress of live work, in words, with how far through when that is known. */
+export interface LiveProgress {
+  key: string;
+  text: string;
+  /** The server's own line on what it is doing right now. */
+  detail?: string;
+  fraction: number | null;
+}
+
+/** A slim bar for work whose extent is known. */
+export function ProgressBar({ fraction }: { fraction: number }) {
+  return (
+    <div className="progress-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(fraction * 100)}>
+      <div className="progress-bar-fill" style={{ width: `${Math.round(fraction * 100)}%` }} />
+    </div>
+  );
 }
 
 const VISIBLE_MS = 900;
 const FADE_MS = 260;
 
-export function Toast({ effect }: { effect: (Effect & { seq: number }) | undefined }) {
+export function Toast({
+  effect,
+  progress,
+}: {
+  effect: (Effect & { seq: number }) | undefined;
+  progress?: LiveProgress | undefined;
+}) {
   const [leaving, setLeaving] = useState(false);
   const [shown, setShown] = useState<(Effect & { seq: number }) | undefined>(undefined);
 
@@ -53,6 +83,7 @@ export function Toast({ effect }: { effect: (Effect & { seq: number }) | undefin
   }, [effect?.seq]);
 
   if (!shown) return null;
+  const live = shown.live && progress?.key === shown.live ? progress : undefined;
 
   return (
     <div
@@ -61,7 +92,15 @@ export function Toast({ effect }: { effect: (Effect & { seq: number }) | undefin
     >
       {shown.chord ? <div className="toast-chord">{shown.chord}</div> : null}
       <div className="toast-title">{shown.title}</div>
-      {shown.detail ? <div className="toast-detail">{shown.detail}</div> : null}
+      {live ? (
+        <div className="toast-detail">
+          <div>{live.text}</div>
+          {live.detail && live.detail !== live.text ? <div className="toast-live-detail">{live.detail}</div> : null}
+          {live.fraction !== null ? <ProgressBar fraction={live.fraction} /> : null}
+        </div>
+      ) : shown.detail ? (
+        <div className="toast-detail">{shown.detail}</div>
+      ) : null}
       {shown.sticky ? (
         <button type="button" className="toast-dismiss" onClick={() => setShown(undefined)} aria-label="Dismiss">
           Dismiss

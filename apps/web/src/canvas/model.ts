@@ -1,6 +1,6 @@
 import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { Composition, Diagnostic, Graph } from '@civil/schema';
-import { isContract, type AgentEntry, type ContractResult } from '../project.js';
+import { isContract, type AgentEntry, type ContractResult, type LiftUnit } from '../project.js';
 import type { Descent, NodeData } from './nodes.js';
 
 /**
@@ -31,7 +31,7 @@ export interface FlowContext {
    * Composition nodes a lift wrote, by id: the repository files each stands for
    * (civil/registry.yaml, role repo). Optional: only a lifted project has them.
    */
-  repoUnits?: Record<string, { files: string[]; description?: string }>;
+  repoUnits?: Record<string, LiftUnit>;
 }
 
 /** Contracts are keyed by the manifest they were found from plus the node id. */
@@ -144,6 +144,10 @@ export function compositionToFlow(
         ...contractFor(context, file, node.id),
         diagnostics: attach(diagnostics, file, node.id),
         manifest: node,
+        // How sure the lift was that this is here; the face marks only the unsure.
+        ...(context.repoUnits?.[node.id]?.confidence
+          ? { confidence: context.repoUnits[node.id]!.confidence }
+          : {}),
       },
     };
   });

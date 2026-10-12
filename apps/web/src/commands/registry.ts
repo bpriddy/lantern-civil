@@ -71,8 +71,16 @@ export interface CommandContext {
  * which is worth a toast, because a keystroke that silently does nothing reads as a
  * bug. Null means it acted and the effect speaks for itself on screen — deleting the
  * selected node is watched happening, so no toast repeats it.
+ *
+ * The object form is for a command that keeps working after it returns: its toast
+ * stays (`sticky`) and follows the work's progress, named by `live`, in place —
+ * reading a repository takes minutes, and a toast gone in a second says nothing.
  */
-export type CommandOutcome = string | null | undefined;
+export type CommandOutcome =
+  | string
+  | { detail: string; sticky?: boolean; live?: string }
+  | null
+  | undefined;
 
 export interface Command {
   id: CommandId;

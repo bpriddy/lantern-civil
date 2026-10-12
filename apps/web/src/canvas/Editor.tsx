@@ -37,7 +37,15 @@ export type Altitude =
   // not another canvas, which is why it carries files rather than a manifest path.
   // `active` is which of them is in front — opening another file from the tree adds
   // to the set rather than replacing it, the way tabs behave everywhere else.
-  | { kind: 'code'; label: string; files: string[]; active?: string };
+  // `reveal` is a line to bring into view once, when that file is open (evidence
+  // cited as "path:line"); `seq` lets the same line be asked for twice.
+  | {
+      kind: 'code';
+      label: string;
+      files: string[];
+      active?: string;
+      reveal?: { path: string; line: number; seq: number };
+    };
 
 /** Descent time from PRD 7. Long enough to read as motion, short enough not to wait. */
 const DESCENT_MS = 250;

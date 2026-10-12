@@ -192,10 +192,25 @@ may not speak as the reader, evidence must name listed files), and a new entity'
 skeleton fields are filled only from its own claim — a process with no stated schedule
 says "@unknown" rather than a guessed cron. Any failure leaves exactly the reader's lift.
 
-**Opt-in for now** (the CLI's `--analyze`): agents word things differently each run, and
-an Update over unchanged code must propose nothing, so the agent stage reaches the
-button only once its answer is memoised per version of the code — with the background
-job and the inspector's provenance view (stage 3).
+**Behind the button** (stage 3, 2026-10-11). When a runner is configured, Generate /
+Update graph from repo runs the agent stage:
+
+- **One area per runner call**, a few at a time, so progress is real: the lift reports
+  its stage (listing, reading, analysing *n of m areas*, refining, writing) to
+  `lift_runs` (migration 9) under an id the client chose, and the canvas polls
+  `GET /api/projects/:id/lift-runs/:runId` while the request is open. A failed area is
+  reported and the others still count.
+- **A memo per area** (`lift_area_memos`): an area's claims are kept under a fingerprint
+  of its files, the reader's claims about it, the runner's analyze prompt version and
+  model. An Update re-asks only areas whose code changed, so an unchanged repository
+  proposes nothing (tested byte-for-byte) and a small change rewords only its area. A
+  runner that cannot say its version gets nothing reused.
+- **Provenance on the graph**: each unit's confidence, cited places, and voices (reader,
+  analysts, verifiers) are in the registry and reach the inspector through liftStatus.
+- **Time**: a first read of a large repository takes minutes; the API's request timeout
+  is 900s (infra/terraform/run.tf). Later Updates reuse unchanged areas.
+
+The CLI keeps `--analyze` for evaluation without the app.
 
 First live run, on Civil's own repository (which the reader cannot read at all): 6
 areas, 136 claims, 5 disbelieved by verifiers; the API, runner and session service,

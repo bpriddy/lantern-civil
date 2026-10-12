@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { BranchList, Conflict, GitCheck, GitInfo, PendingChange } from '../project.js';
+import { ProgressBar, type LiveProgress } from '../commands/Toast.js';
 
 /**
  * The git flow, in one place and always on screen (owner's rule, 2026-10-01: no
@@ -60,6 +61,7 @@ export function SourceControl({
   onApply,
   onLiftRepo,
   lifting,
+  liftProgress,
   liftTitle,
   liftRefusal = null,
   lifted = false,
@@ -100,6 +102,8 @@ export function SourceControl({
   onLiftRepo: () => void;
   /** A read of the repo is in flight — it can take a while with the model pass. */
   lifting: boolean;
+  /** The running lift's progress in words, and how far through when known. */
+  liftProgress?: LiveProgress | undefined;
   /** "Generate graph from repo" or "Update graph from repo", from the command. */
   liftTitle: string;
   /** Why reading the repo is not offered on this project, in words; null when it is. */
@@ -412,7 +416,7 @@ export function SourceControl({
             <span className={`dot ${lifting ? 'warn pulse' : lifted ? 'ok' : ''}`} />
             <span className="scm-grow scm-nowrap">
               {lifting
-                ? 'Reading the repository — this can take a minute…'
+                ? 'Reading the repository…'
                 : lifted
                   ? 'Graph read from the repo'
                   : 'Not read from the repo yet'}
@@ -429,6 +433,15 @@ export function SourceControl({
             ) : null}
           </div>
         )}
+        {lifting && liftProgress ? (
+          <div className="scm-lift-progress" title={liftProgress.detail}>
+            <div>{liftProgress.text}</div>
+            {liftProgress.detail && liftProgress.detail !== liftProgress.text ? (
+              <div className="muted scm-lift-detail">{liftProgress.detail}</div>
+            ) : null}
+            {liftProgress.fraction !== null ? <ProgressBar fraction={liftProgress.fraction} /> : null}
+          </div>
+        ) : null}
         {lastLift && !lifting ? (
           <div className="scm-lift-result">
             <div>{lastLift}</div>

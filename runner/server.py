@@ -29,7 +29,7 @@ from execute import execute_bundle  # noqa: E402
 from patterns import analyze  # noqa: E402
 from lift import LiftError, lift_graph  # noqa: E402
 from refine import KINDS as REFINE_KINDS, RefineValidationError, refine  # noqa: E402
-from analyze import analyze as analyze_codebase  # noqa: E402
+from analyze import PROMPT_VERSION as ANALYZE_PROMPT_VERSION, analyze as analyze_codebase  # noqa: E402
 from transpile import PROMPT_VERSION, TranspileValidationError, transpile  # noqa: E402
 
 
@@ -53,7 +53,12 @@ class Handler(BaseHTTPRequestHandler):
             # The API folds both values into its transpile memo hash, so a
             # model upgrade or a prompt edit busts the cache instead of
             # serving stale emissions. Same resolved model id POST uses.
-            self._json(200, {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION})
+            # analyzeVersion keys the repo lift's per-area memo the same way.
+            self._json(200, {
+                "model": DEFAULT_MODEL,
+                "promptVersion": PROMPT_VERSION,
+                "analyzeVersion": ANALYZE_PROMPT_VERSION,
+            })
             return
         self.send_response(404)
         self.end_headers()

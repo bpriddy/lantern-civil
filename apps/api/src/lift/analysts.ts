@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { isSampleCode, isTestSupport } from './read.js';
 import { claimKey, isEntity, READER, type Claim, type Evidence } from './claims.js';
 import type { FileMap, Skeleton } from './skeleton.js';
@@ -139,6 +140,9 @@ export function buildAreas(listed: readonly string[]): Area[] {
   });
 }
 
+/** Civil's own documents: what a lift writes, never what it reads as the product. */
+export const isCivilDocument = (path: string): boolean => path.startsWith('civil/') || path === 'civil.yaml';
+
 /**
  * Files analysts read beyond what the reader loaded: the reader reads only the
  * frameworks it knows (TypeScript today), but an analyst reads any language, so every
@@ -148,7 +152,7 @@ export function buildAreas(listed: readonly string[]): Area[] {
 export function analysisPaths(listed: readonly string[], selected: readonly string[], cap: number): string[] {
   const have = new Set(selected);
   return listed
-    .filter((p) => !have.has(p) && (SOURCE.test(p) || INFRA.test(p)) && !SKIP.test(p) && !isTestSupport(p) && !isSampleCode(p))
+    .filter((p) => !have.has(p) && (SOURCE.test(p) || INFRA.test(p)) && !SKIP.test(p) && !isTestSupport(p) && !isSampleCode(p) && !isCivilDocument(p))
     .sort()
     .slice(0, Math.max(0, cap - selected.length));
 }
@@ -364,6 +368,8 @@ export interface AnalysisReport {
   verifierClaims: number;
   issues: string[];
   note: string | null;
+  /** Areas whose answer was reused from the memo rather than asked again. */
+  cachedAreas?: number;
   /** Names a voice used for something already named: proposed → canonical. */
   aliases?: Record<string, string>;
 }
@@ -373,45 +379,146 @@ export interface AnalysisReport {
  * claims, validated and normalised, ready to be weighed with the reader's. Any failure
  * returns no claims and a note — the lift continues on the reader's word alone.
  */
+/**
+ * A cache of what the agents said about one area, keyed by the area's fingerprint. A
+ * memo in the CLAUDE.md sense — reconstructible by asking again — kept so agents never
+ * reword what has not changed: an Update over unchanged code proposes nothing.
+ */
+export interface AreaMemo {
+  get(fingerprint: string): Promise<Claim[] | undefined>;
+  put(fingerprint: string, areaId: string, claims: readonly Claim[]): Promise<void>;
+  /** The area's most recent answer under any fingerprint — the fallback when asking fails. */
+  latest(areaId: string): Promise<Claim[] | undefined>;
+}
+
+export interface AnalyzeOptions {
+  memo?: AreaMemo;
+  /**
+   * What makes an answer stale besides the code: the runner's analyze prompt version
+   * and model. Unknown means "do not trust the memo" — nothing is reused.
+   */
+  version?: string;
+  /** Called as each area finishes, analysed or reused. */
+  progress?: (done: number, total: number) => void;
+  /** Areas analysed at once; each is one runner call. */
+  concurrency?: number;
+}
+
+/**
+ * The fingerprint of an area: its paths, its files' content, the reader's claims that
+ * touch it (what the analyst is shown), and the version. Any change to these is a
+ * reason to ask again; nothing else is. An analyst may follow an import outside its
+ * area, so a change there can leave a memo slightly stale — the next change inside the
+ * area refreshes it; asking every area on every Update would reword everything instead.
+ */
+export function areaFingerprint(area: Area, files: FileMap, readerClaims: readonly Claim[], version: string): string {
+  const hash = createHash('sha256').update(version).update('\0');
+  const inside = (p: string) => area.prefixes.some((x) => p.startsWith(x));
+  for (const prefix of [...area.prefixes].sort()) hash.update(prefix).update('\0');
+  for (const path of Object.keys(files).filter(inside).sort()) hash.update(path).update('\0').update(files[path]!).update('\0');
+  const touching = readerClaims.filter((c) => c.evidence.some((ev) => inside(ev.file)));
+  hash.update(JSON.stringify(touching));
+  return `sha256:${hash.digest('hex')}`;
+}
+
+/**
+ * Asks the runner's analysts and verifiers about the repository, one area per call,
+ * reusing what an unchanged area was told before. Returns their claims, validated,
+ * resolved and normalised, ready to be weighed with the reader's. A failed area is
+ * reported and the rest still count; with no runner, nothing is asked and the lift
+ * continues on the reader's word alone.
+ */
 export async function analyzeRepository(
   ask: AnalyzeAsk | undefined,
   files: FileMap,
   listed: readonly string[],
   readerClaims: readonly Claim[],
   reader: Skeleton,
+  opts: AnalyzeOptions = {},
 ): Promise<{ claims: Claim[]; report: AnalysisReport }> {
   const empty = (note: string): { claims: Claim[]; report: AnalysisReport } => ({
     claims: [],
     report: { areas: 0, claims: 0, analystClaims: 0, verifierClaims: 0, issues: [], note },
   });
   if (!ask) return empty('Agent analysis was skipped: no runner is configured.');
-  // Sample code is another project: analysts neither read it nor may cite it.
-  const product = listed.filter((p) => !isSampleCode(p));
+  // Sample code is another project, and civil/ is Civil's own description of this
+  // one — the lift's output, not its input: analysts neither read nor cite either.
+  // (Reading civil/ made each Update's documents a reason to re-ask the next.)
+  const product = listed.filter((p) => !isSampleCode(p) && !isCivilDocument(p));
+  const productSet = new Set(product);
   const areas = buildAreas(product);
   if (areas.length === 0) return empty('Agent analysis was skipped: no source files to read.');
-  let answer: Record<string, unknown>;
-  try {
-    answer = await ask({
-      files: Object.fromEntries(Object.entries(files).filter(([p]) => !isSampleCode(p))),
-      index: product,
-      claims: readerClaims,
-      areas,
-    });
-  } catch (error) {
-    return empty(`Agent analysis failed (${(error as Error).message}); the reader's findings stand alone.`);
-  }
-  const { claims, issues } = validateAnswer(answer, new Set(product));
-  const { claims: resolved, aliases } = resolveEntities(claims, reader);
+  const sent = Object.fromEntries(Object.entries(files).filter(([p]) => !isSampleCode(p) && !isCivilDocument(p)));
+
+  const raw: Claim[] = [];
+  const issues: string[] = [];
+  const failed: string[] = [];
+  const stale: string[] = [];
+  let cached = 0;
+  let done = 0;
+  opts.progress?.(0, areas.length);
+
+  const one = async (area: Area): Promise<void> => {
+    const fingerprint = opts.version ? areaFingerprint(area, sent, readerClaims, opts.version) : undefined;
+    const remembered = fingerprint ? await opts.memo?.get(fingerprint) : undefined;
+    if (remembered) {
+      cached += 1;
+      raw.push(...remembered);
+    } else {
+      try {
+        const answer = await ask({ files: sent, index: product, claims: readerClaims, areas: [area] });
+        const valid = validateAnswer(answer, productSet);
+        raw.push(...valid.claims);
+        issues.push(...valid.issues);
+        if (fingerprint) await opts.memo?.put(fingerprint, area.id, valid.claims);
+      } catch (error) {
+        // A failed call does not undo what this area was last found to be: its last
+        // answer stands (said in the note), as the model pass falls back to its record.
+        const last = await opts.memo?.latest(area.id);
+        if (last) {
+          raw.push(...last);
+          stale.push(`${area.id} (${(error as Error).message.slice(0, 160)})`);
+        } else failed.push(`${area.id} (${(error as Error).message.slice(0, 160)})`);
+      }
+    }
+    done += 1;
+    opts.progress?.(done, areas.length);
+  };
+  // A small pool: each area is one runner call holding the model for a minute or two.
+  const queue = [...areas];
+  const workers = Array.from({ length: Math.min(opts.concurrency ?? 3, queue.length) }, async () => {
+    for (let area = queue.shift(); area; area = queue.shift()) await one(area);
+  });
+  await Promise.all(workers);
+
+  // Claims arrive in completion order; weigh them in area order so the result does
+  // not depend on which call finished first.
+  const order = new Map(areas.map((a, i) => [a.id, i]));
+  const areaOf = (c: Claim) => order.get(c.by.slice(c.by.indexOf(':') + 1)) ?? areas.length;
+  raw.sort((a, b) => areaOf(a) - areaOf(b));
+
+  const { claims: resolved, aliases } = resolveEntities(raw, reader);
   const normalized = normalizeClaims(resolved, reader);
   return {
     claims: normalized,
     report: {
       areas: areas.length,
+      cachedAreas: cached,
       claims: normalized.length,
       analystClaims: normalized.filter((c) => c.by.startsWith('analyst:')).length,
       verifierClaims: normalized.filter((c) => c.by.startsWith('verifier:')).length,
       issues,
-      note: null,
+      note:
+        [
+          failed.length
+            ? `${failed.length} of ${areas.length} areas could not be analysed: ${failed.slice(0, 3).join('; ')}${failed.length > 3 ? '; ...' : ''}. The rest were.`
+            : '',
+          stale.length
+            ? `${stale.length} area${stale.length === 1 ? '' : 's'} could not be asked again and kept ${stale.length === 1 ? 'its' : 'their'} last answer: ${stale.slice(0, 3).join('; ')}${stale.length > 3 ? '; ...' : ''}.`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' ') || null,
       aliases,
     },
   };

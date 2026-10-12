@@ -129,12 +129,29 @@ export interface ProjectBundle {
   lift?: {
     refusal: { error: string; message: string } | null;
     lifted: boolean;
-    units: Record<string, { files: string[]; description?: string }>;
+    units: Record<string, LiftUnit>;
   };
   /** Files both the author and upstream changed — chosen one by one before committing. */
   conflicts?: Conflict[];
   /** PRD 7.2, keyed `manifestPath:nodeId`. Read from source, never declared. */
   contracts: Record<string, ContractResult>;
+}
+
+/**
+ * One composition node a lift wrote, as civil/registry.yaml records it: the files it
+ * stands for, the model's sentence on it, and — when the agent stage weighed it
+ * (docs/lift-repo.md, "Claims") — how sure Civil is, where in the code that rests,
+ * and which voices support it. The provenance fields are optional: a reader-only
+ * lift, or an older server, has none.
+ */
+export interface LiftUnit {
+  files: string[];
+  description?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  /** Each "path" or "path:line". */
+  evidence?: string[];
+  /** "reader", "analyst:<area>", "verifier:<area>". */
+  voices?: string[];
 }
 
 export async function fetchProjects(signal?: AbortSignal): Promise<ProjectSummary[]> {
@@ -429,19 +446,99 @@ export interface LiftRepoResult {
   /** What the reader could not resolve — reported, never guessed. */
   diagnostics: string[];
   counts: Record<string, number>;
+  /** The agent stage (analysts and verifiers), when it ran. */
+  analysis?: LiftAnalysis;
+}
+
+/** What the analysts and verifiers did (docs/lift-repo.md, "The agent stage"). */
+export interface LiftAnalysis {
+  /** Areas the repository was split into. */
+  areas: number;
+  claims: number;
+  analystClaims: number;
+  verifierClaims: number;
+  /** Problems the API found in what the runner returned. Shape not relied on here. */
+  issues: unknown;
+  /** Why the stage fell short, in words, when it did. */
+  note: string | null;
+  /** Claims a verifier refuted strongly enough that they were not drawn. */
+  disbelieved: string[];
+  /** Areas whose code had not changed since the last read, reused rather than re-read. */
+  cachedAreas?: number;
+}
+
+/** Where a running lift has got to (GET /api/projects/:id/lift-runs/:runId). */
+export interface LiftRunProgress {
+  runId: string;
+  state: 'running' | 'done' | 'failed';
+  stage: 'listing' | 'reading' | 'analysing' | 'refining' | 'writing' | 'done';
+  detail: string;
+  areasTotal: number | null;
+  areasDone: number | null;
+  updatedAt: string;
 }
 
 /**
  * Reads the repository's own code (a NestJS server, a Vite client) and proposes
  * Civil documents for it — or, when the project already has them, updates them while
  * keeping the author's ids, layout, and hand additions. Everything lands as pending
- * changes to review; nothing is committed. Can take a while: a model pass names and
- * describes what the reader found.
+ * changes to review; nothing is committed. Takes minutes when analysts read the
+ * repository area by area: `runId` names the run so its progress can be read
+ * (fetchLiftRun) while this request is pending.
  */
-export async function liftRepo(projectId: string): Promise<LiftRepoResult> {
-  const response = await apiFetch(`/api/projects/${projectId}/lift-repo`, { method: 'POST' });
+export async function liftRepo(projectId: string, runId?: string): Promise<LiftRepoResult> {
+  const response = await apiFetch(`/api/projects/${projectId}/lift-repo`, {
+    method: 'POST',
+    ...(runId
+      ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId }) }
+      : {}),
+  });
   if (!response.ok) throw new Error(await describeFailure(response, 'could not read the repository'));
   return (await response.json()) as LiftRepoResult;
+}
+
+/** A running lift's progress, or null before the server has recorded any (404). */
+export async function fetchLiftRun(
+  projectId: string,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<LiftRunProgress | null> {
+  const response = await apiFetch(
+    `/api/projects/${projectId}/lift-runs/${encodeURIComponent(runId)}`,
+    { signal: signal ?? null },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`lift progress: ${response.status}`);
+  return (await response.json()) as LiftRunProgress;
+}
+
+/**
+ * Follows a lift's progress every `intervalMs` until stopped — the caller stops it
+ * when the lift's POST settles, which is the answer that counts. A failed read is
+ * skipped, not fatal: progress is a courtesy, and the next poll may succeed.
+ */
+export function watchLiftRun(
+  projectId: string,
+  runId: string,
+  onProgress: (progress: LiftRunProgress) => void,
+  intervalMs = 1500,
+): () => void {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const poll = async () => {
+    try {
+      const progress = await fetchLiftRun(projectId, runId, controller.signal);
+      if (progress && !controller.signal.aborted) onProgress(progress);
+    } catch {
+      // Skipped; see above.
+    }
+    if (!controller.signal.aborted) timer = setTimeout(() => void poll(), intervalMs);
+  };
+  timer = setTimeout(() => void poll(), intervalMs);
+  return () => {
+    controller.abort();
+    if (timer !== undefined) clearTimeout(timer);
+  };
 }
 
 export interface TranspileResult {

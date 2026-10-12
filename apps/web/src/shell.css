@@ -1672,3 +1672,72 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
 .repo-description { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--text); }
 .repo-files { list-style: none; margin: 4px 0 0; padding: 0; font-size: 11px; line-height: 1.6; }
 .repo-files code { font-family: var(--mono); color: var(--text-dim); }
+
+/* ---- reading the repository: progress and provenance (docs/lift-repo.md) ---- */
+
+/* A slim bar for a lift whose number of areas is known. */
+.progress-bar {
+  height: 3px;
+  margin-top: 6px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.4s ease;
+}
+.toast-live-detail { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
+.scm-lift-progress { margin: 4px 0 0 16px; font-size: 11px; line-height: 1.45; color: var(--text-dim); }
+.scm-lift-detail { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The inspector's "From the repo": how sure, who says so, and where it rests. */
+.provenance { margin: 6px 0 8px; }
+.provenance p { margin: 0 0 4px; font-size: 12px; line-height: 1.45; }
+.provenance-confidence { display: flex; align-items: baseline; gap: 6px; }
+.confidence-badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.confidence-badge.is-high { color: var(--ok); }
+.confidence-badge.is-medium { color: var(--text-dim); }
+.confidence-badge.is-low { color: var(--warn); border-style: dashed; }
+.provenance-voices { font-size: 11px; }
+.provenance-label { margin-top: 6px; font-size: 11px; }
+.repo-file-link {
+  font: inherit;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  word-break: break-all;
+}
+.repo-file-link:hover code { color: var(--accent); text-decoration: underline; }
+
+/* A lifted node the weighing was unsure of reads as unsure; the sure stay quiet. */
+.node.node-uncertain { border-style: dashed; }
+.node-uncertain-mark {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--warn);
+  border: 1px dashed var(--warn);
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  display: inline-grid;
+  place-items: center;
+  line-height: 1;
+}
+
+/* The line a cited piece of evidence points at, once revealed. */
+.code-revealed-line { background: rgba(90, 169, 255, 0.12); }

@@ -20,7 +20,8 @@ import { ApplyButton } from './panes/ApplyButton.js';
 import { GENERATION_UNSUPPORTED, SourceControl } from './panes/SourceControl.js';
 import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
-import { Toast } from './commands/Toast.js';
+import { Toast, type LiveProgress } from './commands/Toast.js';
+import { liftAnalysisNote, liftProgressFraction, liftProgressText } from './lift.js';
 import { useCommands } from './commands/useCommands.js';
 import { commandById, titleOf, type CommandContext } from './commands/registry.js';
 import { Home } from './panes/Home.js';
@@ -45,6 +46,8 @@ import {
   commitProject,
   initializeProject,
   liftRepo,
+  watchLiftRun,
+  type LiftRunProgress,
   fetchBundle,
   fetchExamples,
   fetchProjects,
@@ -263,6 +266,9 @@ function Workspace({ me }: { me: Me }) {
   // dismissed. Per project: opening another clears it.
   const [lastLift, setLastLift] = useState<{ projectId: string; text: string } | null>(null);
   const liftingRef = useRef(false);
+  // Where the running lift has got to, read from the server while its POST is pending
+  // (null before the first answer). Shown in Source control's lift row and the toast.
+  const [liftProgress, setLiftProgress] = useState<LiftRunProgress | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const reloadProjects = useCallback(async () => {
@@ -424,8 +430,14 @@ function Workspace({ me }: { me: Me }) {
     });
   }, []);
 
-  const openFile = useCallback((path: string) => {
+  /**
+   * `line`, when given, is revealed and highlighted once the file is open — how the
+   * inspector's evidence ("path:line") lands on the line a claim rests on.
+   */
+  const revealSeq = useRef(0);
+  const openFile = useCallback((path: string, line?: number) => {
     clearSelection();
+    const reveal = line ? { reveal: { path, line, seq: ++revealSeq.current } } : {};
     setStack((current) => {
       const label = path.split('/').pop() ?? path;
       const top = current[current.length - 1];
@@ -435,9 +447,9 @@ function Workspace({ me }: { me: Me }) {
       // you came from rather than walking back through files you happened to visit.
       if (top?.kind === 'code') {
         const files = top.files.includes(path) ? top.files : [...top.files, path];
-        return [...current.slice(0, -1), { ...top, label, files, active: path }];
+        return [...current.slice(0, -1), { ...top, label, files, active: path, ...reveal }];
       }
-      return [...current, { kind: 'code' as const, label, files: [path], active: path }];
+      return [...current, { kind: 'code' as const, label, files: [path], active: path, ...reveal }];
     });
   }, [clearSelection]);
 
@@ -659,7 +671,12 @@ function Workspace({ me }: { me: Me }) {
       'project.liftRepo': () => {
         if (!activeId || liftingRef.current) return undefined;
         void doLiftRepo();
-        return 'Reading the repository — proposed documents arrive as pending changes to review.';
+        // Stays, and follows the run's progress (live): reading takes minutes.
+        return {
+          detail: 'Reading the repository — proposed documents arrive as pending changes to review.',
+          sticky: true,
+          live: 'lift',
+        };
       },
       'project.settings': () => {
         setSettingsOpen((v) => !v);
@@ -910,14 +927,21 @@ function Workspace({ me }: { me: Me }) {
     if (!activeId || liftingRef.current) return;
     liftingRef.current = true;
     setLifting(true);
+    setLiftProgress(null);
     const title = liftTitle;
+    // The client names the run so its progress can be read while the POST is pending;
+    // polling stops when the POST settles, which is the answer that counts.
+    const runId = crypto.randomUUID();
+    const stopWatching = watchLiftRun(activeId, runId, setLiftProgress);
     try {
-      const result = await liftRepo(activeId);
+      const result = await liftRepo(activeId, runId);
+      stopWatching();
       await refresh();
       // Back to the top: the composition is what was just written or updated.
       setDiffOpen(false);
       ascendTo(0);
       const extras = [
+        liftAnalysisNote(result.analysis),
         result.note,
         result.diagnostics.length > 0
           ? `${result.diagnostics.length} thing${result.diagnostics.length === 1 ? '' : 's'} could not be resolved — see civil/architecture.md.`
@@ -933,8 +957,10 @@ function Workspace({ me }: { me: Me }) {
     } catch (error) {
       report({ title, detail: (error as Error).message, refused: true, sticky: true });
     } finally {
+      stopWatching();
       liftingRef.current = false;
       setLifting(false);
+      setLiftProgress(null);
     }
   }, [activeId, liftTitle, refresh, report, ascendTo]);
 
@@ -1382,10 +1408,20 @@ function Workspace({ me }: { me: Me }) {
   );
 
 
+  // The running lift's progress, for the toast that follows it (Effect.live).
+  const liveProgress: LiveProgress | undefined = lifting
+    ? {
+        key: 'lift',
+        text: liftProgressText(liftProgress),
+        ...(liftProgress?.detail ? { detail: liftProgress.detail } : {}),
+        fraction: liftProgressFraction(liftProgress),
+      }
+    : undefined;
+
   if (atHome) {
     return (
       <>
-        <Toast effect={effect} />
+        <Toast effect={effect} progress={liveProgress} />
         {keyHelpOpen ? <KeyHelp context={commandContext} onClose={() => setKeyHelpOpen(false)} /> : null}
         <Home
           me={me}
@@ -1401,7 +1437,7 @@ function Workspace({ me }: { me: Me }) {
 
   return (
     <div className={`shell${previewOpen ? ' with-preview' : ''}`}>
-      <Toast effect={effect} />
+      <Toast effect={effect} progress={liveProgress} />
       {keyHelpOpen ? <KeyHelp context={commandContext} onClose={() => setKeyHelpOpen(false)} /> : null}
       {diffOpen && bundle ? (
         <Suspense fallback={null}>
@@ -1579,6 +1615,7 @@ function Workspace({ me }: { me: Me }) {
             onApply={() => void doApply()}
             onLiftRepo={() => void doLiftRepo()}
             lifting={lifting}
+            liftProgress={liveProgress}
             liftTitle={liftTitle}
             liftRefusal={bundle.lift?.refusal?.message ?? null}
             lifted={bundle.lift?.lifted ?? false}
@@ -1635,6 +1672,7 @@ function Workspace({ me }: { me: Me }) {
               projectId={load.bundle.project.id}
               files={current.files}
               active={current.active}
+              reveal={current.reveal}
               maintained={maintainedSet}
               onActiveChange={reportActiveFile}
               onPendingChanged={(saved) => {
@@ -1764,6 +1802,7 @@ function Workspace({ me }: { me: Me }) {
             }
             // The prompt is a file; saving it rides the same route as a Monaco save,
             // so pending, the diff panel, and a live session's hot reload all follow.
+            onOpenFile={openFile}
             onSavePrompt={async (path, content) => {
               if (!activeId) return false;
               try {

@@ -31,6 +31,8 @@ export interface CodeContextProps {
   onPendingChanged: (savedPath?: string) => void;
   /** Paths Civil transpiles and owns: read-only here — the graph is their source. */
   maintained?: ReadonlySet<string>;
+  /** A line to reveal and highlight once its file is open; each `seq` is acted on once. */
+  reveal?: { path: string; line: number; seq: number } | undefined;
 }
 
 export function CodeContext({
@@ -40,6 +42,7 @@ export function CodeContext({
   onActiveChange,
   onPendingChanged,
   maintained,
+  reveal,
 }: CodeContextProps) {
   const [openPath, setOpenPath] = useState<string | undefined>(active ?? files[0]);
   const [tabs, setTabs] = useState<Map<string, OpenFile>>(new Map());
@@ -153,7 +156,39 @@ export function CodeContext({
     return () => window.removeEventListener('keydown', onKey);
   }, [save]);
 
+  // The mounted editor, for revealing a line. Monaco remounts per file (keyed by
+  // path), so `mounted` names which file the editor currently shows.
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Parameters<OnMount>[1] | null>(null);
+  const [mounted, setMounted] = useState<string | undefined>(undefined);
+  const revealed = useRef<number | undefined>(undefined);
+  const decorations = useRef<{ clear: () => void } | null>(null);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    if (!reveal || !editor || !monaco || revealed.current === reveal.seq) return;
+    if (mounted !== reveal.path || !tabs.has(reveal.path)) return;
+    revealed.current = reveal.seq;
+    const lineCount = editor.getModel()?.getLineCount() ?? reveal.line;
+    const line = Math.min(Math.max(1, reveal.line), lineCount);
+    editor.revealLineInCenter(line);
+    editor.setPosition({ lineNumber: line, column: 1 });
+    decorations.current?.clear();
+    decorations.current = editor.createDecorationsCollection([
+      {
+        range: new monaco.Range(line, 1, line, 1),
+        options: { isWholeLine: true, className: 'code-revealed-line' },
+      },
+    ]);
+    editor.focus();
+  }, [reveal, mounted, tabs]);
+
   const onMount = useCallback<OnMount>((editor, monaco) => {
+    editorRef.current = editor;
+    monacoRef.current = monaco;
+    decorations.current = null;
+    setMounted(state.current.openPath);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       // Cmd+S on a generated file is a no-op — nothing to save that would survive.
       if (!(state.current.openPath && state.current.maintained?.has(state.current.openPath))) {

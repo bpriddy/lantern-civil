@@ -50,11 +50,14 @@ export function useCommands(context: CommandContext, handlers: CommandHandlers) 
     // so no toast. Undefined is "declined", which still deserves one: a keystroke
     // that silently does nothing reads as a bug.
     if (outcome === null) return;
+    const said = typeof outcome === 'object' ? outcome : undefined;
     setEffect({
       seq: seq.current,
       title: titleOf(command, latest.current.context),
-      detail: outcome ?? 'Nothing to do.',
+      detail: typeof outcome === 'string' ? outcome : (said?.detail ?? 'Nothing to do.'),
       refused: outcome === undefined,
+      ...(said?.sticky ? { sticky: true } : {}),
+      ...(said?.live ? { live: said.live } : {}),
       ...(chord ? { chord } : {}),
     });
   }, []);

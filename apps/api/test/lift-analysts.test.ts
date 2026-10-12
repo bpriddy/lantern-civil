@@ -150,7 +150,7 @@ test('the analysts failing leaves exactly the reader\'s lift', async () => {
     },
   });
   assert.deepEqual(failed.files, alone.files);
-  assert.match(failed.analysis!.note!, /failed \(runner answered 502\)/);
+  assert.match(failed.analysis!.note!, /could not be analysed: .*runner answered 502/);
 });
 
 // --- entity resolution and scope ---------------------------------------------------
@@ -226,4 +226,94 @@ test('two agents defined in the same file stay two agents', () => {
     reader as never,
   );
   assert.deepEqual(aliases, { reviewer: 'repo-reviewer' }, 'only a related name in the same code is the same agent');
+});
+
+// --- per-area memo and progress ------------------------------------------------------
+
+const memoStore = () => {
+  const store = new Map<string, unknown[]>();
+  return {
+    store,
+    memo: {
+      get: async (k: string) => store.get(k) as never,
+      put: async (k: string, area: string, v: readonly unknown[]) => {
+        store.set(k, [...v]);
+        store.set(`latest:${area}`, [...v]);
+      },
+      latest: async (area: string) => store.get(`latest:${area}`) as never,
+    },
+  };
+};
+
+test('an unchanged area is not asked again; a changed one is, alone', async () => {
+  const { memo } = memoStore();
+  let calls = 0;
+  const analyze = async (body: unknown) => {
+    calls += 1;
+    const area = (body as { areas: { id: string }[] }).areas[0]!;
+    return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
+  };
+  const opts = { projectName: 'Shop', analyze, analyzeOptions: { memo, version: 'v1:model' } };
+  const first = await liftRepository(source(REPO) as never, opts);
+  const asked = calls;
+  assert.ok(asked >= 1);
+  assert.equal(first.analysis!.cachedAreas, 0);
+
+  const again = await liftRepository(source(REPO) as never, opts);
+  assert.equal(calls, asked, 'nothing changed: no area is asked again');
+  assert.equal(again.analysis!.cachedAreas, again.analysis!.areas);
+  assert.deepEqual(again.files, first.files, 'and the documents are byte-identical');
+
+  const edited = { ...REPO, [`${S}/llm/gateway.ts`]: 'export const gateway = { complete: (p: string) => p.trim() };\n' };
+  await liftRepository(source(edited) as never, opts);
+  assert.equal(calls, asked + 1, 'one area changed: that one area is asked');
+
+  await liftRepository(source(REPO) as never, { ...opts, analyzeOptions: { memo, version: 'v2:model' } });
+  assert.ok(calls > asked + 1, 'a new prompt version or model asks again');
+});
+
+test('progress is reported stage by stage, with areas counted', async () => {
+  const seen: string[] = [];
+  await liftRepository(source(REPO) as never, {
+    projectName: 'Shop',
+    analyze: async () => ({ claims: [] }),
+    progress: (stage: string, _detail: string, areas?: { done: number; total: number }) =>
+      seen.push(areas ? `${stage} ${areas.done}/${areas.total}` : stage),
+  });
+  assert.equal(seen[0], 'listing');
+  assert.equal(seen[1], 'reading');
+  const analysing = seen.filter((s) => s.startsWith('analysing'));
+  assert.ok(analysing.length >= 2 && analysing[0]!.endsWith(' 0/' + analysing[0]!.split('/')[1]), 'starts at 0 of N');
+  assert.equal(seen[seen.length - 1], 'writing');
+});
+
+test('an area that cannot be asked keeps its last answer, and says so', async () => {
+  const { memo } = memoStore();
+  const answer = async (body: unknown) => {
+    const area = (body as { areas: { id: string }[] }).areas[0]!;
+    return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
+  };
+  const first = await liftRepository(source(REPO) as never, { projectName: 'Shop', analyze: answer, analyzeOptions: { memo, version: 'v1' } });
+  const edited = { ...REPO, [`${S}/llm/gateway.ts`]: 'export const gateway = { complete: (p: string) => p.trim() };\n' };
+  const failing = async () => {
+    throw new Error('runner answered 400 (credit balance is too low)');
+  };
+  const after = await liftRepository(source(edited) as never, { projectName: 'Shop', analyze: failing, analyzeOptions: { memo, version: 'v1' } });
+  assert.deepEqual(after.skeleton.agents.map((a: { id: string }) => a.id), first.skeleton.agents.map((a: { id: string }) => a.id), 'the graph keeps what the area last said');
+  assert.match(after.analysis!.note!, /could not be asked again and kept (its|their) last answer: .*credit balance/);
+});
+
+test('Civil\'s own documents are never analysed as the product', async () => {
+  let sentPaths: string[] = [];
+  let indexed: string[] = [];
+  await liftRepository(source({ ...REPO, 'civil/app.yaml': 'apiVersion: civil/v1\nkind: Composition\nmetadata:\n  id: shop\n  name: Shop\nspec:\n  nodes: []\n  edges: []\n', 'civil/registry.yaml': 'kind: Registry\n' }) as never, {
+    projectName: 'Shop',
+    analyze: async (body: unknown) => {
+      const b = body as { files: Record<string, string>; index: string[] };
+      sentPaths = Object.keys(b.files);
+      indexed = b.index;
+      return { claims: [] };
+    },
+  });
+  assert.ok(!sentPaths.some((p) => p.startsWith('civil/')) && !indexed.some((p) => p.startsWith('civil/')), 'civil/ is the lift\'s output, not its input');
 });

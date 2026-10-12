@@ -9,7 +9,10 @@ import { zProject } from '@civil/schema';
 import type { FileMap, Skeleton } from './skeleton.js';
 import { skeletonToDocuments } from './to-documents.js';
 import { claimsFromSkeleton, reconcile, toSkeleton } from './claims.js';
-import { analysisPaths, analyzeRepository, type AnalysisReport, type AnalyzeAsk } from './analysts.js';
+import { analysisPaths, analyzeRepository, type AnalysisReport, type AnalyzeAsk, type AnalyzeOptions } from './analysts.js';
+
+/** Where a lift is, for progress: in order. */
+export type LiftStage = 'listing' | 'reading' | 'analysing' | 'refining' | 'writing';
 
 /**
  * "Generate graph from repo" / "Update graph from repo" (docs/lift-repo.md): an
@@ -144,17 +147,27 @@ export async function liftRepository(
      * differently each run, and an Update over unchanged code must propose nothing.
      */
     analyze?: AnalyzeAsk | undefined;
+    /** The agent stage's memo, version, and pool (analysts.ts AnalyzeOptions). */
+    analyzeOptions?: Omit<AnalyzeOptions, 'progress'>;
+    /**
+     * Called at each stage, so a caller can show a lift that takes minutes as it goes:
+     * the stage, a sentence on it, and — while analysing — areas done of total.
+     */
+    progress?: (stage: LiftStage, detail: string, areas?: { done: number; total: number }) => void;
   },
 ): Promise<LiftResult> {
+  const report = opts.progress ?? (() => {});
   // 1. Which files: the reader decides (package.json, app sources, docs), capped so a
   //    large monorepo stays one request's worth of reads. Hitting the cap is said,
   //    never silent — a graph missing a service should come with the reason.
+  report('listing', 'Listing the repository.');
   const listed = source.list();
   const { paths: selected, dropped } = selectLiftPathsReport(listed);
 
   // 2. Load them in one hydration round, then read synchronously into a plain map —
   //    the readers never see a source, only text. A file that was listed but did not
   //    come back (too large to fetch, gone mid-read) is counted, not skipped silently.
+  report('reading', `Reading ${selected.length} files.`);
   await source.ensure?.(selected);
   const repo: Record<string, string> = {};
   const unreadable: string[] = [];
@@ -189,7 +202,11 @@ export async function liftRepository(
     seen = { ...files, ...more };
   }
   const analysis = opts.analyze
-    ? await analyzeRepository(opts.analyze, seen, listed, readerClaims, read)
+    ? await analyzeRepository(opts.analyze, seen, listed, readerClaims, read, {
+        ...opts.analyzeOptions,
+        progress: (done, total) =>
+          report('analysing', `Analysts are reading the code: ${done} of ${total} areas done.`, { done, total }),
+      })
     : null;
   const beliefs = reconcile([...readerClaims, ...(analysis?.claims ?? [])], seen, new Set(listed));
   const { skeleton: deterministic, provenance, dropped: disbelieved } = toSkeleton(beliefs, read);
@@ -233,7 +250,7 @@ export async function liftRepository(
   let { skeleton, refinement, note } =
     recorded && previous?.fingerprint === fingerprint
       ? { skeleton: applyRefinement(deterministic, recorded), refinement: recorded, note: null as string | null }
-      : await refineSkeleton(deterministic, docs, opts.ask);
+      : (report('refining', 'Naming and describing what was found.'), await refineSkeleton(deterministic, docs, opts.ask));
   // The model was asked and gave nothing usable, but an earlier lift recorded an answer:
   // keep the names, classes and words the author already reviewed rather than falling
   // back to bare ids — a failed call should not undo a reviewed proposal. It is recorded
@@ -248,6 +265,7 @@ export async function liftRepository(
 
   // 6. Map to civil/ documents, merging with what the project already has (Update):
   //    the author's node ids, layout, and anything added by hand survive.
+  report('writing', 'Writing the documents.');
   const mapped = skeletonToDocuments(skeleton, {
     projectName: opts.projectName,
     existing,
@@ -331,7 +349,17 @@ export interface LiftStatus {
    * implement it and the model's sentence, when there was one. Only lifted units (role
    * repo); the inspector shows these beside the node.
    */
-  units: Record<string, { files: string[]; description?: string }>;
+  units: Record<
+    string,
+    {
+      files: string[];
+      description?: string;
+      /** How sure Civil is (claims.ts), where in the code it rests, and who said so. */
+      confidence?: 'high' | 'medium' | 'low';
+      evidence?: string[];
+      voices?: string[];
+    }
+  >;
 }
 
 /**
@@ -357,7 +385,18 @@ export async function liftStatus(source: ProjectSource): Promise<LiftStatus> {
 
   const units: LiftStatus['units'] = {};
   const registry = parseYaml(existing[REGISTRY_PATH]) as
-    | { units?: Record<string, { description?: unknown; files?: Record<string, { role?: unknown } | null> } | null> }
+    | {
+        units?: Record<
+          string,
+          {
+            description?: unknown;
+            confidence?: unknown;
+            evidence?: unknown;
+            voices?: unknown;
+            files?: Record<string, { role?: unknown } | null>;
+          } | null
+        >;
+      }
     | undefined;
   for (const [unit, entry] of Object.entries(registry?.units ?? {})) {
     if (!unit.startsWith('app/') || !entry) continue;
@@ -369,6 +408,11 @@ export async function liftStatus(source: ProjectSource): Promise<LiftStatus> {
     units[unit.slice('app/'.length)] = {
       files,
       ...(typeof entry.description === 'string' ? { description: entry.description } : {}),
+      ...(entry.confidence === 'high' || entry.confidence === 'medium' || entry.confidence === 'low'
+        ? { confidence: entry.confidence }
+        : {}),
+      ...(Array.isArray(entry.evidence) ? { evidence: entry.evidence.filter((e): e is string => typeof e === 'string') } : {}),
+      ...(Array.isArray(entry.voices) ? { voices: entry.voices.filter((v): v is string => typeof v === 'string') } : {}),
     };
   }
   return {

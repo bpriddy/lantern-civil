@@ -653,7 +653,8 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
         meta = json.loads(response.read())
         ok(response.status == 200, "meta answers 200")
         ok(
-            meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
+            {k: meta[k] for k in ("model", "promptVersion")} == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION}
+            and isinstance(meta.get("analyzeVersion"), str),
             "the memo hash inputs ride the meta seam",
         )
         ok(meta["promptVersion"] == "11", "datastores and calls edges bumped the prompt version")

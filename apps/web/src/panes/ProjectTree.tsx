@@ -68,7 +68,7 @@ export function ProjectTree({
                 </button>
                 <p className="add-civil-note">
                   {lifting
-                    ? 'Reading the NestJS server and Vite client, then naming what it found. This can take a minute.'
+                    ? 'Reading the NestJS server and Vite client, then naming what it found. This can take a few minutes.'
                     : <>Reads a NestJS server and Vite client and proposes <code>civil/</code>{' '}
                       documents — the app, a graph per service, the registry — as pending
                       changes to review. Nothing is committed.</>}

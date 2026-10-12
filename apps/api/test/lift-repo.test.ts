@@ -208,6 +208,10 @@ test('liftStatus tells the canvas what a lifted node stands for', async () => {
   assert.deepEqual(status.units['accounts'], {
     files: [`${S}/accounts/accounts.module.ts`],
     description: 'Holds the accounts entries are posted to.',
+    // What the inspector shows about why Civil believes it.
+    confidence: 'high',
+    evidence: [`${S}/accounts/accounts.module.ts:3`],
+    voices: ['reader'],
   });
   // A Python project is told why, so the command is not offered and then refused.
   const python = await liftStatus(source({ ...REPO, ...PYTHON_PROJECT }) as never);

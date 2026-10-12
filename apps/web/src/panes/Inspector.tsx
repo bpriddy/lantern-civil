@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CompositionEdge, CompositionNode, GraphEdge, GraphNode } from '@civil/schema';
 import type { Altitude } from '../canvas/Editor.js';
-import type { ProjectBundle } from '../project.js';
+import type { LiftUnit, ProjectBundle } from '../project.js';
+import { confidenceSentence, parseEvidence, voicesSentence } from '../lift.js';
 
 /**
  * PRD 5: agents and io nodes are leaves — no descent, everything inspector-editable.
@@ -21,6 +22,7 @@ export function Inspector({
   onRemoveNode,
   onRemoveEdge,
   onSavePrompt,
+  onOpenFile,
 }: {
   bundle: ProjectBundle | undefined;
   altitude: Altitude;
@@ -32,6 +34,8 @@ export function Inspector({
   onRemoveNode: (id: string) => void;
   onRemoveEdge: (id: string) => void;
   onSavePrompt: (path: string, content: string) => Promise<boolean>;
+  /** Opens a repository file in the code view, revealing `line` when given. */
+  onOpenFile?: (path: string, line?: number) => void;
 }) {
   // Detail is for a selection of one; a box-select gets a count and the Delete
   // hint, because bulk-editing fields across nodes is not a thing that means
@@ -55,6 +59,7 @@ export function Inspector({
             onRename={(to) => onRename(node.id, to)}
             onRemove={() => onRemoveNode(node.id)}
             onSavePrompt={onSavePrompt}
+            {...(onOpenFile ? { onOpenFile } : {})}
           />
         ) : edge ? (
           <EdgeDetail
@@ -232,6 +237,79 @@ function commonDir(paths: readonly string[]): string {
   return prefix;
 }
 
+/** The same marks the canvas uses: quiet when sure, a question when not. */
+const CONFIDENCE_GLYPH = { high: '✓', medium: '~', low: '?' } as const;
+
+/** Enough cited places to see why; the registry has them all. */
+const EVIDENCE_SHOWN = 8;
+
+/**
+ * How sure Civil is that this node is there, and why (docs/lift-repo.md, "Claims"):
+ * the weighed confidence in a sentence, the voices that support it, and the places in
+ * the code it rests on — each opens the file at its line. Nothing when the lift
+ * recorded no provenance (a reader-only lift, or an older server).
+ */
+function Provenance({
+  unit,
+  onOpenFile,
+}: {
+  unit: LiftUnit;
+  onOpenFile: ((path: string, line?: number) => void) | undefined;
+}) {
+  const voices = voicesSentence(unit.voices);
+  // Said relative to the directory the unit's files share, like the file list below;
+  // the full path is the title.
+  const dir = commonDir(unit.files);
+  const short = (item: string) => (dir && item.startsWith(dir) ? item.slice(dir.length) : item);
+  const evidence = (unit.evidence ?? [])
+    .map((item) => ({ item, parsed: parseEvidence(item) }))
+    .filter((e): e is { item: string; parsed: { path: string; line?: number } } => e.parsed !== null);
+  if (!unit.confidence && !voices && evidence.length === 0) return null;
+
+  return (
+    <div className="provenance">
+      {unit.confidence ? (
+        <p className="provenance-confidence">
+          <span className={`confidence-badge is-${unit.confidence}`} aria-hidden="true">
+            {CONFIDENCE_GLYPH[unit.confidence]}
+          </span>
+          <span>{confidenceSentence(unit.confidence, unit.voices)}.</span>
+        </p>
+      ) : null}
+      {voices ? (
+        <p className="muted provenance-voices" title={unit.voices?.join(', ')}>
+          Supported by {voices}.
+        </p>
+      ) : null}
+      {evidence.length > 0 ? (
+        <>
+          <div className="provenance-label muted">Where it rests in the code</div>
+          <ul className="repo-files provenance-evidence">
+            {evidence.slice(0, EVIDENCE_SHOWN).map(({ item, parsed }) => (
+              <li key={item} title={parsed.line ? `Open ${parsed.path} at line ${parsed.line}` : `Open ${parsed.path}`}>
+                {onOpenFile ? (
+                  <button
+                    type="button"
+                    className="repo-file-link"
+                    onClick={() => onOpenFile(parsed.path, parsed.line)}
+                  >
+                    <code>{short(item)}</code>
+                  </button>
+                ) : (
+                  <code>{short(item)}</code>
+                )}
+              </li>
+            ))}
+            {evidence.length > EVIDENCE_SHOWN ? (
+              <li className="muted">and {evidence.length - EVIDENCE_SHOWN} more in civil/registry.yaml</li>
+            ) : null}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 function NodeDetail({
   node,
   bundle,
@@ -240,6 +318,7 @@ function NodeDetail({
   onRename,
   onRemove,
   onSavePrompt,
+  onOpenFile,
 }: {
   node: CompositionNode | GraphNode;
   bundle: ProjectBundle | undefined;
@@ -249,6 +328,7 @@ function NodeDetail({
   onRename: (to: string) => void;
   onRemove: () => void;
   onSavePrompt: (path: string, content: string) => Promise<boolean>;
+  onOpenFile?: (path: string, line?: number) => void;
 }) {
   // An optional string field: emptying it removes the key rather than writing "".
   const optional = (key: string) => (v: string) => onPatch({ [key]: v === '' ? null : v });
@@ -419,6 +499,7 @@ function NodeDetail({
         <>
           <h3 className="section">From the repo</h3>
           {fromRepo.description ? <p className="repo-description">{fromRepo.description}</p> : null}
+          <Provenance unit={fromRepo} onOpenFile={onOpenFile} />
           <p className="muted">
             {fromRepo.files.length} file{fromRepo.files.length === 1 ? '' : 's'} implement it (civil/registry.yaml); its
             routes are listed in civil/architecture.md.
@@ -426,7 +507,13 @@ function NodeDetail({
           <ul className="repo-files">
             {fromRepo.files.slice(0, REPO_FILES_SHOWN).map((file) => (
               <li key={file} title={file}>
-                <code>{file.slice(commonDir(fromRepo.files).length)}</code>
+                {onOpenFile ? (
+                  <button type="button" className="repo-file-link" onClick={() => onOpenFile(file)}>
+                    <code>{file.slice(commonDir(fromRepo.files).length)}</code>
+                  </button>
+                ) : (
+                  <code>{file.slice(commonDir(fromRepo.files).length)}</code>
+                )}
               </li>
             ))}
             {fromRepo.files.length > REPO_FILES_SHOWN ? (

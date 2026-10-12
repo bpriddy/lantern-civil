@@ -427,6 +427,26 @@ test('a lifted service opens every file the registry lists, and a graph with no 
   assert.equal(nodes.jobs!.data.descent.summary, '3 nodes · 2 agents');
 });
 
+test("a lifted node carries the lift's confidence to its face; one without stays unmarked", () => {
+  const c = composition([
+    { id: 'kilns', type: 'service', impl: { entrypoint: 'src/kilns.ts' } },
+    { id: 'jobs', type: 'service', impl: { entrypoint: 'src/jobs.ts' } },
+    { id: 'db', type: 'datastore' },
+  ]);
+  const nodes = byId(
+    compositionToFlow(c, 'civil/app.yaml', [], context({
+      repoUnits: {
+        kilns: { files: ['src/kilns.ts'], confidence: 'low', evidence: ['src/kilns.ts:3'], voices: ['analyst:src'] },
+        jobs: { files: ['src/jobs.ts'], confidence: 'high' },
+        db: { files: [] },
+      },
+    })).nodes,
+  );
+  assert.equal(nodes.kilns!.data.confidence, 'low');
+  assert.equal(nodes.jobs!.data.confidence, 'high');
+  assert.equal('confidence' in nodes.db!.data, false);
+});
+
 test('a datastore maps to its own face, naming its engine, with no descent', () => {
   const c = composition(
     [

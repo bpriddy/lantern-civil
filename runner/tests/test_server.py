@@ -125,7 +125,7 @@ def test_transpile_meta_reaches_its_handler() -> None:
     status, body = request("GET", "/transpile/meta")
     ok(status == 200, "GET /transpile/meta answers 200")
     ok(
-        body == {"model": server.DEFAULT_MODEL, "promptVersion": server.PROMPT_VERSION},
+        body == {"model": server.DEFAULT_MODEL, "promptVersion": server.PROMPT_VERSION, "analyzeVersion": server.ANALYZE_PROMPT_VERSION},
         "meta carries the model and prompt version the memo hash folds in",
     )
 
