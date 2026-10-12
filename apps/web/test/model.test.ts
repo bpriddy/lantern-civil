@@ -426,3 +426,46 @@ test('a lifted service opens every file the registry lists, and a graph with no 
   assert.deepEqual(nodes.jobs!.data.descent.ports, []);
   assert.equal(nodes.jobs!.data.descent.summary, '3 nodes · 2 agents');
 });
+
+test('a datastore maps to its own face, naming its engine, with no descent', () => {
+  const c = composition(
+    [
+      { id: 'db', type: 'datastore', engine: 'postgres' },
+      { id: 'cache', type: 'datastore' },
+    ],
+    [],
+    { db: { x: 40, y: 300 } },
+  );
+  const nodes = byId(compositionToFlow(c, 'civil/app.yaml', [], context()).nodes);
+  assert.equal(nodes.db!.type, 'datastore');
+  assert.equal(nodes.db!.data.label, 'db');
+  assert.equal(nodes.db!.data.detail, 'postgres');
+  assert.equal(nodes.db!.data.descent, undefined);
+  assert.deepEqual(nodes.db!.position, { x: 40, y: 300 });
+  assert.equal(nodes.cache!.data.detail, 'engine unspecified');
+});
+
+test('a calls edge is arrowed, long-dashed and named; depends-on into a store stays a dependency', () => {
+  const c = composition(
+    [
+      { id: 'api', type: 'boundary', exposes: [] },
+      { id: 'svc', type: 'service', impl: { entrypoint: 'a.py' } },
+      { id: 'db', type: 'datastore', engine: 'postgres' },
+    ],
+    [
+      { id: 'c1', kind: 'calls', from: { node: 'svc' }, to: { node: 'api' } },
+      { id: 'd1', kind: 'depends-on', from: { node: 'svc' }, to: { node: 'db' } },
+    ],
+  );
+  const edges = byId(compositionToFlow(c, 'civil/app.yaml', [], context()).edges);
+  assert.equal(edges.c1!.className, 'edge-calls');
+  assert.equal(edges.c1!.label, 'calls');
+  assert.deepEqual(edges.c1!.style, { strokeDasharray: '6 4' });
+  assert.equal((edges.c1!.markerEnd as { type: MarkerType }).type, MarkerType.ArrowClosed);
+  assert.equal(edges.c1!.source, 'svc');
+  assert.equal(edges.c1!.target, 'api');
+
+  assert.equal(edges.d1!.className, 'edge-depends');
+  assert.deepEqual(edges.d1!.style, { strokeDasharray: '2 4' });
+  assert.equal(edges.d1!.target, 'db');
+});

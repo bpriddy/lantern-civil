@@ -278,6 +278,9 @@ export function validateComposition(
       return;
     }
 
+    // A datastore names a technology, not a file: nothing to resolve.
+    if (node.type === 'datastore') return;
+
     if (node.type === 'client') {
       // A client is authored code in a directory; the directory must be real.
       if (!files.exists(node.path)) {
@@ -374,7 +377,29 @@ export function validateComposition(
       return;
     }
 
-    if (from.type === 'client' || from.type === 'boundary') {
+    if (edge.kind === 'calls') {
+      // Another deployable is reached through its boundary, by code that runs: a
+      // service or a process. Anything else is routes-to or depends-on.
+      if (from.type !== 'service' && from.type !== 'process') {
+        s.push({
+          jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
+          code: 'edge-kind-bad-source',
+          message: `calls edge "${edge.id}" starts at ${from.type} "${from.id}"; a service or process calls another deployable`,
+          edgeId: edge.id,
+        });
+      }
+      if (to.type !== 'boundary') {
+        s.push({
+          jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
+          code: 'edge-kind-bad-target',
+          message: `calls edge "${edge.id}" ends at ${to.type} "${to.id}"; another deployable is called through its boundary`,
+          edgeId: edge.id,
+        });
+      }
+      return;
+    }
+
+    if (from.type === 'client' || from.type === 'boundary' || from.type === 'datastore') {
       s.push({
         jsonPointer: ptr('spec', 'edges', i, 'from', 'node'),
         code: 'edge-kind-bad-source',
@@ -382,11 +407,11 @@ export function validateComposition(
         edgeId: edge.id,
       });
     }
-    if (to.type !== 'service') {
+    if (to.type !== 'service' && to.type !== 'datastore') {
       s.push({
         jsonPointer: ptr('spec', 'edges', i, 'to', 'node'),
         code: 'edge-kind-bad-target',
-        message: `depends-on edge "${edge.id}" ends at ${to.type} "${to.id}"; only a service can be depended on`,
+        message: `depends-on edge "${edge.id}" ends at ${to.type} "${to.id}"; only a service or a datastore can be depended on`,
         edgeId: edge.id,
       });
     }

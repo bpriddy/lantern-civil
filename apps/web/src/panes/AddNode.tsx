@@ -254,6 +254,42 @@ const COMPOSITION: NodeFamily[] = [
       },
     ],
   },
+  {
+    label: 'Data store',
+    hint: 'Where state lives: a database, a cache, a bucket. Services and processes depend on it.',
+    // No scaffold on any of these: a store has no code, and generation emits nothing
+    // for one yet. The engine is descriptive and editable in the inspector.
+    kinds: [
+      {
+        label: 'Postgres',
+        type: 'datastore',
+        idBase: 'store',
+        hint: 'A relational database.',
+        defaults: () => ({ engine: 'postgres' }),
+      },
+      {
+        label: 'Redis',
+        type: 'datastore',
+        idBase: 'store',
+        hint: 'A cache or key-value store.',
+        defaults: () => ({ engine: 'redis' }),
+      },
+      {
+        label: 'Object storage',
+        type: 'datastore',
+        idBase: 'store',
+        hint: 'A bucket of blobs (gcs, s3).',
+        defaults: () => ({ engine: 'gcs' }),
+      },
+      {
+        label: 'Unspecified',
+        type: 'datastore',
+        idBase: 'store',
+        hint: 'Name the engine later, in the inspector.',
+        defaults: () => ({}),
+      },
+    ],
+  },
 ];
 
 const GRAPH: NodeFamily[] = [

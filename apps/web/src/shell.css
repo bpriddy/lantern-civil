@@ -405,6 +405,29 @@ body {
 .node-mcp .node-glyph { color: #7cc4ff; }
 .node-service .node-glyph { color: var(--ok); }
 .node-process .node-glyph { color: var(--warn); }
+.node-datastore .node-glyph { color: #b4c3d6; }
+
+/* A datastore is drawn as the whiteboard cylinder: elliptical top and bottom edges
+   from the border radius, plus a rim ellipse across the top. */
+.node-datastore {
+  position: relative;
+  border-radius: 50% / 11px;
+  padding-top: 25px;
+  padding-bottom: 12px;
+}
+.node-datastore::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  right: -1px;
+  top: -1px;
+  height: 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.node-datastore.node-error::before { border-color: var(--danger); }
+.node-datastore.node-blocked::before { border-color: var(--warn); }
 
 /* Dataflow altitude accents. */
 .node-input .node-glyph, .node-output .node-glyph { color: #9aa7b8; }
@@ -426,6 +449,11 @@ body {
 .react-flow__edge.edge-capability .react-flow__edge-path { stroke: #c792ea; stroke-width: 1.2; }
 .react-flow__edge.edge-routes .react-flow__edge-path { stroke: var(--text-faint); stroke-width: 1.5; }
 .react-flow__edge.edge-depends .react-flow__edge-path { stroke: var(--warn); stroke-width: 1.2; }
+/* calls: a service reaching another deployable through its boundary — the boundary
+   colour, long-dashed, arrowed, and named. */
+.react-flow__edge.edge-calls .react-flow__edge-path { stroke: #7cc4ff; stroke-width: 1.4; }
+.react-flow__edge.edge-calls .react-flow__edge-text { fill: #7cc4ff; }
+.react-flow__edge.edge-calls .react-flow__edge-textbg { fill: var(--bg); }
 .react-flow__edge-text { fill: var(--text-faint); font-size: 9px; }
 
 /* Selection glows the same accent on an edge as on a node. The extra .react-flow

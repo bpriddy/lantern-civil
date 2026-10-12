@@ -126,6 +126,11 @@ export function compositionToFlow(
         // not reachable, and the picture should say so.
         detail = node.exposes.length > 0 ? `exposes ${node.exposes.join(', ')}` : 'exposes nothing';
         break;
+      case 'datastore':
+        // Where state lives. It has no code (generation emits nothing for a store),
+        // so nothing to enter; the face names the technology, or says it is unnamed.
+        detail = node.engine ?? 'engine unspecified';
+        break;
     }
 
     return {
@@ -144,22 +149,23 @@ export function compositionToFlow(
   });
 
   const edges = composition.spec.edges.map((edge): Edge => {
-    const routes = edge.kind === 'routes-to';
-    return {
-      id: edge.id,
-      source: edge.from.node,
-      target: edge.to.node,
-      // Carrying `kind` explicitly is what lets the canvas draw PRD 4's two relations
-      // differently at all.
-      className: routes ? 'edge-routes' : 'edge-depends',
-      animated: false,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      // Spread rather than an explicit undefined: exactOptionalPropertyTypes treats
-      // "absent" and "present but undefined" as different, and Edge wants absent.
-      // No label: the dashed stroke is the relation, and a label chip per dependency
-      // buries a dense canvas (a lifted backend has dozens) in "depends on".
-      ...(routes ? {} : { style: { strokeDasharray: '2 4' } }),
-    };
+    // Carrying `kind` explicitly is what lets the canvas draw PRD 4's relations
+    // differently at all.
+    const arrow = { type: MarkerType.ArrowClosed, width: 14, height: 14 };
+    const base = { id: edge.id, source: edge.from.node, target: edge.to.node, animated: false, markerEnd: arrow };
+    switch (edge.kind) {
+      case 'routes-to':
+        return { ...base, className: 'edge-routes' };
+      case 'calls':
+        // A line between deployables: rarer than a dependency and a different kind of
+        // claim (a network call through another deployable's boundary), so it is
+        // long-dashed AND named — a reader should not have to know the dash code.
+        return { ...base, className: 'edge-calls', label: 'calls', style: { strokeDasharray: '6 4' } };
+      default:
+        // No label: the dashed stroke is the relation, and a label chip per dependency
+        // buries a dense canvas (a lifted backend has dozens) in "depends on".
+        return { ...base, className: 'edge-depends', style: { strokeDasharray: '2 4' } };
+    }
   });
 
   return { nodes, edges };

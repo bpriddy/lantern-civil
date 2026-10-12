@@ -316,6 +316,19 @@ function NodeDetail({
         />,
       );
       break;
+    case 'datastore':
+      // Descriptive, not a driver choice ("postgres", "redis", "gcs"); emptying it
+      // removes the key.
+      fields.push(
+        <Field
+          key="engine"
+          label="engine"
+          value={node.engine ?? ''}
+          placeholder="postgres, redis, gcs…"
+          onCommit={optional('engine')}
+        />,
+      );
+      break;
     case 'io':
       fields.push(
         <div key="direction" style={{ display: 'contents' }}>

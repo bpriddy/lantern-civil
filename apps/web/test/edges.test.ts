@@ -73,6 +73,47 @@ test('depending on a process is refused too', () => {
   assert.match(refusal!, /trigger, not a caller/);
 });
 
+// --- datastore and calls (2026-10-11) ----------------------------------------
+
+const withStore = [
+  ...composition,
+  node('db', 'datastore', { engine: 'postgres' }),
+  node('cache', 'datastore'),
+];
+
+test('a service or process depending on a datastore is depends-on', () => {
+  assert.deepEqual(proposeCompositionEdge(withStore, { source: 'classify', target: 'db' }), { kind: 'depends-on' });
+  assert.deepEqual(proposeCompositionEdge(withStore, { source: 'nightly', target: 'cache' }), { kind: 'depends-on' });
+});
+
+test('a service or process reaching a boundary calls another deployable', () => {
+  assert.deepEqual(proposeCompositionEdge(withStore, { source: 'classify', target: 'api' }), { kind: 'calls' });
+  assert.deepEqual(proposeCompositionEdge(withStore, { source: 'nightly', target: 'tools' }), { kind: 'calls' });
+});
+
+test('the traffic edges are unchanged by calls', () => {
+  assert.equal(proposeCompositionEdge(withStore, { source: 'api', target: 'classify' }).kind, 'routes-to');
+  assert.equal(proposeCompositionEdge(withStore, { source: 'web', target: 'api' }).kind, 'routes-to');
+});
+
+test('a client or boundary reaching a datastore is refused in words', () => {
+  for (const source of ['web', 'api']) {
+    const { kind, refusal } = proposeCompositionEdge(withStore, { source, target: 'db' });
+    assert.equal(kind, '');
+    assert.match(refusal!, /does not reach a data store; a service or process depends on it/);
+  }
+});
+
+test('a datastore reaches nothing, whatever the target', () => {
+  for (const target of ['classify', 'api', 'cache']) {
+    const { kind, refusal } = proposeCompositionEdge(withStore, { source: 'db', target });
+    assert.equal(kind, '');
+    assert.match(refusal!, /holds state; it depends on nothing and calls nothing/);
+  }
+  // A client or process target keeps its own, more specific refusal.
+  assert.match(proposeCompositionEdge(withStore, { source: 'db', target: 'web' }).refusal!, /nothing routes to it/);
+});
+
 // --- dataflow (PRD 5) ------------------------------------------------------
 
 const graph = [
@@ -191,4 +232,20 @@ test('withdrawing a service drops its invocation override, and the key when it e
   assert.deepEqual(exposesSync(shape(nodes, edges), { removedIds: ['e1', 'e2'] }), [
     { op: 'updateNode', id: 'api', patch: { exposes: [], invocation: null } },
   ]);
+});
+
+test('a calls edge into a boundary never touches its exposes', () => {
+  const nodes = [
+    node('api', 'boundary', { boundary: 'api', exposes: ['classify'] }),
+    node('classify', 'service'),
+    node('billing', 'service'),
+  ];
+  const calls = { kind: 'calls', from: { node: 'billing' }, to: { node: 'api' } };
+  assert.deepEqual(exposesSync(shape(nodes), { added: [calls] }), []);
+  // Removing one is not a withdrawal either.
+  const edges = [
+    { id: 'e1', kind: 'routes-to', from: 'api', to: 'classify' },
+    { id: 'c1', kind: 'calls', from: 'billing', to: 'api' },
+  ];
+  assert.deepEqual(exposesSync(shape(nodes, edges), { removedIds: ['c1'] }), []);
 });

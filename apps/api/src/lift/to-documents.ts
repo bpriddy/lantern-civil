@@ -57,7 +57,7 @@ export const PROJECT_PATH = 'civil/civil.yaml';
 export const ARCHITECTURE_PATH = 'civil/architecture.md';
 
 /** Edge ids are their ends joined by a verb that says the relation. */
-const COMPOSITION_VERBS: Record<string, string> = { 'routes-to': 'to', 'depends-on': 'needs' };
+const COMPOSITION_VERBS: Record<string, string> = { 'routes-to': 'to', 'depends-on': 'needs', calls: 'calls' };
 const GRAPH_VERBS: Record<string, string> = { flow: 'to', capability: 'uses' };
 
 export interface DocumentsOptions {
@@ -358,8 +358,8 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
           return { id, node, owned: [] };
         }
       }
-      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'] }[m.type];
-      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'] }[m.type];
+      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'], datastore: ['engine'] }[m.type];
+      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'], datastore: [] }[m.type];
       return { id, node, owned, union };
     },
     wasLifted: (n) => previous.has(`app/${n['id'] as string}`),
@@ -562,6 +562,7 @@ function firstSummary(model: ReturnType<typeof buildModel>): string {
     plural(count('boundary'), 'api boundary', 'api boundaries'),
     `${plural(count('service'), 'service')}${graphs ? ` (${graphs} drawn as ${graphs === 1 ? 'an agent graph' : 'agent graphs'})` : ''}`,
     plural(count('process'), 'scheduled process', 'scheduled processes'),
+    ...(count('datastore') ? [plural(count('datastore'), 'data store')] : []),
     plural(model.edges.length, 'connection'),
   ];
   const infra = model.infrastructure.length

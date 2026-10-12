@@ -2,6 +2,7 @@ import type {
   FileMap,
   Skeleton,
   SkeletonAgent,
+  SkeletonDatastore,
   SkeletonClient,
   SkeletonProcess,
   SkeletonServer,
@@ -26,12 +27,12 @@ import type {
  */
 
 /** Entities: things the graph draws. */
-export type EntityKind = 'server' | 'client' | 'service' | 'agent' | 'process';
+export type EntityKind = 'server' | 'client' | 'service' | 'agent' | 'process' | 'datastore';
 /** Relations: the lines between them. */
 export type RelationKind =
-  | 'depends-on' //   service → service
+  | 'depends-on' //   service → service or datastore
   | 'exposes' //      server → service
-  | 'calls' //        client → server, process → service
+  | 'calls' //        client → server, process → service, service → another server
   | 'uses-agent'; //  service → agent
 
 export type ClaimKind = EntityKind | RelationKind;
@@ -91,7 +92,7 @@ export const READER = 'reader';
 export const claimKey = (c: Pick<Claim, 'kind' | 'subject' | 'object'>): string =>
   c.object === undefined ? `${c.kind}:${c.subject}` : `${c.kind}:${c.subject}->${c.object}`;
 
-const ENTITY_KINDS: ReadonlySet<string> = new Set(['server', 'client', 'service', 'agent', 'process']);
+const ENTITY_KINDS: ReadonlySet<string> = new Set(['server', 'client', 'service', 'agent', 'process', 'datastore']);
 export const isEntity = (kind: ClaimKind): kind is EntityKind => ENTITY_KINDS.has(kind);
 
 /** Fields that are relations, carried as relation claims instead of attributes. */
@@ -101,6 +102,7 @@ const RELATION_FIELDS: Record<EntityKind, readonly string[]> = {
   service: ['dependsOn', 'agents'],
   agent: [],
   process: ['calls'],
+  datastore: [],
 };
 
 const attrsOf = (kind: EntityKind, entity: object): Record<string, unknown> => {
@@ -141,6 +143,7 @@ export function claimsFromSkeleton(skeleton: Skeleton, by: string = READER): Cla
     for (const target of s.agents) relation('uses-agent', s.id, target, sourceEvidence(s));
   }
   for (const a of skeleton.agents) entity('agent', a);
+  for (const d of skeleton.datastores ?? []) entity('datastore', d);
   for (const p of skeleton.processes) {
     entity('process', p);
     for (const target of p.calls) relation('calls', p.id, target, sourceEvidence(p));
@@ -358,7 +361,12 @@ export function toSkeleton(
       entities('service', (b) => ({
         ...(b.attrs as Omit<SkeletonService, 'id' | 'dependsOn' | 'agents'>),
         id: b.subject,
-        dependsOn: keepOrder(targets('depends-on', b.subject), baseOf(base.services, b.subject)?.dependsOn),
+        // A service's call into another server is a dependency the mapper draws as a
+        // calls edge; claims may state it either way.
+        dependsOn: keepOrder(
+          [...new Set([...targets('depends-on', b.subject), ...targets('calls', b.subject)])].sort(),
+          baseOf(base.services, b.subject)?.dependsOn,
+        ),
         agents: keepOrder(targets('uses-agent', b.subject), baseOf(base.services, b.subject)?.agents),
       })) as SkeletonService[],
       base.services,
@@ -376,6 +384,13 @@ export function toSkeleton(
       base.processes,
     ),
   };
+  // Present only when some voice found a store or the base had the field, so a
+  // skeleton from before datastores existed still round-trips exactly.
+  const stores = ordered(
+    entities('datastore', (b) => ({ ...(b.attrs as Omit<SkeletonDatastore, 'id'>), id: b.subject })) as SkeletonDatastore[],
+    base.datastores ?? [],
+  );
+  if (stores.length > 0 || base.datastores !== undefined) skeleton.datastores = stores;
 
   const provenance: Record<string, Provenance> = {};
   for (const b of live) {

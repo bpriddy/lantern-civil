@@ -656,7 +656,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             meta == {"model": DEFAULT_MODEL, "promptVersion": PROMPT_VERSION},
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "10", "the route check bumped the contract version")
+        ok(meta["promptVersion"] == "11", "datastores and calls edges bumped the prompt version")
         connection.close()
     finally:
         server.shutdown()

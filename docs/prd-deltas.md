@@ -456,3 +456,31 @@ honest, and it keeps every path in the system meaning the same thing.
 when it is ready rather than all at once: Civil finds the entry document at
 civil/civil.yaml if present, else civil.yaml. New projects scaffold into
 civil/; existing ones migrate through a reviewed set of pending changes.
+
+## 20. Datastores and calls between deployables — **owner's decision, 2026-10-11, extends §4's vocabulary**
+
+PRD §3 keeps the node vocabulary closed and edited by hand; this is such an edit.
+Reading real codebases into the graph (docs/lift-repo.md) kept finding two things the
+composition could not say: where an application keeps its state, and that one
+deployable calls another. Analysts found Postgres and a storage bucket in Civil's own
+infrastructure and had nowhere to put them; "the API calls the runner" — the most
+important line in Civil's own architecture — was found and silently dropped.
+
+- **`datastore` node**: `{ id, type: datastore, engine? }` — a database, cache, bucket,
+  queue or topic. `engine` names the technology as written (postgres, redis, gcs). It
+  references no files, so validation has nothing to resolve.
+- **`calls` edge kind**: service or process → boundary — calling another deployable
+  through its API. routes-to stays client → boundary → service traffic; depends-on stays
+  "uses something within reach", and may now end at a datastore as well as a service.
+- **Validation**: calls only from a service or process, only to a boundary; depends-on
+  only to a service or datastore; nothing depends from a datastore.
+- **Generation (Pillar 1)**: emits nothing for either yet — the transpiler is told so,
+  and a datastore is a codeless unit. Wiring a store's client into generated code is
+  later work, now possible because the graph can say it.
+- **Reversal**: drop the node type and edge kind from composition.ts; documents using
+  them then fail validation, so a migration would rewrite them as notes in
+  architecture.md.
+
+Subsystems (grouping ~30 services) were deliberately *not* added to the vocabulary:
+grouping is proposed as a layout-level view (`layout.groups`), reversible, to be
+promoted only if real use shows it is architecture.

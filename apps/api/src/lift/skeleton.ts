@@ -132,7 +132,11 @@ export interface SkeletonService {
   /** Controllers and providers declared by the module, with their files. */
   controllers: { name: string; file: string }[];
   providers: { name: string; file: string }[];
-  /** Other services this one uses — module imports and injected providers. */
+  /**
+   * What this service uses: other services (module imports, injected providers), and —
+   * since 2026-10-11 — datastores it reads or writes and other servers it calls (a
+   * calls edge to that server's boundary). The mapper tells them apart by kind.
+   */
   dependsOn: string[];
   /** Agents its code uses (imports or injects), by SkeletonAgent.id. */
   agents: string[];
@@ -200,12 +204,27 @@ export interface SkeletonProcess {
   route?: string;
 }
 
+/**
+ * Where the application keeps state (a datastore node, 2026-10-11): a database, cache,
+ * bucket, or queue, found in infrastructure (Terraform, docker-compose), ORM config, or
+ * by an analyst. Services reach one through dependsOn.
+ */
+export interface SkeletonDatastore {
+  /** kebab-case from the resource or service name: "app-db", "uploads". */
+  id: string;
+  /** The technology as written: "postgres", "redis", "gcs", "s3"; null when unknown. */
+  engine: string | null;
+  source: SourceRef;
+}
+
 export interface Skeleton {
   clients: SkeletonClient[];
   servers: SkeletonServer[];
   services: SkeletonService[];
   agents: SkeletonAgent[];
   processes: SkeletonProcess[];
+  /** Optional so skeletons from before datastores existed still read. */
+  datastores?: SkeletonDatastore[];
   /** What the reader saw but could not resolve — reported, never guessed. */
   unresolved: { file: string; line?: number; reason: string }[];
   /** Frameworks detected, for the summary: ["nestjs", "vite"]. */
@@ -218,6 +237,7 @@ export const emptySkeleton = (): Skeleton => ({
   services: [],
   agents: [],
   processes: [],
+  datastores: [],
   unresolved: [],
   frameworks: [],
 });

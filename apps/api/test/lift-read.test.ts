@@ -487,7 +487,7 @@ test('a repo with neither NestJS nor Vite reads to an empty skeleton that says w
   });
   assert.deepEqual(
     { ...skeleton, unresolved: [] },
-    { clients: [], servers: [], services: [], agents: [], processes: [], unresolved: [], frameworks: [] },
+    { clients: [], servers: [], services: [], agents: [], processes: [], datastores: [], unresolved: [], frameworks: [] },
   );
   assert.equal(skeleton.unresolved.length, 1);
   assert.match(skeleton.unresolved[0]!.reason, /no supported framework found/);
@@ -1235,4 +1235,159 @@ test('agents by file convention: <name>.agent.ts and files in agents/, with same
   assert.deepEqual(svc('sack').agents, ['stitcher']);
   assert.ok(svc('grain').files!.includes(`${M}/grain/miller-notes.ts`), 'a hyphenated neighbour is not a part of the agent');
   assert.ok(!svc('grain').files!.includes(`${M}/grain/miller.agent.ts`), 'the agent owns its files');
+});
+
+// --- Datastores (reader-stores.ts) --------------------------------------------------
+
+const Q = 'apps/flint/src';
+/** A Nest module that owns its directory: one provider file importing what it is given. */
+const flintModule = (dir: string, cls: string, body: string[]): Record<string, string> => ({
+  [`${Q}/${dir}/${dir}.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    `import { ${cls}Service } from './${dir}.service';`,
+    `@Module({ providers: [${cls}Service] })`,
+    `export class ${cls}Module {}`,
+  ].join('\n'),
+  [`${Q}/${dir}/${dir}.service.ts`]: [...body, `export class ${cls}Service {}`].join('\n'),
+});
+const flint: Record<string, string> = {
+  'package.json': json({ name: 'flint', private: true }),
+  'apps/flint/package.json': json({
+    name: '@flint/api',
+    dependencies: { '@nestjs/core': '11', '@nestjs/common': '11', pg: '8', ioredis: '5', '@google-cloud/storage': '7' },
+  }),
+  [`${Q}/main.ts`]: [
+    "import { NestFactory } from '@nestjs/core';",
+    "import { FlintModule } from './flint.module';",
+    'const app = await NestFactory.create(FlintModule);',
+  ].join('\n'),
+  [`${Q}/flint.module.ts`]: [
+    "import { Module } from '@nestjs/common';",
+    "import { PitModule } from './pit/pit.module';",
+    "import { QuernModule } from './quern/quern.module';",
+    "import { SluiceModule } from './sluice/sluice.module';",
+    "import { CratesModule } from './crates/crates.module';",
+    '@Module({ imports: [PitModule, QuernModule, SluiceModule, CratesModule] })',
+    'export class FlintModule {}',
+  ].join('\n'),
+  // The wrapper: an infrastructure-style module whose file exports a pg client.
+  ...flintModule('pit', 'Pit', ["import { Pool } from 'pg';", 'export const pool = new Pool();']),
+  // Uses the wrapper through a barrel: one in-repo import, followed to the declaring file.
+  [`${Q}/pit/index.ts`]: "export * from './pit.service';",
+  ...flintModule('quern', 'Quern', ["import { pool } from '../pit';", 'export const rows = () => pool.query("select 1");']),
+  // Imports a redis client directly; a type-only pg import does not count.
+  ...flintModule('sluice', 'Sluice', ["import Redis from 'ioredis';", "import type { PoolClient } from 'pg';", 'export const r = new Redis();']),
+  // Two buckets are declared: which one is not written down.
+  ...flintModule('crates', 'Crates', ["import { Storage } from '@google-cloud/storage';", 'export const s = new Storage();']),
+
+  'infra/main.tf': [
+    'resource "google_sql_database_instance" "flint_db" {',
+    '  database_version = "POSTGRES_16"',
+    '}',
+    'resource "google_storage_bucket" "rubble" {',
+    '  name = "x"',
+    '}',
+    'resource "google_storage_bucket" "gravel" {',
+    '  name = "y"',
+    '}',
+    'resource "google_secret_manager_secret" "not_a_store" {}',
+  ].join('\n'),
+  'docker-compose.yml': [
+    'services:',
+    '  pgdb:',
+    '    image: postgres:16-alpine',
+    '  cache:',
+    '    image: docker.io/library/redis:7',
+    '  web:',
+    '    image: node:22',
+  ].join('\n'),
+  'apps/flint/prisma/schema.prisma': ['datasource db {', '  provider = "postgresql"', '  url = env("DATABASE_URL")', '}'].join('\n'),
+};
+
+test('selection takes compose files and Prisma schemas, not test or sample ones', () => {
+  const paths = selectLiftPaths([
+    'docker-compose.yml',
+    'compose.dev.yaml',
+    'docker-compose.override.yml',
+    'apps/x/prisma/schema.prisma',
+    'examples/shop/docker-compose.yml',
+    'apps/x/fixtures/schema.prisma',
+    'apps/x/config.yml',
+  ]);
+  assert.deepEqual(paths, ['apps/x/prisma/schema.prisma', 'compose.dev.yaml', 'docker-compose.override.yml', 'docker-compose.yml']);
+});
+
+test('datastores: Terraform, compose and Prisma merge per engine; services use them directly or through a wrapper', () => {
+  const skeleton = readRepo(flint);
+  assert.deepEqual(skeleton.datastores, [
+    { id: 'cache', engine: 'redis', source: { file: 'docker-compose.yml', line: 4 } },
+    { id: 'flint-db', engine: 'postgres', source: { file: 'infra/main.tf', line: 1 } },
+    { id: 'gravel', engine: 'gcs', source: { file: 'infra/main.tf', line: 7 } },
+    { id: 'rubble', engine: 'gcs', source: { file: 'infra/main.tf', line: 4 } },
+  ]);
+  const svc = (id: string) => skeleton.services.find((s) => s.id === id)!;
+  assert.deepEqual(svc('pit').dependsOn, ['flint-db'], 'the wrapper owner uses the store too');
+  assert.deepEqual(svc('quern').dependsOn, ['flint-db', 'pit'], 'through the wrapper, one level (pit is the module edge nest.ts draws)');
+  assert.deepEqual(svc('sluice').dependsOn, ['cache'], 'a direct import; a type-only import is not use');
+  assert.deepEqual(svc('crates').dependsOn, [], 'two buckets: not guessed');
+  const ambiguous = skeleton.unresolved.filter((u) => /datastores are declared/.test(u.reason));
+  assert.equal(ambiguous.length, 1);
+  assert.match(ambiguous[0]!.reason, /"crates" uses a gcs client, and 2 gcs datastores are declared \(gravel, rubble\)/);
+  assert.equal(ambiguous[0]!.file, `${Q}/crates/crates.service.ts`);
+});
+
+test('datastores: several of one engine are kept apart; a Prisma-only store and ORM drivers are read', () => {
+  // Two compose postgres services: separate, and a pg user is reported, not attached.
+  const two = readRepo({
+    ...flint,
+    'infra/main.tf': '',
+    'docker-compose.yml': ['services:', '  main:', '    image: postgres:16', '  slab:', '    image: bitnami/postgresql:16', '  mole:', '    image: postgis/postgis:16'].join('\n'),
+  });
+  assert.deepEqual(two.datastores!.map((d) => [d.id, d.engine]), [['main', 'postgres'], ['mole', 'postgres'], ['slab', 'postgres']]);
+  assert.deepEqual(two.services.find((s) => s.id === 'quern')!.dependsOn, ['pit']);
+  assert.ok(two.unresolved.some((u) => /"quern" uses a postgres client, and 3 postgres datastores/.test(u.reason)));
+  assert.ok(two.unresolved.some((u) => /"crates" uses a gcs client, but no gcs datastore is declared/.test(u.reason)));
+
+  // Prisma alone declares the store; @prisma/client takes its provider's engine, and a
+  // multi-engine ORM takes the engine of the one driver the package depends on.
+  const files: Record<string, string> = {
+    'package.json': json({ name: 'kiosk', private: true }),
+    'apps/kiosk/package.json': json({ name: '@kiosk/api', dependencies: { '@nestjs/core': '11', '@nestjs/common': '11', '@prisma/client': '6', typeorm: '0.3', mysql2: '3' } }),
+    'apps/kiosk/prisma/schema.prisma': 'datasource store {\n  provider = "mysql"\n}\n',
+    'apps/kiosk/src/main.ts': "import { NestFactory } from '@nestjs/core';\nimport { KioskModule } from './kiosk.module';\nawait NestFactory.create(KioskModule);",
+    'apps/kiosk/src/kiosk.module.ts': "import { Module } from '@nestjs/common';\nimport { TillModule } from './till/till.module';\nimport { RackModule } from './rack/rack.module';\n@Module({ imports: [TillModule, RackModule] })\nexport class KioskModule {}",
+    'apps/kiosk/src/till/till.module.ts': "import { Module } from '@nestjs/common';\nimport { TillService } from './till.service';\n@Module({ providers: [TillService] })\nexport class TillModule {}",
+    'apps/kiosk/src/till/till.service.ts': "import { PrismaClient } from '@prisma/client';\nexport class TillService { db = new PrismaClient(); }",
+    'apps/kiosk/src/rack/rack.module.ts': "import { Module } from '@nestjs/common';\nimport { RackService } from './rack.service';\n@Module({ providers: [RackService] })\nexport class RackModule {}",
+    'apps/kiosk/src/rack/rack.service.ts': "import { DataSource } from 'typeorm';\nexport class RackService { ds = new DataSource({} as never); }",
+  };
+  const kiosk = readRepo(files);
+  assert.deepEqual(kiosk.datastores, [{ id: 'store', engine: 'mysql', source: { file: 'apps/kiosk/prisma/schema.prisma', line: 1 } }]);
+  assert.deepEqual(kiosk.services.find((s) => s.id === 'till')!.dependsOn, ['store']);
+  assert.deepEqual(kiosk.services.find((s) => s.id === 'rack')!.dependsOn, ['store']);
+});
+
+test('datastores: AWS engines from the block, a placeholder name gives way to a fixed one, and ids never collide', () => {
+  const skeleton = readRepo({
+    ...flint,
+    'docker-compose.yml': '',
+    'apps/flint/prisma/schema.prisma': '',
+    'infra/main.tf': [
+      'resource "aws_db_instance" "this" {',
+      '  name   = "quern"',
+      '  engine = "aurora-postgresql"',
+      '}',
+      'resource "aws_elasticache_replication_group" "hot" {}',
+      'resource "aws_s3_bucket" "crates" {}',
+      '# Terraform state is not the application\'s: by name, or named by a backend block.',
+      'resource "aws_s3_bucket" "state" { bucket = "${var.org}-tfstate" }',
+      'resource "aws_s3_bucket" "locks" { bucket = "org-plan-locks" }',
+      'terraform {',
+      '  backend "s3" { bucket = "org-plan-locks" }',
+      '}',
+    ].join('\n'),
+  });
+  assert.deepEqual(skeleton.datastores!.map((d) => [d.id, d.engine]), [['crates-store', 's3'], ['hot', 'redis'], ['quern-store', 'postgres']]);
+  assert.deepEqual(skeleton.services.find((s) => s.id === 'quern')!.dependsOn, ['pit', 'quern-store']);
+  assert.deepEqual(skeleton.services.find((s) => s.id === 'sluice')!.dependsOn, ['hot']);
 });

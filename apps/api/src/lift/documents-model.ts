@@ -70,7 +70,7 @@ export function idAllocator(taken: Iterable<string> = []) {
 
 const dirOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
-export type CompositionType = 'client' | 'boundary' | 'service' | 'process';
+export type CompositionType = 'client' | 'boundary' | 'service' | 'process' | 'datastore';
 
 export interface ModelNode {
   /** The lift's id for it; the merge may map it to the author's. */
@@ -377,6 +377,8 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
   const boundaryId = new Map(servers.map((s) => [s.id, take(boundaryName(s), 'boundary')]));
   const serviceId = new Map(product.map((s) => [s.id, take(toId(s.id, 'service'), 'service')]));
   const processId = new Map(processes.map((p) => [p.id, take(toId(p.id, 'process'), 'process')]));
+  const stores = sortById(skeleton.datastores ?? []);
+  const storeId = new Map(stores.map((d) => [d.id, take(toId(d.id, 'store'), 'store')]));
 
   const nodes: ModelNode[] = [];
   const edges: ModelEdge[] = [];
@@ -462,8 +464,13 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     // Work it starts on another deployment (a queued task aimed at a worker route) is
     // a dependency too: the schema has two relations, and this is not routing.
     for (const dep of sortedUnique([...service.dependsOn, ...(service.dispatchesTo ?? [])])) {
-      if (dep === service.id || !serviceId.has(dep)) continue;
-      edges.push({ kind: 'depends-on', from: id, to: serviceId.get(dep)! });
+      if (dep === service.id) continue;
+      if (serviceId.has(dep)) edges.push({ kind: 'depends-on', from: id, to: serviceId.get(dep)! });
+      // A store it reads or writes: depends-on, which the schema lets end at a datastore.
+      else if (storeId.has(dep)) edges.push({ kind: 'depends-on', from: id, to: storeId.get(dep)! });
+      // Another deployment it calls: a calls edge to that deployment's boundary — the
+      // line between deployables (2026-10-11). Its own server is not "another".
+      else if (boundaryId.has(dep) && dep !== service.server) edges.push({ kind: 'calls', from: id, to: boundaryId.get(dep)! });
     }
   }
 
@@ -493,6 +500,23 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     for (const target of calls) edges.push({ kind: 'depends-on', from: id, to: target });
   }
 
+  // Stores sit in a column of their own, right of every service layer: what the
+  // system keeps, at the far end of what it does.
+  for (const store of stores) {
+    const id = storeId.get(store.id)!;
+    nodes.push({
+      id,
+      type: 'datastore',
+      entity: store.id,
+      node: { id, type: 'datastore', ...(store.engine ? { engine: store.engine } : {}) },
+      column: 2 + MAX_SERVICE_LAYERS,
+      anchors: [store.source.file],
+      files: [store.source.file],
+      label: store.engine ?? store.id,
+      ...(descriptions[store.id] ? { description: descriptions[store.id]! } : {}),
+    });
+  }
+
   // Services in layers by dependency: a service sits one column right of everything
   // that depends on it, so dependents read left of what they need and the edges run
   // one way. Cycles are cut where the walk meets them; the depth is capped so a long
@@ -500,7 +524,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
   const dependents = new Map<string, string[]>();
   const onCanvas = new Set(serviceId.values());
   for (const e of edges)
-    if (e.kind === 'depends-on' && onCanvas.has(e.from)) dependents.set(e.to, [...(dependents.get(e.to) ?? []), e.from]);
+    if (e.kind === 'depends-on' && onCanvas.has(e.from) && onCanvas.has(e.to)) dependents.set(e.to, [...(dependents.get(e.to) ?? []), e.from]);
   const level = new Map<string, number>();
   const levelOf = (id: string, walking: Set<string>): number => {
     const known = level.get(id);
@@ -517,7 +541,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     node.column = 2 + Math.min(MAX_SERVICE_LAYERS - 1, levelOf(node.id, new Set()));
   }
 
-  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values()]) {
+  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values()]) {
     if (!ID_PATTERN.test(id)) notes.push(`"${id}" is not a valid Civil id`);
   }
 

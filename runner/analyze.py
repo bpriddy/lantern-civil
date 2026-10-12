@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 # Bump whenever a prompt or tool changes: the API keys memoised analyses on it.
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 
 MAX_TOKENS = int(os.environ.get("CIVIL_ANALYZE_MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("CIVIL_ANALYZE_MAX_TURNS", "14"))
@@ -33,11 +33,11 @@ READ_MAX_CHARS = 24_000
 LIST_MAX = 300
 SEARCH_MAX = 60
 
-ENTITY_KINDS = ("server", "client", "service", "agent", "process")
+ENTITY_KINDS = ("server", "client", "service", "agent", "process", "datastore")
 RELATION_KINDS = ("depends-on", "exposes", "calls", "uses-agent")
 KINDS = ENTITY_KINDS + RELATION_KINDS
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-ATTR_KEYS = {"files", "description", "group", "label", "framework", "path", "schedule", "tools"}
+ATTR_KEYS = {"files", "description", "group", "label", "framework", "path", "schedule", "tools", "engine"}
 
 ALTITUDE = """\
 Civil draws an application's ARCHITECTURE, not its functions. Claims are made at this \
@@ -51,14 +51,19 @@ helper, or class.
 - agent: an LLM agent the code defines (a prompt plus a model call, often with tools).
 - process: background work on a schedule or trigger (cron jobs, scheduled tasks, \
 queue consumers) — not every function a worker can run.
-Relations: depends-on (service → service it uses), exposes (server → service it \
-serves over its API), calls (client → server it talks to; process → service it runs), \
-uses-agent (service → agent its code invokes).
+- datastore: where the application keeps state — a database, cache, bucket, queue or \
+topic (Postgres, Redis, a storage bucket, Pub/Sub) — with attrs.engine naming the \
+technology. Found in infrastructure code, ORM config, or the client a service uses.
+Relations: depends-on (service → service or datastore it uses), exposes (server → \
+service it serves over its API), calls (client → server it talks to; process → service \
+it runs; service → ANOTHER server it calls), uses-agent (service → agent its code \
+invokes).
 Calls BETWEEN deployables matter most and are easy to miss: when code in one server \
 calls another server — over HTTP (a fetch or client to another service's URL), RPC, \
-or a queue — claim depends-on from the calling service to the service that answers, \
-even though they run in different processes. Cite the call site (the URL, client, or \
-queue name) as evidence.
+or a queue — claim calls from the calling service to that server, even though they \
+run in different processes. Cite the call site (the URL, client, or queue name) as \
+evidence. When a service reads or writes a store, claim depends-on from the service to \
+the datastore, citing the client it uses.
 Routes, operations, endpoints and functions are NEVER claims; mention them only as \
 evidence. Infrastructure plumbing (config, logging, database clients, auth guards, \
 health checks) is not a service unless it is product functionality."""

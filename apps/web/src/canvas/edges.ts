@@ -26,8 +26,10 @@ const byId = <T extends { id: string }>(nodes: readonly T[]) =>
 
 /**
  * Traffic is client → boundary → service (the owner's revision of PRD 4); a
- * dependency terminates at a service. Everything else is refused in words at the
- * moment of the gesture.
+ * dependency terminates at a service or a datastore; a service or process reaching
+ * another deployable does so through its boundary, and that is `calls` (2026-10-11).
+ * A datastore holds state: it is depended on and reaches nothing. Everything else is
+ * refused in words at the moment of the gesture. Mirrors packages/schema validate.ts.
  */
 export function proposeCompositionEdge(
   nodes: readonly CompositionNode[],
@@ -44,6 +46,16 @@ export function proposeCompositionEdge(
   if (to.type === 'process') {
     return { kind: '', refusal: 'A process has a trigger, not a caller.' };
   }
+  if (from.type === 'datastore') {
+    return { kind: '', refusal: 'A data store holds state; it depends on nothing and calls nothing.' };
+  }
+  if (to.type === 'datastore') {
+    if (from.type === 'service' || from.type === 'process') return { kind: 'depends-on' };
+    return {
+      kind: '',
+      refusal: `A ${from.type} does not reach a data store; a service or process depends on it.`,
+    };
+  }
   if (from.type === 'client') {
     if (to.type === 'boundary') return { kind: 'routes-to' };
     return { kind: '', refusal: 'A client reaches services through a boundary, not directly.' };
@@ -52,10 +64,9 @@ export function proposeCompositionEdge(
     if (to.type === 'service') return { kind: 'routes-to' };
     return { kind: '', refusal: 'A boundary exposes services, not other boundaries.' };
   }
-  // service or process → …
-  if (to.type !== 'service') {
-    return { kind: '', refusal: 'Only a service can be depended on.' };
-  }
+  // service or process → boundary: calling another deployable through its boundary.
+  if (to.type === 'boundary') return { kind: 'calls' };
+  // service or process → service.
   return { kind: 'depends-on' };
 }
 
@@ -125,7 +136,8 @@ export function exposesSync(
   const index = byId(composition.spec.nodes);
   const removed = new Set(change.removedIds ?? []);
 
-  // A routes-to edge from a boundary to a service is a statement about exposure.
+  // A routes-to edge from a boundary to a service is a statement about exposure. A
+  // calls edge into a boundary is a caller using it, and says nothing about exposure.
   const exposure = (edge: { kind?: unknown; from?: { node?: string }; to?: { node?: string } }) => {
     const from = index.get(edge.from?.node ?? '');
     const to = index.get(edge.to?.node ?? '');

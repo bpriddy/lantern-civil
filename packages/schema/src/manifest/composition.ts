@@ -74,11 +74,26 @@ export const zProcessNode = z.object({
   calls: z.array(zId).default([]),
 });
 
+/**
+ * Where an application keeps state: a database, a cache, a bucket, a queue. Added to
+ * the closed vocabulary 2026-10-11 (owner's call; docs/prd-deltas.md): reading real
+ * codebases kept finding stores the graph had no way to show. Services and processes
+ * depend on a store; nothing routes to one. `engine` names the technology as written
+ * ("postgres", "redis", "gcs") — descriptive, not a driver choice. Code generation
+ * emits nothing for a store yet.
+ */
+export const zDatastoreNode = z.object({
+  id: zId,
+  type: z.literal('datastore'),
+  engine: z.string().min(1).optional(),
+});
+
 export const zCompositionNode = z.discriminatedUnion('type', [
   zClientNode,
   zBoundaryNode,
   zServiceNode,
   zProcessNode,
+  zDatastoreNode,
 ]);
 
 /**
@@ -89,7 +104,12 @@ export const zCompositionNode = z.discriminatedUnion('type', [
  *
  * Neither is dataflow. Nothing executes at this altitude (PRD 4).
  */
-export const zCompositionEdgeKind = z.enum(['routes-to', 'depends-on']);
+/**
+ * calls (2026-10-11, docs/prd-deltas.md): a service or process calls another
+ * deployable through its boundary — the line between deployables a real system is
+ * built on, which routes-to (client traffic) and depends-on (within reach) could not draw.
+ */
+export const zCompositionEdgeKind = z.enum(['routes-to', 'depends-on', 'calls']);
 
 export const zCompositionEdge = z.object({
   id: zId,
@@ -117,3 +137,4 @@ export type ServiceNode = z.infer<typeof zServiceNode>;
 export type BoundaryNode = z.infer<typeof zBoundaryNode>;
 export type ClientNode = z.infer<typeof zClientNode>;
 export type ProcessNode = z.infer<typeof zProcessNode>;
+export type DatastoreNode = z.infer<typeof zDatastoreNode>;

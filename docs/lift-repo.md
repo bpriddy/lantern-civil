@@ -34,7 +34,8 @@ The files it proposes:
 1. **Select** (`read.ts` `selectLiftPathsReport`). Every package.json and
    tsconfig, the root workspace file (`pnpm-workspace.yaml`, `.yarnrc.yml`,
    `bunfig.toml`), the .ts/.tsx files under each package's `src/`, each
-   `vite.config.*`, every `*.tf`, then README.md and `docs/**/*.md`. Excluded:
+   `vite.config.*`, every `*.tf`, `docker-compose*.y(a)ml` / `compose*.y(a)ml` and
+   `*.prisma`, then README.md and `docs/**/*.md`. Excluded:
    node_modules, dist, build, e2e, tests, `.terraform`, `*.spec`, `*.test`,
    `*.d.ts`, lockfiles. Capped at 2,500 files, code before prose. Hitting the cap
    is reported first in the diagnostics, never silently; so is a selected file
@@ -65,6 +66,8 @@ The files it proposes:
      and the path their uri ends in (through the module's string `locals`). A job
      whose path is a route becomes a process calling that route's service; one
      that is not is reported in `unresolved`, never drawn as a guess.
+   - `reader-stores.ts` reads datastores and which services use them (below,
+     "Datastores").
    - The output is a `Skeleton` (`skeleton.ts`, the shared contract). Whatever
      can't be resolved goes to `unresolved` with a reason. Nothing is guessed.
    - A repo with no framework the reader knows gives an empty skeleton and a
@@ -253,6 +256,54 @@ Added 2026-10-10, general rules recognised by code shape (never a project's name
   mocks and fakes directories, and fake/mock/stub/integration/live/e2e files, are left
   out of path selection and of agent, service, and process detection.
 
+## Datastores
+
+Added 2026-10-11 (`reader-stores.ts`), general rules by shape:
+
+- **Declared in Terraform.** A `resource` of a managed-store type is a datastore:
+  `google_sql_database_instance` (engine from `database_version`: POSTGRES_* →
+  postgres, MYSQL_* → mysql, SQLSERVER_* → sqlserver), `google_alloydb_cluster`,
+  `google_storage_bucket` (gcs), `google_redis_instance`/`_cluster`,
+  `google_firestore_database`, `google_pubsub_topic`, `google_bigquery_dataset`,
+  `google_spanner_instance`, `google_bigtable_instance`; `aws_db_instance` and
+  `aws_rds_cluster` (engine from `engine`), `aws_s3_bucket`, `aws_elasticache_cluster`/
+  `_replication_group`, `aws_memorydb_cluster`, `aws_dynamodb_table`, `aws_sqs_queue`,
+  `aws_docdb_cluster`, `aws_opensearch_domain`/`aws_elasticsearch_domain`; azurerm
+  postgresql, mysql, mssql, storage account, redis cache and cosmosdb. The id is the
+  resource name; a placeholder name (this, main, default, primary, instance) gives way
+  to the block's own fixed `name`, else to the merged compose service's name, else to
+  the engine. Terraform's own state buckets (`tfstate`/`terraform-state` in the name,
+  or a bucket a `backend` block names) are not the application's and are left out.
+- **Declared in docker-compose.** A service of `docker-compose*.y(a)ml` or
+  `compose*.y(a)ml` whose image (last path segment, tag dropped) is a well-known store:
+  postgres (also postgresql, postgis, pgvector, timescaledb), mysql (also mariadb,
+  percona), mongo, redis (also valkey, keydb, dragonfly, redis-stack), rabbitmq,
+  elasticsearch, opensearch, kafka (also cp-kafka, redpanda), nats, memcached, mssql,
+  cockroach; local stand-ins count as what they stand in for (minio → s3,
+  fake-gcs-server → gcs). The id is the compose service name.
+- **Named in a Prisma schema.** A `datasource`'s `provider` (postgresql → postgres,
+  mysql, sqlite, mongodb, sqlserver, cockroachdb). A datasource points at a database
+  rather than creating one, so it is a store of its own only when nothing else
+  declares that engine.
+- **One per engine when unambiguous.** When every source declares at most one store of
+  an engine, they are the same store (compose for local development, Terraform
+  deployed, Prisma pointing at it), named Terraform first, then compose, then Prisma.
+  When a source declares several of an engine, all are kept apart; nothing is merged.
+- **Usage.** A service uses engine E when one of its own files imports a client for E —
+  pg, postgres, pg-promise, @neondatabase/serverless, drizzle-orm/node-postgres (and
+  the other drizzle dialect paths); mysql, mysql2; better-sqlite3, sqlite3, @libsql/client;
+  mongodb, mongoose; ioredis, redis, @redis/client, bull, bullmq; @google-cloud/storage,
+  /firestore, /pubsub, /bigquery; @aws-sdk/client-s3, client-dynamodb, client-sqs;
+  amqplib, kafkajs, nats, @elastic/elasticsearch and others listed in the file —
+  directly, or through one in-repo module it imports that does (followed through
+  barrels to the declaring file, one level). `@prisma/client` takes the Prisma
+  provider's engine; ORMs that serve several engines (typeorm, knex, kysely, sequelize,
+  drizzle-orm, MikroORM) take the engine of the one database driver their package (or
+  the root) depends on. Type-only imports are not use. The store joins the service's
+  `dependsOn` only when exactly one store has that engine; several is reported in
+  `unresolved` as ambiguous, none as a client with no declared store. The
+  infrastructure module that owns the client wrapper uses the store too.
+
 ## Update: the merge
 
 The rules are written out at the top of `documents-merge.ts`; in short:
@@ -347,6 +398,11 @@ it is not a server path and is not part of the product.
   from a value the source does not fix) are reported, not drawn; one that computes its
   path is drawn at `<computed>` and reported.
 
+- **Datastores outside Terraform, compose and Prisma** (Pulumi, CDK, Helm charts, a
+  connection string only in an env file) are not read; a service whose client has no
+  declared store is reported, not drawn. Several stores of one engine are never
+  attributed to a service (which bucket a client writes to is runtime configuration),
+  and a compose store merges with a Terraform one only by engine, not by name.
 - **Schedules outside Terraform** (a gcloud YAML, a Kubernetes CronJob) are not
   read; the internal routes they call still show on the internal boundary.
 - **Agents bound behind injection tokens** in a different module from their

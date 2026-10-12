@@ -150,6 +150,24 @@ export function architectureMarkdown(input: ArchitectureInput): string {
     }
     out.push('');
   }
+  const stores = of('datastore');
+  if (stores.length) {
+    out.push('### Data stores', '');
+    for (const n of stores) {
+      const users = model.edges.filter((e) => e.kind === 'depends-on' && e.to === n.id).map((e) => idOf(e.from));
+      const engine = n.node['engine'] ? ` ${code(n.node['engine'] as string)}.` : '';
+      out.push(
+        `- **${idOf(n.id)}** —${engine}${describe(n)} ${users.length ? `Used by ${sortedIds(users).join(', ')}.` : 'No service on the canvas is known to use it.'} Declared in ${fileList(n.files)}.`,
+      );
+    }
+    out.push('');
+  }
+  const crossing = model.edges.filter((e) => e.kind === 'calls');
+  if (crossing.length) {
+    out.push('### Calls between deployables', '');
+    for (const e of crossing) out.push(`- **${idOf(e.from)}** calls **${idOf(e.to)}**.`);
+    out.push('');
+  }
   if (skeleton.agents.length) {
     out.push('### Agents', '');
     for (const agent of [...skeleton.agents].sort((a, b) => (a.id < b.id ? -1 : 1))) {

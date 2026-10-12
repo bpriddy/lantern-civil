@@ -4,6 +4,7 @@ import { emptySkeleton, type FileMap, type Skeleton, type SkeletonClient } from 
 import { readNestServer, type NestRead } from './nest.js';
 import { readViteClient } from './vite.js';
 import { readSchedulerJobs } from './schedules.js';
+import { readDatastores } from './reader-stores.js';
 
 /**
  * The deterministic reader: an existing repository's file map in, a Skeleton out
@@ -94,9 +95,11 @@ const isCode = (path: string): boolean => /\.tsx?$/.test(path) && !isTestOrDecla
  * Which files a lift needs, in priority order so a cap drops the least useful first:
  * manifests (package.json, tsconfig*.json, the workspace file that names the package
  * manager — the reader's map of the repo), then code under a package's src/
- * directory plus its vite.config, then Terraform (*.tf: where a cloud scheduler's
- * jobs and the routes they call are declared — small, and the only place external
- * schedules are written down), then prose (README.md, docs/**.md) for the model
+ * directory plus its vite.config, then infrastructure — Terraform (*.tf: where a
+ * cloud scheduler's jobs and the routes they call, and the managed datastores, are
+ * declared), docker-compose*.y(a)ml / compose*.y(a)ml (the stores run beside the app),
+ * and Prisma schemas (*.prisma: the datasource's provider) — small files, the only
+ * place these are written down — then prose (README.md, docs/**.md) for the model
  * pass. Tests, test support (isTestSupport), declarations, build output and vendored
  * code are never read: they describe the code, they are not it.
  */
@@ -118,7 +121,7 @@ export function selectLiftPathsReport(paths: readonly string[]): {
     else if (segments.length === 1 && WORKSPACE_FILES.has(base)) manifests.push(path);
     else if (/^vite\.config\.(ts|mts|js|mjs)$/.test(base)) code.push(path);
     else if (isCode(path) && segments.slice(0, -1).includes('src')) code.push(path);
-    else if (base.endsWith('.tf')) infra.push(path);
+    else if (base.endsWith('.tf') || base.endsWith('.prisma') || /^(docker-)?compose([.-][\w.-]+)?\.ya?ml$/.test(base)) infra.push(path);
     else if (base === 'README.md' || (segments[0] === 'docs' && base.endsWith('.md'))) prose.push(path);
   }
   const ordered = [...manifests.sort(byString), ...code.sort(byString), ...infra.sort(byString), ...prose.sort(byString)];
@@ -161,6 +164,7 @@ export function readRepo(files: FileMap): Skeleton {
 
   linkClients(ctx, skeleton, servers, clients);
   readSchedulerJobs(files, skeleton);
+  readDatastores(ctx, skeleton);
 
   if (!servers.length && !clients.length) {
     skeleton.unresolved.push({

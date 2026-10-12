@@ -611,3 +611,27 @@ test('validation sees every listed file, not only the ones the lift loaded', () 
   });
   assert.ok(!listed.diagnostics.some((d) => /billing\/run\.py/.test(d)));
 });
+
+test('a store a service uses and a deployable it calls are drawn, and the documents stay valid', () => {
+  const s = skeleton();
+  s.datastores = [{ id: 'app-db', engine: 'postgres', source: { file: `${SERVER}/tasks/tasks.service.ts` } }];
+  s.servers.push({
+    id: 'search-engine', path: 'apps/search', framework: 'nestjs', globalPrefix: null, routes: [], exposes: [],
+    source: { file: `${SERVER}/tasks/tasks.service.ts` },
+  });
+  s.services.find((x) => x.id === 'tasks')!.dependsOn.push('app-db', 'search-engine');
+
+  const { files } = lift(s);
+  const { errors } = validate(files);
+  assert.deepEqual(errors, [], 'the new node and edge kinds are valid documents');
+  const composition = compositionOf(files);
+  const store = composition.spec.nodes.find((n: { id: string }) => n.id === 'app-db');
+  assert.deepEqual(store, { id: 'app-db', type: 'datastore', engine: 'postgres' });
+  const edges = composition.spec.edges.map((e: { kind: string; from: { node: string }; to: { node: string } }) => `${e.kind}:${e.from.node}->${e.to.node}`);
+  assert.ok(edges.includes('depends-on:tasks->app-db'), 'a service needs its store');
+  const callsEdge = edges.find((e: string) => e.startsWith('calls:tasks->'));
+  assert.ok(callsEdge, 'a service calls the other deployable through its boundary');
+  assert.match(files['civil/architecture.md']!, /### Data stores[\s\S]*app-db[\s\S]*Used by tasks/);
+  assert.match(files['civil/architecture.md']!, /### Calls between deployables/);
+  assert.match(files['civil/registry.yaml']!, /app\/app-db:\n\s+kind: datastore/);
+});

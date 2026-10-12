@@ -89,7 +89,7 @@ EMIT_FILES_TOOL = {
 # The API folds this into its transpile memo hash alongside the resolved model
 # id (GET /transpile/meta): bump it whenever SYSTEM_TEMPLATE or the emit_files
 # schema changes, or memoized emissions will outlive the prompt that shaped them.
-PROMPT_VERSION = "10"
+PROMPT_VERSION = "11"
 
 SYSTEM_TEMPLATE = """\
 You are Civil's transpiler. You read civil graph documents and emit the \
@@ -129,7 +129,9 @@ unset or empty meaning none — through fastapi's CORSMiddleware; never a \
 wildcard. fastapi \
 and uvicorn are the app's own dependencies — the strong-engineer default \
 when the repo shows no server pattern of its own; a pattern the repo does \
-show wins. mcp boundaries emit nothing today.
+show wins. mcp boundaries emit nothing today. \
+Datastore nodes and calls edges describe the stores the app uses and the other \
+deployables it calls; emit nothing for them today.
 - A capability edge becomes an entry in the agent's `tools=[...]` list, \
 importing the real function from the human-authored files shown to you as \
 context — use the actual names and signatures those files define.
@@ -536,9 +538,9 @@ def _route_issues(
 
 def _codeless(unit: dict[str, str]) -> bool:
     """Units that never own generated code: a client is the human's frontend, an
-    mcp boundary emits nothing today, and a service's code is its graph's (its own
-    unit) or the human's handler."""
-    return unit["kind"] in ("client", "service") or unit.get("boundary") == "mcp"
+    mcp boundary emits nothing today, a service's code is its graph's (its own
+    unit) or the human's handler, and a datastore describes where state lives."""
+    return unit["kind"] in ("client", "service", "datastore") or unit.get("boundary") == "mcp"
 
 
 def _codeless_issues(file_units: dict[str, str], known: list[dict[str, str]]) -> list[str]:

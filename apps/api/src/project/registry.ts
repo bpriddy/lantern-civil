@@ -30,7 +30,7 @@ export const REGISTRY_PATH = 'civil/registry.yaml';
 /** The one label outside the derived list, for plumbing that serves several units. */
 export const SHARED_UNIT = 'shared';
 
-export type UnitKind = 'client' | 'boundary' | 'service' | 'process' | 'graph' | 'agent';
+export type UnitKind = 'client' | 'boundary' | 'service' | 'process' | 'datastore' | 'graph' | 'agent';
 
 export interface Unit {
   /**
@@ -93,6 +93,12 @@ export function deriveUnits(documents: Record<string, string>): Unit[] {
       doc.spec.edges
         .filter((e) => e.kind === 'routes-to' && e.from.node === id)
         .map((e) => `app/${e.to.node}`);
+    // What a service or process uses beyond its own code: the services and stores it
+    // depends on, and the other deployables it calls.
+    const usesFrom = (id: string) =>
+      doc.spec.edges
+        .filter((e) => (e.kind === 'depends-on' || e.kind === 'calls') && e.from.node === id)
+        .map((e) => `app/${e.to.node}`);
     for (const node of doc.spec.nodes) {
       const unit: Unit = { id: `app/${node.id}`, kind: node.type, source: path, dependsOn: [] };
       switch (node.type) {
@@ -110,9 +116,13 @@ export function deriveUnits(documents: Record<string, string>): Unit[] {
           } else {
             unit.entrypoint = node.impl.entrypoint;
           }
+          unit.dependsOn.push(...usesFrom(node.id));
           break;
         case 'process':
-          unit.dependsOn = node.calls.map((s) => `app/${s}`);
+          unit.dependsOn = [...node.calls.map((s) => `app/${s}`), ...usesFrom(node.id)];
+          break;
+        case 'datastore':
+          // Code generation emits nothing for a store: a unit with no files of its own.
           break;
       }
       units.push(unit);

@@ -5,7 +5,7 @@ import type { Contract } from '../project.js';
 /**
  * PRD 3: node types are units of architecture, never units of computation. Every face
  * here is something you would draw on a whiteboard. The visual vocabulary is
- * deliberately small — there are seven node types in the whole product and there will
+ * deliberately small — there are nine node types in the whole product and there will
  * not be more without a commit to Civil.
  */
 
@@ -187,6 +187,14 @@ const ProcessNode = (props: NodeProps) => {
   return <Face kind="process" glyph="◷" data={data} ports={{ in: false, out: true }} />;
 };
 
+const DatastoreNode = (props: NodeProps) => {
+  const data = props.data as NodeData;
+  // Where state lives (2026-10-11). Services and processes depend on it; it depends
+  // on nothing — so it has an input port and no output. The face is drawn as a
+  // cylinder (shell.css .node-datastore), the whiteboard mark for a store.
+  return <Face kind="datastore" glyph="≣" data={data} ports={{ in: true, out: false }} />;
+};
+
 // --- dataflow altitude (PRD 5) --------------------------------------------
 
 const IoNode = (props: NodeProps) => {
@@ -226,6 +234,7 @@ export const compositionNodeTypes = {
   boundary: BoundaryNode,
   service: ServiceNode,
   process: ProcessNode,
+  datastore: DatastoreNode,
 };
 
 export const graphNodeTypes = {

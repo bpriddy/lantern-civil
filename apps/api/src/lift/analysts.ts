@@ -154,7 +154,7 @@ export function analysisPaths(listed: readonly string[], selected: readonly stri
 }
 
 const ID = /^[a-z][a-z0-9_-]{0,63}$/;
-const KINDS = new Set(['server', 'client', 'service', 'agent', 'process', 'depends-on', 'exposes', 'calls', 'uses-agent']);
+const KINDS = new Set(['server', 'client', 'service', 'agent', 'process', 'datastore', 'depends-on', 'exposes', 'calls', 'uses-agent']);
 
 /**
  * What the runner answered, re-validated: never trusted, because a claim that enters
@@ -226,6 +226,7 @@ export function normalizeClaims(claims: readonly Claim[], reader: Skeleton): Cla
     ...reader.services.map((e) => `service:${e.id}`),
     ...reader.agents.map((e) => `agent:${e.id}`),
     ...reader.processes.map((e) => `process:${e.id}`),
+    ...(reader.datastores ?? []).map((e) => `datastore:${e.id}`),
   ]);
   const onlyServer = reader.servers.length === 1 ? reader.servers[0]!.id : undefined;
   return claims.map((claim) => {
@@ -263,6 +264,8 @@ export function normalizeClaims(claims: readonly Claim[], reader: Skeleton): Cla
               : [],
             source,
           };
+        case 'datastore':
+          return { engine: typeof attrs['engine'] === 'string' && attrs['engine'] ? attrs['engine'].toLowerCase() : null, source };
         default:
           return { schedule: typeof attrs['schedule'] === 'string' && attrs['schedule'] ? attrs['schedule'] : '@unknown', source };
       }
@@ -302,6 +305,7 @@ export function resolveEntities(claims: readonly Claim[], reader: Skeleton): { c
   for (const s of reader.services) add('service', s.id, norm([s.source.file, ...(s.files ?? []), ...s.controllers.map((x) => x.file), ...s.providers.map((x) => x.file), ...(s.directory ? [s.directory] : [])]));
   for (const a of reader.agents) add('agent', a.id, norm([a.source.file, ...a.files]));
   for (const p of reader.processes) add('process', p.id, norm([p.source.file]));
+  for (const d of reader.datastores ?? []) add('datastore', d.id, norm([d.source.file]));
 
   /** a lies within b: the same path, or under one of b's directories. */
   const within = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || (b.includes('.') && dirOf(b) === a);
