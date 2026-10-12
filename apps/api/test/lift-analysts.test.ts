@@ -152,3 +152,78 @@ test('the analysts failing leaves exactly the reader\'s lift', async () => {
   assert.deepEqual(failed.files, alone.files);
   assert.match(failed.analysis!.note!, /failed \(runner answered 502\)/);
 });
+
+// --- entity resolution and scope ---------------------------------------------------
+
+import { resolveEntities } from '../dist/lift/analysts.js';
+import { isSampleCode, selectLiftPaths } from '../dist/lift/read.js';
+
+const voice = (kind: string, subject: string, file: string, attrs: Record<string, unknown> = {}, object?: string) =>
+  ({ kind, subject, ...(object ? { object } : {}), by: 'analyst:a', stance: 'assert', evidence: [{ file, line: 1 }], attrs }) as never;
+
+test('the same thing named twice is one thing: anchored in the same code, the earlier name wins', () => {
+  const reader = { servers: [{ id: 'api', path: 'apps/api', source: { file: 'apps/api/src/main.ts' } }], clients: [], services: [], agents: [], processes: [] };
+  const { claims, aliases } = resolveEntities(
+    [
+      voice('server', 'runner', 'runner/Dockerfile', { path: 'runner' }),
+      voice('server', 'civil-runner', 'runner/server.py'),
+      voice('server', 'civil-api', 'apps/api/src/http/server.ts', { path: 'apps/api' }),
+      voice('depends-on', 'transpile', 'apps/api/src/x.ts', {}, 'civil-runner'),
+      voice('calls', 'web', 'apps/web/src/api.ts', {}, 'api'),
+    ],
+    reader as never,
+  );
+  assert.deepEqual(aliases, { 'civil-runner': 'runner', 'civil-api': 'api' }, 'the reader\'s name, then the earliest voice\'s');
+  assert.equal(claims[3].object, 'runner', 'relations follow the alias');
+  assert.equal(claims[1].subject, 'runner');
+});
+
+test('an unclaimed relation end is matched by a unique whole-word name, never by a guess', () => {
+  const reader = { servers: [], clients: [], services: [], agents: [], processes: [] };
+  const { claims } = resolveEntities(
+    [
+      voice('server', 'civil-api', 'apps/api/src/main.ts'),
+      voice('server', 'session-service', 'session/server.py'),
+      voice('server', 'billing-service', 'billing/main.py'),
+      voice('calls', 'web', 'apps/web/src/a.ts', {}, 'api'),
+      voice('calls', 'web', 'apps/web/src/a.ts', {}, 'service'),
+    ],
+    reader as never,
+  );
+  assert.equal(claims[3].object, 'civil-api', 'one entity contains "api": matched');
+  assert.equal(claims[4].object, 'service', 'two contain "service": ambiguous, left unknown for claims.ts to drop');
+});
+
+test('two equally good matches are ambiguous: the new name stands on its own', () => {
+  const reader = {
+    servers: [], clients: [], agents: [], processes: [],
+    services: [
+      { id: 'a', source: { file: 'src/shared/x.ts' }, controllers: [], providers: [], files: [] },
+      { id: 'b', source: { file: 'src/shared/y.ts' }, controllers: [], providers: [], files: [] },
+    ],
+  };
+  const { aliases } = resolveEntities([voice('service', 'shared-stuff', 'src/shared/z.ts', { files: ['src/shared/**'] })], reader as never);
+  assert.deepEqual(aliases, {});
+});
+
+test('example and sample projects are not the product', () => {
+  for (const path of ['examples/shop/web/src/main.ts', 'packages/ui/demo/app.ts', 'sandbox/x.ts']) {
+    assert.ok(isSampleCode(path), path);
+  }
+  assert.ok(!isSampleCode('apps/api/src/examples.ts'), 'a file named like it is not a directory of it');
+  const chosen = selectLiftPaths(['examples/shop/web/package.json', 'examples/shop/web/src/main.ts', 'apps/web/package.json']);
+  assert.deepEqual(chosen, ['apps/web/package.json']);
+});
+
+test('two agents defined in the same file stay two agents', () => {
+  const reader = { servers: [], clients: [], services: [], agents: [], processes: [] };
+  const { aliases } = resolveEntities(
+    [
+      voice('agent', 'repo-reviewer', 'tools/review.py'),
+      voice('agent', 'repo-checker', 'tools/review.py'),
+      voice('agent', 'reviewer', 'tools/review.py'),
+    ],
+    reader as never,
+  );
+  assert.deepEqual(aliases, { reviewer: 'repo-reviewer' }, 'only a related name in the same code is the same agent');
+});

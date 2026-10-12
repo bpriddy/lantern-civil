@@ -201,6 +201,17 @@ next: merge entities that two voices name differently but anchor in the same cod
 keep example and sample apps out of the product's graph; ask explicitly for the calls
 between deployables.
 
+Second run, with all three (2026-10-11): exactly three deployables, the example app
+left out and said so, and the calls between deployables found (the API's transpile,
+lift and run services call the runner; the runner posts back to the API). What it
+taught next: two agents in one file are two agents, so entities other than
+deployables merge only when their names are related too; and two things Civil's
+graph cannot yet say — a service calling another deployable, and data stores
+(Postgres, a bucket) — which the lift now reports instead of dropping. Whether to
+add them to the closed node and edge vocabulary is the owner's call. Run-to-run
+variance (one analyst per area notices different things) is the open stability
+question for stage 3.
+
 ## Reading composition that is built, not written
 
 Added 2026-10-10, general rules recognised by code shape (never a project's names):

@@ -72,6 +72,19 @@ export const isTestSupport = (path: string): boolean => {
   return segments.slice(0, -1).some((s) => TEST_SUPPORT_SEGMENTS.has(s)) || TEST_SUPPORT_FILE.test(segments[segments.length - 1]!);
 };
 
+/**
+ * Sample code: other, smaller projects a repository carries — examples, demos,
+ * playgrounds — that show or exercise the product rather than being it. A bundled
+ * example app has its own client, API, and jobs; drawn into the product's graph they
+ * read as the product's own (found reading a real repository, 2026-10-11). By
+ * directory name only: `examples`, `example`, `samples`, `sample`, `demo`, `demos`,
+ * `playground`, `sandbox`. Left out of the reader's selection and of the agent
+ * stage's areas, index, and evidence alike; the lift says how many were left out.
+ */
+const SAMPLE_SEGMENTS = new Set(['examples', 'example', 'samples', 'sample', 'demo', 'demos', 'playground', 'sandbox']);
+
+export const isSampleCode = (path: string): boolean => path.split('/').slice(0, -1).some((s) => SAMPLE_SEGMENTS.has(s));
+
 /** Root files that say which package manager runs the workspace (never lockfiles: too big). */
 const WORKSPACE_FILES = new Set(['pnpm-workspace.yaml', '.yarnrc.yml', 'bunfig.toml']);
 
@@ -99,7 +112,7 @@ export function selectLiftPathsReport(paths: readonly string[]): {
   for (const path of paths) {
     const segments = path.split('/');
     if (segments.slice(0, -1).some((s) => EXCLUDED_SEGMENTS.has(s))) continue;
-    if (isTestSupport(path)) continue;
+    if (isTestSupport(path) || isSampleCode(path)) continue;
     const base = segments[segments.length - 1]!;
     if (base === 'package.json' || /^tsconfig(\.[\w-]+)?\.json$/.test(base)) manifests.push(path);
     else if (segments.length === 1 && WORKSPACE_FILES.has(base)) manifests.push(path);

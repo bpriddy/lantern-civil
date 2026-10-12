@@ -1,4 +1,4 @@
-import { isTestSupport } from './read.js';
+import { isSampleCode, isTestSupport } from './read.js';
 import { claimKey, isEntity, READER, type Claim, type Evidence } from './claims.js';
 import type { FileMap, Skeleton } from './skeleton.js';
 
@@ -47,7 +47,7 @@ const kebab = (text: string): string =>
  * say what is deployed and scheduled. Deterministic: the same files give the same areas.
  */
 export function buildAreas(listed: readonly string[]): Area[] {
-  const source = listed.filter((p) => SOURCE.test(p) && !SKIP.test(p) && !isTestSupport(p)).sort();
+  const source = listed.filter((p) => SOURCE.test(p) && !SKIP.test(p) && !isTestSupport(p) && !isSampleCode(p)).sort();
   const areas: Area[] = [];
 
   const split = (prefix: string, paths: string[]): void => {
@@ -120,7 +120,7 @@ export function buildAreas(listed: readonly string[]): Area[] {
     areas.splice(best, 2, { id: '', title: `${a.title} + ${b.title}`, prefixes: [...a.prefixes, ...b.prefixes], hint: `${count} source files.` });
   }
 
-  const infra = listed.filter((p) => INFRA.test(p) && !SKIP.test(p)).sort();
+  const infra = listed.filter((p) => INFRA.test(p) && !SKIP.test(p) && !isSampleCode(p)).sort();
   if (infra.length > 0) {
     areas.push({
       id: '',
@@ -148,7 +148,7 @@ export function buildAreas(listed: readonly string[]): Area[] {
 export function analysisPaths(listed: readonly string[], selected: readonly string[], cap: number): string[] {
   const have = new Set(selected);
   return listed
-    .filter((p) => !have.has(p) && (SOURCE.test(p) || INFRA.test(p)) && !SKIP.test(p) && !isTestSupport(p))
+    .filter((p) => !have.has(p) && (SOURCE.test(p) || INFRA.test(p)) && !SKIP.test(p) && !isTestSupport(p) && !isSampleCode(p))
     .sort()
     .slice(0, Math.max(0, cap - selected.length));
 }
@@ -271,6 +271,87 @@ export function normalizeClaims(claims: readonly Claim[], reader: Skeleton): Cla
   });
 }
 
+/**
+ * Entity resolution: the same thing named twice is one thing. Independent voices name
+ * what they find independently — one analyst's "runner" is another's "civil-runner" —
+ * and left alone that draws a duplicate and drops every relation that used the other
+ * name (found on a real repository, 2026-10-11). So before weighing, each entity a
+ * voice proposes is anchored in the code — the path, files, and first piece of evidence
+ * it names — and a new name whose anchors fall within an earlier entity's of the same
+ * kind becomes an alias of it. The reader's names win, then the earliest voice's; an
+ * entity matching two others equally is ambiguous and left as it is, never guessed.
+ * Location alone decides only for deployables (servers, clients): two cannot live at
+ * one path. Services, agents, and processes can share a file — two agents defined side
+ * by side are two agents — so for them the names must also be related, one containing
+ * the other as a whole word ("runner" and "civil-runner"), before they are merged.
+ *
+ * A relation may name an end nobody claimed ("web calls api" where the server is
+ * "civil-api"): it is matched by name only when exactly one entity contains it as a
+ * whole word; otherwise it stays unknown and claims.ts drops the line.
+ */
+export function resolveEntities(claims: readonly Claim[], reader: Skeleton): { claims: Claim[]; aliases: Record<string, string> } {
+  interface Canon { kind: string; id: string; anchors: string[] }
+  const canon: Canon[] = [];
+  const dirOf = (file: string) => file.split('/').slice(0, -1).join('/');
+  const norm = (paths: readonly unknown[]) =>
+    paths.filter((p): p is string => typeof p === 'string' && p.length > 0).map((p) => p.replace(/\/\*\*$/, '').replace(/\/$/, ''));
+  const add = (kind: string, id: string, anchors: string[]) => canon.push({ kind, id, anchors: [...new Set(anchors)] });
+
+  for (const s of reader.servers) add('server', s.id, norm([s.path, s.source.file]));
+  for (const c of reader.clients) add('client', c.id, norm([c.path, c.source.file]));
+  for (const s of reader.services) add('service', s.id, norm([s.source.file, ...(s.files ?? []), ...s.controllers.map((x) => x.file), ...s.providers.map((x) => x.file), ...(s.directory ? [s.directory] : [])]));
+  for (const a of reader.agents) add('agent', a.id, norm([a.source.file, ...a.files]));
+  for (const p of reader.processes) add('process', p.id, norm([p.source.file]));
+
+  /** a lies within b: the same path, or under one of b's directories. */
+  const within = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || (b.includes('.') && dirOf(b) === a);
+  const score = (anchors: string[], target: Canon) => anchors.filter((a) => target.anchors.some((b) => within(a, b) || within(b, a))).length;
+
+  const aliases: Record<string, string> = {};
+  for (const claim of claims) {
+    if (!isEntity(claim.kind) || claim.stance !== 'assert') continue;
+    if (aliases[claim.subject] || canon.some((c) => c.kind === claim.kind && c.id === claim.subject)) continue;
+    const attrs = claim.attrs ?? {};
+    const anchors = norm([attrs['path'], ...strings(attrs['files']), claim.evidence[0]?.file]);
+    const deployable = claim.kind === 'server' || claim.kind === 'client';
+    const related = (a: string, b: string) => {
+      const words = (id: string) => new Set(id.split(/[-_]/));
+      const [wa, wb] = [words(a), words(b)];
+      return [...wa].every((w) => wb.has(w)) || [...wb].every((w) => wa.has(w));
+    };
+    const ranked = canon
+      .filter((c) => c.kind === claim.kind && (deployable || related(c.id, claim.subject)))
+      .map((c) => ({ c, n: score(anchors, c) }))
+      .filter((r) => r.n > 0)
+      .sort((x, y) => y.n - x.n);
+    if (ranked.length > 0 && (ranked.length === 1 || ranked[0]!.n > ranked[1]!.n)) {
+      aliases[claim.subject] = ranked[0]!.c.id;
+    } else if (ranked.length === 0) {
+      add(claim.kind, claim.subject, anchors);
+    }
+  }
+
+  const ids = new Set([...canon.map((c) => c.id)]);
+  const byName = (name: string): string | undefined => {
+    if (ids.has(name)) return name;
+    const word = new RegExp(`(^|-)${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(-|$)`);
+    const hits = [...ids].filter((id) => word.test(id));
+    return hits.length === 1 ? hits[0] : undefined;
+  };
+  const resolve = (id: string, relationEnd: boolean): string => aliases[id] ?? (relationEnd ? byName(id) ?? id : id);
+
+  return {
+    aliases,
+    claims: claims.map((claim) => {
+      const relation = !isEntity(claim.kind);
+      const subject = resolve(claim.subject, relation);
+      const object = claim.object === undefined ? undefined : resolve(claim.object, true);
+      if (subject === claim.subject && object === claim.object) return claim;
+      return { ...claim, subject, ...(object !== undefined ? { object } : {}) };
+    }),
+  };
+}
+
 export interface AnalysisReport {
   areas: number;
   claims: number;
@@ -279,6 +360,8 @@ export interface AnalysisReport {
   verifierClaims: number;
   issues: string[];
   note: string | null;
+  /** Names a voice used for something already named: proposed → canonical. */
+  aliases?: Record<string, string>;
 }
 
 /**
@@ -298,16 +381,24 @@ export async function analyzeRepository(
     report: { areas: 0, claims: 0, analystClaims: 0, verifierClaims: 0, issues: [], note },
   });
   if (!ask) return empty('Agent analysis was skipped: no runner is configured.');
-  const areas = buildAreas(listed);
+  // Sample code is another project: analysts neither read it nor may cite it.
+  const product = listed.filter((p) => !isSampleCode(p));
+  const areas = buildAreas(product);
   if (areas.length === 0) return empty('Agent analysis was skipped: no source files to read.');
   let answer: Record<string, unknown>;
   try {
-    answer = await ask({ files, index: listed, claims: readerClaims, areas });
+    answer = await ask({
+      files: Object.fromEntries(Object.entries(files).filter(([p]) => !isSampleCode(p))),
+      index: product,
+      claims: readerClaims,
+      areas,
+    });
   } catch (error) {
     return empty(`Agent analysis failed (${(error as Error).message}); the reader's findings stand alone.`);
   }
-  const { claims, issues } = validateAnswer(answer, new Set(listed));
-  const normalized = normalizeClaims(claims, reader);
+  const { claims, issues } = validateAnswer(answer, new Set(product));
+  const { claims: resolved, aliases } = resolveEntities(claims, reader);
+  const normalized = normalizeClaims(resolved, reader);
   return {
     claims: normalized,
     report: {
@@ -317,6 +408,7 @@ export async function analyzeRepository(
       verifierClaims: normalized.filter((c) => c.by.startsWith('verifier:')).length,
       issues,
       note: null,
+      aliases,
     },
   };
 }

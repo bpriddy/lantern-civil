@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 # Bump whenever a prompt or tool changes: the API keys memoised analyses on it.
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 MAX_TOKENS = int(os.environ.get("CIVIL_ANALYZE_MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("CIVIL_ANALYZE_MAX_TURNS", "14"))
@@ -54,6 +54,11 @@ queue consumers) — not every function a worker can run.
 Relations: depends-on (service → service it uses), exposes (server → service it \
 serves over its API), calls (client → server it talks to; process → service it runs), \
 uses-agent (service → agent its code invokes).
+Calls BETWEEN deployables matter most and are easy to miss: when code in one server \
+calls another server — over HTTP (a fetch or client to another service's URL), RPC, \
+or a queue — claim depends-on from the calling service to the service that answers, \
+even though they run in different processes. Cite the call site (the URL, client, or \
+queue name) as evidence.
 Routes, operations, endpoints and functions are NEVER claims; mention them only as \
 evidence. Infrastructure plumbing (config, logging, database clients, auth guards, \
 health checks) is not a service unless it is product functionality."""
@@ -79,6 +84,8 @@ For each that concerns your area: if the code supports it, repeat it (same kind,
 subject, object) with your OWN evidence — that is independent confirmation; if the \
 code contradicts it (for example, a "service" that is only a test helper, or an \
 "agent" that is a fake), submit it with stance "refute" and evidence showing why. \
+Example, sample, and demo projects bundled in the repository are not the product: \
+never claim anything from them. \
 Then add what the reader missed, especially agents, background work, and services \
 it could not see. Use the reader's ids for things it found; for new things use \
 short kebab-case ids from the directory or module name. When unsure, leave it out — \

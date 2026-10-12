@@ -1,5 +1,5 @@
 import type { ProjectSource } from '../project/source.js';
-import { LIFT_PATH_CAP, readRepo, selectLiftPathsReport } from './read.js';
+import { LIFT_PATH_CAP, isSampleCode, readRepo, selectLiftPathsReport } from './read.js';
 import { createHash } from 'node:crypto';
 import { REGISTRY_PATH } from '../project/registry.js';
 import { readLiftProvenance } from './documents-registry.js';
@@ -264,10 +264,38 @@ export async function liftRepository(
   });
 
   const diagnostics = [...mapped.diagnostics];
+  // A service's call into another deployable is real architecture the composition has
+  // no edge for yet (service → another server's boundary): said, never silently lost.
+  const servers = new Set(skeleton.servers.map((s) => s.id));
+  const crossing = skeleton.services.flatMap((s) => s.dependsOn.filter((d) => servers.has(d)).map((d) => `${s.id} → ${d}`));
+  if (crossing.length > 0) {
+    diagnostics.push(
+      `note: ${crossing.length} call${crossing.length === 1 ? '' : 's'} into another deployable found but not drawn ` +
+        `(${crossing.slice(0, 6).join(', ')}${crossing.length > 6 ? ', ...' : ''}) — the graph has no edge from a service to another deployable yet.`,
+    );
+  }
   if (unreadable.length > 0) {
     diagnostics.unshift(
       `warning: ${unreadable.length} selected file${unreadable.length === 1 ? '' : 's'} could not be read ` +
         `(too large to fetch, or gone): ${unreadable.slice(0, 5).join(', ')}${unreadable.length > 5 ? ', ...' : ''}`,
+    );
+  }
+  // Sample code left out is said, so a missing part of the graph comes with its reason.
+  const samples = [
+    ...new Set(
+      listed
+        .filter(isSampleCode)
+        .map((p) => {
+          const segments = p.split('/');
+          const at = segments.findIndex((s, i) => i < segments.length - 1 && isSampleCode(`${segments.slice(0, i + 1).join('/')}/x`));
+          return segments.slice(0, at + 2).join('/');
+        }),
+    ),
+  ].sort();
+  if (samples.length > 0) {
+    diagnostics.push(
+      `note: left out ${samples.length} example or sample project${samples.length === 1 ? '' : 's'} ` +
+        `(${samples.slice(0, 4).join(', ')}${samples.length > 4 ? ', ...' : ''}) — they show the product rather than being it.`,
     );
   }
   if (dropped > 0) {
