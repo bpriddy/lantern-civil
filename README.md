@@ -2,6 +2,9 @@
 
 A web IDE for building applications at graph altitude. See [`civil-prd.md`](civil-prd.md).
 
+**North star.** Civil makes it easy to understand any application architecture.
+Civil makes it easy to architect any application and grow the code underneath.
+
 The repo is the truth. Everything the canvas shows is a projection of files in git.
 
 ## Layout

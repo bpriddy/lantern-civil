@@ -7,6 +7,32 @@ lives in docs/prd-deltas.md.*
 
 *A web IDE for building applications at graph altitude.*
 
+## Mission
+
+*Authoritative, set with the owner 2026-10-13. Everything below serves this; where a
+section disagrees, this wins.*
+
+> Software is moving up a level of abstraction. Civil is where AI and agentic engineers
+> work at that altitude — reading and building whole applications as architecture,
+> without ever losing the code underneath.
+
+## North star
+
+> **Civil makes it easy to understand any application architecture.**
+>
+> **Civil makes it easy to architect any application and grow the code underneath.**
+
+*Easy* is the bar. A correct graph that takes an hour to understand misses the first;
+generation that works only with babysitting misses the second. Civil is the one doing
+the work — it makes the reading and the architecting easy, rather than waiting for a
+codebase to already be legible. The two are Civil's two pillars: interpreting a codebase
+into its architecture, and generating the application from it. Neither is optional;
+without both, Civil is a defensible exercise at best.
+
+**Who it is for:** AI and agentic engineers. Whether Civil stays a personal tool or
+becomes a product is not decided and not ruled out — it lands where it lands; §2's
+constraints describe how it is built today, not a limit on what it becomes.
+
 **Audience:** Claude Code, building this. Plus the human reviewing it.
 **Scope:** Core functionality only. Roadmap in §14, open questions in §13.
 **Users:** One. See §2.
