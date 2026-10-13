@@ -333,3 +333,73 @@ test('unresolved refs are reported per node, not as one blanket failure', () => 
     ['step', 'sub'],
   );
 });
+
+// ---------------------------------------------------------------------------
+// §21: domains and containment.
+// ---------------------------------------------------------------------------
+
+test('a node may sit inside a domain, and domains nest', () => {
+  const r = validateComposition(
+    composition({
+      nodes: [
+        { id: 'base', type: 'domain', name: 'Foundation' },
+        { id: 'auth', type: 'domain', parent: 'base' },
+        { id: 'users', type: 'service', parent: 'auth', impl: { entrypoint: 'u.py' } },
+        { id: 'db', type: 'datastore', parent: 'base' },
+      ],
+      edges: [{ id: 'e1', kind: 'depends-on', from: { node: 'users' }, to: { node: 'db' } }],
+    }),
+    'app.yaml',
+    MemoryFiles.from({ 'u.py': '' }),
+  );
+  assert.deepEqual(r.diagnostics, []);
+});
+
+test('a parent must be a domain that exists', () => {
+  const r = validateComposition(
+    composition({
+      nodes: [
+        { id: 'db', type: 'datastore' },
+        { id: 'a', type: 'datastore', parent: 'db' },
+        { id: 'b', type: 'datastore', parent: 'nowhere' },
+      ],
+      edges: [],
+    }),
+    'app.yaml',
+    emptyFiles,
+  );
+  assert.deepEqual(codes(r.diagnostics), ['parent-not-domain', 'parent-not-domain']);
+  assert.match(r.diagnostics[0]!.message, /which is a datastore, not a domain/);
+  assert.match(r.diagnostics[1]!.message, /not a node in this composition/);
+});
+
+test('a domain cannot be inside itself, and the cycle is named', () => {
+  const r = validateComposition(
+    composition({
+      nodes: [
+        { id: 'a', type: 'domain', parent: 'b' },
+        { id: 'b', type: 'domain', parent: 'a' },
+      ],
+      edges: [],
+    }),
+    'app.yaml',
+    emptyFiles,
+  );
+  assert.deepEqual(codes(r.diagnostics), ['domain-cycle', 'domain-cycle']);
+  assert.deepEqual(r.diagnostics[0]!.cyclePath, ['a', 'b', 'a']);
+});
+
+test('edges connect what is inside a domain, never the domain itself', () => {
+  const r = validateComposition(
+    composition({
+      nodes: [
+        { id: 'shop', type: 'domain' },
+        { id: 'db', type: 'datastore' },
+      ],
+      edges: [{ id: 'e1', kind: 'depends-on', from: { node: 'shop' }, to: { node: 'db' } }],
+    }),
+    'app.yaml',
+    emptyFiles,
+  );
+  assert.deepEqual(codes(r.diagnostics), ['edge-touches-domain']);
+});

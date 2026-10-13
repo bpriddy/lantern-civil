@@ -319,6 +319,45 @@ Added 2026-10-11 (`reader-stores.ts`), general rules by shape:
   `unresolved` as ambiguous, none as a client with no declared store. The
   infrastructure module that owns the client wrapper uses the store too.
 
+## Levels
+
+Added 2026-10-13 (`containment.ts`; the vocabulary is prd-deltas §21). A lifted graph
+has levels when it needs them: a system of twelve things or fewer is drawn on one
+level, and a larger one in domains.
+
+Units are found by what the code **reaches**, not by where it is filed. Folder layout
+is a filing choice (an MVC app files every model together); what belongs together is
+what is reached together.
+
+1. **Surfaces.** A client's feature root is the conventional directory (`features/`,
+   `pages/`, `modules/`, `views/`, `screens/`, `routes/`, `areas/`, `domains/`,
+   `apps/`) with the most child directories, at least two; each child is a product
+   surface.
+2. **Reach.** Each surface's imports are walked within its client, and each service's
+   within its own files, collecting what each reaches outside itself — a contract, a
+   route table, a type in a shared package. A file most units reach (a base contract, a
+   client helper) says nothing and is ignored.
+3. **Links.** A surface is the frontend of the service it shares reach with: the
+   service named like it, when that one is linked; otherwise the best match and any
+   near tie. Other services it reaches are services it uses.
+4. **Capabilities.** The linked services, joined when one surface spans several (then
+   named for the surface). Without surfaces, the services a server serves that nothing
+   else depends on.
+5. **Membership.** A service no surface fronts is inside the one capability that uses
+   it (through other such services, or through a surface); used by several, or by
+   none (marked unsure), it is in the **foundation**. Scheduled work goes with the
+   services it runs; a store goes inside the one capability that uses it, else stays
+   at the top.
+6. **Readability.** A foundation over twelve is split by the directory its code is
+   filed in — layout as supporting evidence, never as the decider. A domain holding one
+   thing is that thing. A top level still over twelve is noted for the model to judge.
+
+Each domain carries its evidence (the surface, the shared files) and its unsure
+members. The lift writes the domains as nodes, each lifted node's `parent`, one grid
+per level, and a "Levels" outline in architecture.md; a domain's registry unit lists
+its surface's files. On Update a node's `parent` is filled only when it has none, so a
+node the author moved stays where they put it.
+
 ## Update: the merge
 
 The rules are written out at the top of `documents-merge.ts`; in short:
@@ -394,6 +433,8 @@ it is not a server path and is not part of the product.
 
 ## The canvas
 
+- Each level is laid out on its own grid. A domain's card counts what it holds and
+  descends into its inside.
 - Services are laid out in columns by dependency: each sits right of what
   depends on it, at most four service columns; processes sit beside the
   boundaries. Generate fits the view to the result.

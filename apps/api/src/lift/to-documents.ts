@@ -226,7 +226,16 @@ function canvas(opts: {
   // boundary's exposes or process's calls.
   const gone = new Set([...deleted.keys()].map((id) => ids.get(id)!));
   const wanted = opts.wanted.filter((w) => !deleted.has(w.id));
-  const fresh = columnLayout(wanted.map((w) => ({ id: ids.get(w.id)!, column: w.column })));
+  // One grid per level (§21): a domain's inside is its own canvas, laid out on its own.
+  const levels = new Map<string, typeof wanted>();
+  for (const w of wanted) {
+    const level = String(w.node['parent'] ?? '');
+    levels.set(level, [...(levels.get(level) ?? []), w]);
+  }
+  const fresh = new Map<string, { x: number; y: number }>();
+  for (const level of levels.values()) {
+    for (const [id, at] of columnLayout(level.map((w) => ({ id: ids.get(w.id)!, column: w.column })))) fresh.set(id, at);
+  }
   const existingById = new Map((existing?.nodes ?? []).map((n) => [n['id'] as string, n]));
   const desired: DesiredNode[] = wanted.map((w) => {
     const id = ids.get(w.id)!;
@@ -283,7 +292,7 @@ const implOf = (node: Node | undefined): { graph?: string; entrypoint?: string }
 
 export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions): DocumentsResult {
   const diagnostics: string[] = [];
-  const model = buildModel(skeleton, opts.refinement);
+  const model = buildModel(skeleton, opts.refinement, opts.repo);
   const projectId = toId(opts.projectName, 'project');
   const existing = opts.existing;
   const previous = readPreviousRegistry(existing[REGISTRY_PATH]);
@@ -342,6 +351,11 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
       const m = w as ModelNode;
       const id = ids.get(m.id)!;
       const node: Node = { ...m.node, id };
+      if (typeof node['parent'] === 'string') node['parent'] = ids.get(node['parent']) ?? node['parent'];
+      // Where a node sits is the lift's proposal the first time and the author's after:
+      // a node they moved to another domain stays there.
+      const fill = ['parent'];
+      if (m.type === 'domain') return { id, node, owned: [], fill: [...fill, 'name'] };
       if (m.type === 'boundary') node['exposes'] = (m.node['exposes'] as string[]).map((s) => ids.get(s) ?? s);
       if (m.type === 'process') node['calls'] = (m.node['calls'] as string[]).map((s) => ids.get(s) ?? s);
       if (m.type === 'service') {
@@ -355,12 +369,12 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
           // The author drew this service at a higher resolution than the code shows
           // (no agents found): their graph stands, and the lift says so.
           notes.push(`service "${id}" is a graph in the documents but the repository shows no agents in it; the graph is kept`);
-          return { id, node, owned: [] };
+          return { id, node, owned: [], fill };
         }
       }
-      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'], datastore: ['engine'] }[m.type];
-      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'], datastore: [] }[m.type];
-      return { id, node, owned, union };
+      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'], datastore: ['engine'], domain: [] }[m.type];
+      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'], datastore: [], domain: [] }[m.type];
+      return { id, node, owned, union, fill };
     },
     wasLifted: (n) => previous.has(`app/${n['id'] as string}`),
     render: (nodes, edges, layout) => compositionYaml(projectId, opts.projectName, nodes, edges, layout),

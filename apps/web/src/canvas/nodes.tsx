@@ -45,6 +45,8 @@ export interface NodeData extends Record<string, unknown> {
    * unsure; high and medium stay quiet.
    */
   confidence?: 'high' | 'medium' | 'low';
+  /** A stub for something outside the level being drawn (§21): drawn faint, never edited. */
+  outside?: boolean;
 }
 
 function Face({
@@ -207,6 +209,20 @@ const DatastoreNode = (props: NodeProps) => {
   return <Face kind="datastore" glyph="≣" data={data} ports={{ in: true, out: false }} />;
 };
 
+const DomainNode = (props: NodeProps) => {
+  const data = props.data as NodeData;
+  // A level you step into (§21). Its lines are what is inside it, rolled up, so it
+  // takes and gives edges on both sides.
+  return <Face kind="domain" glyph="▣" data={data} ports={{ in: true, out: true }} />;
+};
+
+const OutsideNode = (props: NodeProps) => {
+  const data = props.data as NodeData;
+  // Something beyond this level that a line reaches: named, faint, and not a door —
+  // go up to see it in place.
+  return <Face kind="outside" glyph="↗" data={data} ports={{ in: true, out: true }} />;
+};
+
 // --- dataflow altitude (PRD 5) --------------------------------------------
 
 const IoNode = (props: NodeProps) => {
@@ -247,6 +263,8 @@ export const compositionNodeTypes = {
   service: ServiceNode,
   process: ProcessNode,
   datastore: DatastoreNode,
+  domain: DomainNode,
+  outside: OutsideNode,
 };
 
 export const graphNodeTypes = {

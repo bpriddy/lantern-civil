@@ -30,7 +30,7 @@ export const REGISTRY_PATH = 'civil/registry.yaml';
 /** The one label outside the derived list, for plumbing that serves several units. */
 export const SHARED_UNIT = 'shared';
 
-export type UnitKind = 'client' | 'boundary' | 'service' | 'process' | 'datastore' | 'graph' | 'agent';
+export type UnitKind = 'client' | 'boundary' | 'service' | 'process' | 'datastore' | 'domain' | 'graph' | 'agent';
 
 export interface Unit {
   /**
@@ -123,6 +123,9 @@ export function deriveUnits(documents: Record<string, string>): Unit[] {
           break;
         case 'datastore':
           // Code generation emits nothing for a store: a unit with no files of its own.
+          break;
+        case 'domain':
+          // A domain contains units; it has no code and uses nothing itself (§21).
           break;
       }
       units.push(unit);

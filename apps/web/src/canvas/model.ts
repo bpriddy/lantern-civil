@@ -2,6 +2,7 @@ import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { Composition, Diagnostic, Graph } from '@civil/schema';
 import { isContract, type AgentEntry, type ContractResult, type LiftUnit } from '../project.js';
 import type { Descent, NodeData } from './nodes.js';
+import { domainSummary, projectLevel } from './levels.js';
 
 /**
  * Turns a manifest into what React Flow draws. Positions come from the `layout`
@@ -82,19 +83,35 @@ function codeDescent(files: string[], include: string[], note: string): Descent 
 
 // --- composition -----------------------------------------------------------
 
+/**
+ * One level of the composition (§21): the top when `scope` is absent, otherwise the
+ * inside of that domain. Edges from deeper in roll up, and edges that leave the level
+ * end at "outside" stubs (levels.ts).
+ */
 export function compositionToFlow(
   composition: Composition,
   file: string,
   diagnostics: Diagnostic[],
   context: FlowContext,
+  scope?: string,
 ): { nodes: Node<NodeData>[]; edges: Edge[] } {
   const layout = composition.layout.nodes;
+  const level = projectLevel(composition, scope);
 
-  const nodes = composition.spec.nodes.map((node, index): Node<NodeData> => {
+  const nodes = level.nodes.map((node, index): Node<NodeData> => {
     let detail: string | undefined;
     let descent: Descent;
+    let label: string = node.id;
 
     switch (node.type) {
+      case 'domain': {
+        // A level of its own: stepping in shows what it holds, so the face says what that is.
+        const summary = domainSummary(composition, node.id);
+        label = node.name ?? node.id;
+        // The interior preview says what it holds; the face needs nothing more.
+        descent = { into: 'canvas', ports: [], summary };
+        break;
+      }
       case 'service':
         // PRD 4: one thing at two resolutions. Which resolution decides which kind
         // of context opens, and the face has to say which.
@@ -138,7 +155,7 @@ export function compositionToFlow(
       type: node.type,
       position: position(layout, node.id, index),
       data: {
-        label: node.id,
+        label,
         descent,
         detail,
         ...contractFor(context, file, node.id),
@@ -152,23 +169,59 @@ export function compositionToFlow(
     };
   });
 
-  const edges = composition.spec.edges.map((edge): Edge => {
+  // Stubs for what lies outside this level, in a column beside what is drawn: what
+  // this level uses on the right, what uses it on the left.
+  const xs = nodes.map((n) => n.position.x);
+  const ys = nodes.map((n) => n.position.y);
+  const [minX, maxX, minY] = [Math.min(0, ...xs), Math.max(0, ...xs), Math.min(0, ...ys)];
+  let rightRow = 0;
+  let leftRow = 0;
+  for (const stub of level.outside) {
+    const left = stub.side === 'in';
+    const row = left ? leftRow++ : rightRow++;
+    nodes.push({
+      id: stub.id,
+      type: 'outside',
+      position: { x: left ? minX - 300 : maxX + 320, y: minY + row * 90 },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      data: {
+        label: stub.path[stub.path.length - 1] ?? stub.target,
+        descent: undefined,
+        detail: stub.path.length > 1 ? `in ${stub.path.slice(0, -1).join(' › ')}` : 'outside this domain',
+        contract: undefined,
+        contractError: undefined,
+        diagnostics: [],
+        // A stub stands for a node elsewhere; it is never edited here.
+        manifest: { id: stub.target, type: 'domain' },
+        outside: true,
+      },
+    });
+  }
+
+  const edges = level.edges.map((edge): Edge => {
     // Carrying `kind` explicitly is what lets the canvas draw PRD 4's relations
     // differently at all.
     const arrow = { type: MarkerType.ArrowClosed, width: 14, height: 14 };
-    const base = { id: edge.id, source: edge.from.node, target: edge.to.node, animated: false, markerEnd: arrow };
+    const base: Edge = { id: edge.id, source: edge.from, target: edge.to, animated: false, markerEnd: arrow };
+    // A rolled-up line is a projection, not a stored edge: it cannot be selected or
+    // deleted here, and it says how many edges it stands for when more than one.
+    const derived: Partial<Edge> = edge.stored ? {} : { selectable: false, deletable: false, focusable: false };
+    const many = edge.count > 1 ? ` ×${edge.count}` : '';
+    const rolled = edge.stored ? '' : ' edge-rollup';
     switch (edge.kind) {
       case 'routes-to':
-        return { ...base, className: 'edge-routes' };
+        return { ...base, ...derived, className: `edge-routes${rolled}`, ...(many ? { label: many.trim() } : {}) };
       case 'calls':
         // A line between deployables: rarer than a dependency and a different kind of
         // claim (a network call through another deployable's boundary), so it is
         // long-dashed AND named — a reader should not have to know the dash code.
-        return { ...base, className: 'edge-calls', label: 'calls', style: { strokeDasharray: '6 4' } };
+        return { ...base, ...derived, className: `edge-calls${rolled}`, label: `calls${many}`, style: { strokeDasharray: '6 4' } };
       default:
         // No label: the dashed stroke is the relation, and a label chip per dependency
         // buries a dense canvas (a lifted backend has dozens) in "depends on".
-        return { ...base, className: 'edge-depends', style: { strokeDasharray: '2 4' } };
+        return { ...base, ...derived, className: `edge-depends${rolled}`, style: { strokeDasharray: '2 4' }, ...(many ? { label: many.trim() } : {}) };
     }
   });
 

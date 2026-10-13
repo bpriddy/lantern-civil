@@ -409,6 +409,12 @@ function NodeDetail({
         />,
       );
       break;
+    case 'domain':
+      // What the canvas calls it; emptying it shows the id.
+      fields.push(
+        <Field key="name" label="name" value={node.name ?? ''} placeholder={node.id} onCommit={optional('name')} />,
+      );
+      break;
     case 'io':
       fields.push(
         <div key="direction" style={{ display: 'contents' }}>

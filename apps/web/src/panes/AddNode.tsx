@@ -290,6 +290,20 @@ const COMPOSITION: NodeFamily[] = [
       },
     ],
   },
+  {
+    label: 'Domain',
+    hint: 'A part of the application you step into: a feature and its services, or shared foundation.',
+    // No scaffold: a domain has no code. What goes inside it is added from inside it.
+    kinds: [
+      {
+        label: 'Domain',
+        type: 'domain',
+        idBase: 'domain',
+        hint: 'A part of the application you step into.',
+        defaults: () => ({}),
+      },
+    ],
+  },
 ];
 
 const GRAPH: NodeFamily[] = [

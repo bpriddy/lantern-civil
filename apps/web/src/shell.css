@@ -429,6 +429,30 @@ body {
 .node-datastore.node-error::before { border-color: var(--danger); }
 .node-datastore.node-blocked::before { border-color: var(--warn); }
 
+/* A domain is a level you step into (§21): drawn as a stack of cards, so it reads as
+   holding more than one thing before you open it. */
+.node-domain .node-glyph { color: #e8c36a; }
+.node-domain {
+  border-color: var(--border-strong);
+  box-shadow:
+    4px 4px 0 -1px var(--bg-raised),
+    4px 4px 0 0 var(--border-strong),
+    8px 8px 0 -1px var(--bg-raised),
+    8px 8px 0 0 var(--border);
+}
+.node-domain .node-label { font-weight: 600; }
+
+/* Something outside the level being drawn: named, faint, not a door. */
+.node-outside {
+  opacity: 0.6;
+  border-style: dashed;
+  background: transparent;
+}
+.node-outside .node-glyph { color: var(--text-faint); }
+
+/* A line that stands for edges deeper in: drawn lighter than a stored edge. */
+.react-flow__edge.edge-rollup path { opacity: 0.55; }
+
 /* Dataflow altitude accents. */
 .node-input .node-glyph, .node-output .node-glyph { color: #9aa7b8; }
 .node-progress .node-glyph { color: var(--warn); }
@@ -455,6 +479,8 @@ body {
 .react-flow__edge.edge-calls .react-flow__edge-text { fill: #7cc4ff; }
 .react-flow__edge.edge-calls .react-flow__edge-textbg { fill: var(--bg); }
 .react-flow__edge-text { fill: var(--text-faint); font-size: 9px; }
+/* A count on a rolled-up line ("×5"), on the canvas ground rather than a white chip. */
+.react-flow__edge-textbg { fill: var(--bg); }
 
 /* Selection glows the same accent on an edge as on a node. The extra .react-flow
    ancestor outguns React Flow's own .selected rule (stroke: #555), which ships in

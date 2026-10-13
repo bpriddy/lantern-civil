@@ -28,6 +28,7 @@ from patterns import analyze  # noqa: E402
 from server import Handler  # noqa: E402
 from transpile import (  # noqa: E402
     PROMPT_VERSION,
+    _codeless,
     _route_issues,
     TranspileValidationError,
     transpile,
@@ -251,6 +252,12 @@ def test_codeless_units_get_no_files_not_even_placeholders() -> None:
     client = FakeClient(emission(("src/graphs/classify.py", GOOD, "orchestration", "graph/classify")))
     ok(transpile(DOCUMENTS, None, CONTEXT, client, "m", UNITS, stale)["attempts"] == 1,
        "a codeless unit's leftover file may be dropped without a retry")
+
+
+def test_a_domain_is_codeless() -> None:
+    print("test_a_domain_is_codeless")
+    ok(_codeless({"id": "app/shop", "kind": "domain"}), "a domain groups units and owns no code")
+    ok(not _codeless({"id": "app/api", "kind": "boundary", "boundary": "api"}), "an api boundary still emits")
 
 
 def test_units_ride_back_and_the_list_rides_the_prompt() -> None:
@@ -657,7 +664,7 @@ def test_transpile_meta_carries_the_prompt_version() -> None:
             and isinstance(meta.get("analyzeVersion"), str),
             "the memo hash inputs ride the meta seam",
         )
-        ok(meta["promptVersion"] == "11", "datastores and calls edges bumped the prompt version")
+        ok(meta["promptVersion"] == "12", "domains bumped the prompt version")
         connection.close()
     finally:
         server.shutdown()

@@ -15,6 +15,13 @@ import { zApiVersion, zId, zLayout, zMetadata, zRelPath } from './common.js';
  */
 
 /**
+ * The domain a node is drawn inside (2026-10-13, docs/prd-deltas.md §21): absent means
+ * the top level. Containment is architecture, so it is in spec; where a node sits on
+ * its level is layout.
+ */
+export const zParent = zId.optional();
+
+/**
  * PRD 8.1: sync-vs-async is a surface default configured where the surface is —
  * the boundary node. Omitted means Civil infers it from whether an agent appears
  * on the flow path, transitively. Present means the author overrode the inference.
@@ -27,6 +34,7 @@ export const zInvocation = z.record(zId, z.enum(['sync', 'async'])).optional();
  */
 export const zBoundaryNode = z.object({
   id: zId,
+  parent: zParent,
   type: z.literal('boundary'),
   boundary: z.enum(['api', 'mcp']),
   exposes: z.array(zId).default([]),
@@ -40,6 +48,7 @@ export const zBoundaryNode = z.object({
  */
 export const zClientNode = z.object({
   id: zId,
+  parent: zParent,
   type: z.literal('client'),
   client: z.enum(['web', 'mobile']),
   path: zRelPath,
@@ -57,6 +66,7 @@ export const zServiceImpl = z.union([
 
 export const zServiceNode = z.object({
   id: zId,
+  parent: zParent,
   type: z.literal('service'),
   impl: zServiceImpl,
 });
@@ -69,6 +79,7 @@ export const zTrigger = z.object({
 
 export const zProcessNode = z.object({
   id: zId,
+  parent: zParent,
   type: z.literal('process'),
   trigger: zTrigger,
   calls: z.array(zId).default([]),
@@ -84,11 +95,28 @@ export const zProcessNode = z.object({
  */
 export const zDatastoreNode = z.object({
   id: zId,
+  parent: zParent,
   type: z.literal('datastore'),
   engine: z.string().min(1).optional(),
 });
 
+/**
+ * A part of the application you step into: a capability (a feature and the services
+ * behind it) or a part of the shared foundation. Added to the closed vocabulary
+ * 2026-10-13 (owner's call; docs/prd-deltas.md §21) so a graph has levels: the top is
+ * the whole system, and each domain is a canvas of its own. Domains nest through
+ * `parent`. A domain has no code and no edges of its own — the canvas draws the edges
+ * of what is inside it, rolled up — so generation emits nothing for one.
+ */
+export const zDomainNode = z.object({
+  id: zId,
+  parent: zParent,
+  type: z.literal('domain'),
+  name: z.string().min(1).optional(),
+});
+
 export const zCompositionNode = z.discriminatedUnion('type', [
+  zDomainNode,
   zClientNode,
   zBoundaryNode,
   zServiceNode,
@@ -138,3 +166,4 @@ export type BoundaryNode = z.infer<typeof zBoundaryNode>;
 export type ClientNode = z.infer<typeof zClientNode>;
 export type ProcessNode = z.infer<typeof zProcessNode>;
 export type DatastoreNode = z.infer<typeof zDatastoreNode>;
+export type DomainNode = z.infer<typeof zDomainNode>;

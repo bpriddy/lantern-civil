@@ -34,6 +34,9 @@ export const DIAGNOSTIC_CODES = [
   'io-direction-violation',
   'subgraph-cycle',
   'flow-cycle',
+  'parent-not-domain',
+  'domain-cycle',
+  'edge-touches-domain',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];

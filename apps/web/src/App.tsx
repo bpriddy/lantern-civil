@@ -163,6 +163,7 @@ const BOOT_ROUTE = parseRoute(window.location.pathname);
 /** What the stack looks like on arrival at a route (labels firm up at bundle load). */
 const stackForRoute = (route: Route): Altitude[] => {
   const base: Altitude[] = [{ kind: 'composition', label: 'app' }];
+  if (route.kind === 'domain') base.push({ kind: 'composition', domain: route.domain, label: route.domain });
   if (route.kind === 'graph') {
     base.push({
       kind: 'graph',
@@ -281,17 +282,24 @@ function Workspace({ me }: { me: Me }) {
   const currentPath = useMemo(() => {
     if (atHome || !activeId) return '/';
     let graph: string | undefined;
+    let domain: string | undefined;
     for (let i = stack.length - 1; i >= 0; i--) {
       const level = stack[i];
       if (level?.kind === 'graph') {
         graph = level.path;
         break;
       }
+      if (level?.kind === 'composition' && level.domain) {
+        domain = level.domain;
+        break;
+      }
     }
     return routePath(
       graph
         ? { kind: 'graph', projectId: activeId, graphPath: graph }
-        : { kind: 'project', projectId: activeId },
+        : domain
+          ? { kind: 'domain', projectId: activeId, domain }
+          : { kind: 'project', projectId: activeId },
     );
   }, [atHome, activeId, stack]);
 
@@ -385,6 +393,19 @@ function Workspace({ me }: { me: Me }) {
             label: bundle.project.name || 'app',
           };
           const top = current[current.length - 1];
+          // A level inside the composition survives when the domain still exists: the
+          // chain of domains above it is rebuilt from the document, so the breadcrumb
+          // reads from the top however the place was reached.
+          const domainAt = (id: string) => bundle.composition?.spec.nodes.find((n) => n.id === id && n.type === 'domain');
+          if (top?.kind === 'composition' && top.domain && domainAt(top.domain)) {
+            const chain: Altitude[] = [];
+            for (let at: string | undefined = top.domain; at && chain.length < 32; at = domainAt(at)?.parent) {
+              const node = domainAt(at);
+              if (!node) break;
+              chain.unshift({ kind: 'composition', domain: at, label: (node.type === 'domain' && node.name) || at });
+            }
+            return [composition, ...chain];
+          }
           if (top?.kind === 'graph' && bundle.graphs[top.path]) {
             const doc = bundle.graphs[top.path]!;
             return [
@@ -575,7 +596,7 @@ function Workspace({ me }: { me: Me }) {
         const flow =
           current.kind === 'composition'
             ? bundle.composition &&
-              compositionToFlow(bundle.composition, bundle.compositionPath, bundle.diagnostics, context)
+              compositionToFlow(bundle.composition, bundle.compositionPath, bundle.diagnostics, context, current.domain)
             : bundle.graphs[current.path] &&
               graphToFlow(bundle.graphs[current.path]!, current.path, bundle.diagnostics, context);
         const flowNode = flow?.nodes.find((n) => n.id === selectedIds[0]);
@@ -1307,7 +1328,20 @@ function Workspace({ me }: { me: Me }) {
       const edge = graphOrComposition?.spec.edges.find((e) => e.id === id);
       return !edge || (!doomed.has(edge.from.node) && !doomed.has(edge.to.node));
     });
+    // A domain removed gives what it held to the level above (§21): its contents are
+    // the application, the domain only a way of drawing it.
+    const lifted: ManifestOp[] =
+      current.kind === 'composition'
+        ? (bundle?.composition?.spec.nodes ?? [])
+            .filter((n) => n.parent !== undefined && doomed.has(n.parent) && !doomed.has(n.id))
+            .map((n): ManifestOp => {
+              let above = bundle?.composition?.spec.nodes.find((d) => d.id === n.parent)?.parent;
+              while (above !== undefined && doomed.has(above)) above = bundle?.composition?.spec.nodes.find((d) => d.id === above)?.parent;
+              return { op: 'updateNode', id: n.id, patch: { parent: above ?? null } };
+            })
+        : [];
     const ops: ManifestOp[] = [
+      ...lifted,
       ...confirming.nodes.map((id): ManifestOp => ({ op: 'removeNode', id })),
       ...edgeIds.map((id): ManifestOp => ({ op: 'removeEdge', id })),
       // Only for edges removed on their own; removeNode leaves exposes deliberately
@@ -1394,9 +1428,11 @@ function Workspace({ me }: { me: Me }) {
           return;
         }
       }
+      // Added where you are: inside the domain on screen, if any.
+      const here = current.kind === 'composition' && current.domain ? { parent: current.domain } : {};
       await runOps(
         [
-          { op: 'addNode', node },
+          { op: 'addNode', node: { ...node, ...here } },
           // Somewhere visible rather than at the origin. Where exactly is the open
           // question about what a command targets — see docs/roadmap.md.
           { op: 'setLayout', id: String(node['id']), x: 120, y: 420 },
@@ -1404,7 +1440,7 @@ function Workspace({ me }: { me: Me }) {
         'Add node',
       );
     },
-    [runOps, activeId, bundle, report],
+    [runOps, activeId, bundle, report, current],
   );
 
 

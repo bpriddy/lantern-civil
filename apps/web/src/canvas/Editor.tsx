@@ -17,6 +17,7 @@ import '@xyflow/react/dist/style.css';
 import type { ProjectBundle } from '../project.js';
 import { nextEdgeId, proposeCompositionEdge, proposeGraphEdge } from './edges.js';
 import { compositionToFlow, graphToFlow } from './model.js';
+import { OUTSIDE } from './levels.js';
 import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js';
 
 /**
@@ -27,11 +28,12 @@ import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js'
  */
 /** The altitudes the canvas itself can draw. A code level is a takeover, not a canvas. */
 export type CanvasAltitude =
-  | { kind: 'composition'; label: string }
+  // `domain` is the level inside one domain (§21); absent, the top.
+  | { kind: 'composition'; label: string; domain?: string }
   | { kind: 'graph'; path: string; label: string };
 
 export type Altitude =
-  | { kind: 'composition'; label: string }
+  | { kind: 'composition'; label: string; domain?: string }
   | { kind: 'graph'; path: string; label: string }
   // PRD 5: a node is a canvas or it is code. A code level is a viewport takeover,
   // not another canvas, which is why it carries files rather than a manifest path.
@@ -142,7 +144,7 @@ function Surface({
       const composition = bundle.composition;
       if (!composition) return { nodes: [], edges: [], nodeTypes: compositionNodeTypes };
       return {
-        ...compositionToFlow(composition, bundle.compositionPath, bundle.diagnostics, context),
+        ...compositionToFlow(composition, bundle.compositionPath, bundle.diagnostics, context, current.domain),
         nodeTypes: compositionNodeTypes,
       };
     }
@@ -214,7 +216,10 @@ function Surface({
 
   /** The manifest nodes behind the current canvas, for inferring what a link means. */
   const manifestNodes = useMemo(() => {
-    if (current.kind === 'composition') return bundle.composition?.spec.nodes ?? [];
+    // Only what this level draws: a line can be drawn between those, and nothing else.
+    if (current.kind === 'composition') {
+      return (bundle.composition?.spec.nodes ?? []).filter((n) => n.parent === current.domain);
+    }
     return bundle.graphs[current.path]?.spec.nodes ?? [];
   }, [bundle, current]);
 
@@ -233,6 +238,10 @@ function Surface({
       if (!connection.source || !connection.target) return;
       if (connection.source === connection.target) {
         onRefuse('A node cannot connect to itself.');
+        return;
+      }
+      if (connection.source.startsWith(OUTSIDE) || connection.target.startsWith(OUTSIDE)) {
+        onRefuse('That is outside this domain. Go up to the level that holds both ends to connect them.');
         return;
       }
 
@@ -352,6 +361,9 @@ export function descentTarget(data: NodeData): Altitude | undefined {
     return { kind: 'code', label, files: descent.files };
   }
 
+  if (manifest.type === 'domain' && !data.outside) {
+    return { kind: 'composition', domain: manifest.id, label: data.label };
+  }
   if (manifest.type === 'subgraph') {
     return { kind: 'graph', path: manifest.ref, label: manifest.id };
   }

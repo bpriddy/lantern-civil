@@ -1,6 +1,7 @@
 import { ID_PATTERN } from '@civil/schema';
 import { applyRefinement } from './refine.js';
-import type { Refinement, Skeleton, SkeletonAgent, SkeletonServer, SkeletonService } from './skeleton.js';
+import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonServer, SkeletonService } from './skeleton.js';
+import { buildContainment, type Containment, type Domain } from './containment.js';
 
 /**
  * The lifted model: what the civil/ documents should say about the repository, before
@@ -70,7 +71,7 @@ export function idAllocator(taken: Iterable<string> = []) {
 
 const dirOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
-export type CompositionType = 'client' | 'boundary' | 'service' | 'process' | 'datastore';
+export type CompositionType = 'client' | 'boundary' | 'service' | 'process' | 'datastore' | 'domain';
 
 export interface ModelNode {
   /** The lift's id for it; the merge may map it to the author's. */
@@ -80,6 +81,8 @@ export interface ModelNode {
   node: Record<string, unknown>;
   /** Layout column: clients, boundaries, services, processes. */
   column: number;
+  /** The lift id of the domain it is drawn inside (§21); absent at the top. */
+  parent?: string;
   /** Files that identify it across runs, primary first — what the registry is matched on. */
   anchors: string[];
   /** The repo files that implement the composition node (registry unit app/<id>). */
@@ -134,6 +137,8 @@ export interface LiftModel {
   boundaryOf: Record<string, string>;
   /** What the mapping had to leave out or assume, in words. */
   notes: string[];
+  /** The levels, when the repository's files were given (containment.ts). */
+  containment?: Containment;
 }
 
 const allIds = (s: Skeleton): Set<string> =>
@@ -346,7 +351,7 @@ function graphFor(
  * Infrastructure modules are left off the canvas: they serve every service, and
  * drawing them would bury the product shape under plumbing.
  */
-export function buildModel(input: Skeleton, refinement: Refinement | null): LiftModel {
+export function buildModel(input: Skeleton, refinement: Refinement | null, files?: FileMap): LiftModel {
   const skeleton = refined(input, refinement);
   const descriptions = refinement?.descriptions ?? {};
   const notes: string[] = [];
@@ -541,9 +546,54 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     node.column = 2 + Math.min(MAX_SERVICE_LAYERS - 1, levelOf(node.id, new Set()));
   }
 
-  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values()]) {
+  // Levels (§21): the domains the code shows, each drawn as a node you step into, and
+  // every lifted node placed inside the domain that holds it. Only with the files: reach
+  // is read from them, and a model built without them is the flat one.
+  const containment = files ? buildContainment(skeleton, files) : undefined;
+  const domainId = new Map<string, string>();
+  if (containment) {
+    const all: { domain: Domain; parent?: string }[] = [];
+    const walk = (list: Domain[], parent?: string) => {
+      for (const d of list) {
+        all.push({ domain: d, ...(parent ? { parent } : {}) });
+        walk(d.domains, d.id);
+      }
+    };
+    walk(containment.domains);
+    for (const { domain } of all) domainId.set(domain.id, take(toId(domain.id, 'domain'), 'domain'));
+    for (const { domain, parent } of all) {
+      const id = domainId.get(domain.id)!;
+      const surfaceFiles = files ? Object.keys(files).filter((f) => domain.surfaces.some((dir) => f.startsWith(`${dir}/`))) : [];
+      nodes.push({
+        id,
+        type: 'domain',
+        node: { id, type: 'domain', ...(parent ? { parent: domainId.get(parent)! } : {}), name: domain.name },
+        // Capabilities beside the services; the foundation at the far side, before the stores.
+        column: domain.foundation ? 1 + MAX_SERVICE_LAYERS : 2,
+        ...(parent ? { parent: domainId.get(parent)! } : {}),
+        // Matched on Update by its id; a domain has no file of its own to anchor on.
+        anchors: [],
+        // A capability's frontend feature is part of it: its files are the domain's.
+        files: sortedUnique(surfaceFiles.length ? surfaceFiles : domain.evidence.map((e) => e.file)),
+        label: domain.name,
+      });
+    }
+    for (const node of nodes) {
+      if (node.type === 'domain' || !node.entity) continue;
+      const home = containment.parentOf[node.entity];
+      if (!home || !domainId.has(home)) continue;
+      const parent = domainId.get(home)!;
+      node.parent = parent;
+      // The house order: id, type, then where it sits, then what it is.
+      const { id, type, ...rest } = node.node;
+      node.node = { id, type, parent, ...rest };
+    }
+  }
+
+  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values(), ...domainId.values()]) {
     if (!ID_PATTERN.test(id)) notes.push(`"${id}" is not a valid Civil id`);
   }
+  if (containment) notes.push(...containment.notes);
 
   return {
     nodes,
@@ -554,6 +604,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null): Lift
     summary: refinement?.summary ?? null,
     boundaryOf: Object.fromEntries(boundaryId),
     notes,
+    ...(containment ? { containment } : {}),
   };
 }
 
