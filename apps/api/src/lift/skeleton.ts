@@ -217,6 +217,32 @@ export interface SkeletonDatastore {
   source: SourceRef;
 }
 
+/**
+ * A domain (prd-deltas §21): a level of the graph, found by containment.ts and weighed
+ * as claims like every other entity. Its members are said by `contains` claims, so an
+ * analyst can move one with evidence; a domain's own place is a `contains` from its
+ * parent domain.
+ */
+export interface SkeletonDomain {
+  /** kebab-case, unique among every entity id. */
+  id: string;
+  /** What the canvas shows: "Orders", "Foundation". */
+  name: string;
+  /** The domain it sits inside; absent at the top. */
+  parent?: string;
+  /** Entity ids directly inside: services, processes, datastores. */
+  members: string[];
+  /** True for the shared foundation and its parts. */
+  foundation?: boolean;
+  /** Frontend feature directories this capability is the backend of. */
+  surfaces: string[];
+  /** Members placed on weak evidence: the analysts are asked about them. */
+  unsure: string[];
+  /** One sentence on what it does for the user, when a voice gave one. */
+  description?: string;
+  source: SourceRef;
+}
+
 export interface Skeleton {
   clients: SkeletonClient[];
   servers: SkeletonServer[];
@@ -225,6 +251,8 @@ export interface Skeleton {
   processes: SkeletonProcess[];
   /** Optional so skeletons from before datastores existed still read. */
   datastores?: SkeletonDatastore[];
+  /** The levels (§21); absent when the system fits on one, or before levels existed. */
+  domains?: SkeletonDomain[];
   /** What the reader saw but could not resolve — reported, never guessed. */
   unresolved: { file: string; line?: number; reason: string }[];
   /** Frameworks detected, for the summary: ["nestjs", "vite"]. */

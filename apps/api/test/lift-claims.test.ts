@@ -140,3 +140,69 @@ test('claims whose evidence does not hold, and lines to nothing, are not drawn',
   assert.deepEqual(skeleton.services.find((s: { id: string }) => s.id === 'notes')!.dependsOn, ['tasks']);
   assert.deepEqual(dropped.map((b: { key: string }) => b.key).sort(), ['depends-on:notes->billing', 'service:billing']);
 });
+
+// ---------------------------------------------------------------------------
+// §21: domains are claims. The reader's tree passes through unchanged; an analyst
+// renames and places what is unsure; a sound refutation and a stronger placement move
+// members, and nothing is ever inside itself.
+// ---------------------------------------------------------------------------
+
+const WITH_DOMAINS = {
+  ...SKELETON,
+  processes: [{ id: 'sweep', schedule: '0 3 * * *', calls: ['tasks'], source: { file: 'apps/server/src/tasks/tasks.module.ts', line: 5 } }],
+  domains: [
+    {
+      id: 'tasks-domain', name: 'Tasks', members: ['sweep', 'tasks'], surfaces: ['apps/web/src/features/tasks'],
+      unsure: ['sweep'], source: { file: 'apps/server/src/tasks/tasks.module.ts', line: 5 },
+    },
+    {
+      id: 'base', name: 'Modules', foundation: true, members: ['notes'], surfaces: [], unsure: [],
+      source: { file: 'apps/server/src/notes/notes.module.ts', line: 4 },
+    },
+  ],
+};
+
+test('the reader\'s domains pass through the claims layer unchanged', () => {
+  const claims = claimsFromSkeleton(WITH_DOMAINS as never);
+  assert.ok(!claims.some((c) => c.kind === 'contains' && c.object === 'sweep'), 'an unsure member is not claimed by the reader');
+  const { skeleton } = toSkeleton(reconcile(claims, FILES), WITH_DOMAINS as never);
+  assert.deepEqual(skeleton.domains, WITH_DOMAINS.domains);
+});
+
+const cite = (file: string, line: number, quote: string) => [{ file, line, quote }];
+
+test('an analyst names a domain the reader named by its folder, and places an unsure member', () => {
+  const claims = [
+    ...claimsFromSkeleton(WITH_DOMAINS as never),
+    { kind: 'domain', subject: 'base', attrs: { name: 'Notes and sharing', description: 'Keeps notes.' }, by: 'analyst:base', stance: 'assert', evidence: cite('apps/server/src/notes/notes.module.ts', 4, '@Module') },
+    { kind: 'contains', subject: 'base', object: 'sweep', by: 'analyst:base', stance: 'assert', evidence: cite('apps/server/src/notes/notes.module.ts', 4, 'TasksModule') },
+  ];
+  const { skeleton } = toSkeleton(reconcile(claims as never, FILES), WITH_DOMAINS as never);
+  const base = skeleton.domains!.find((d) => d.id === 'base')!;
+  assert.equal(base.name, 'Notes and sharing');
+  assert.equal(base.description, 'Keeps notes.');
+  assert.deepEqual(base.members, ['notes', 'sweep'], 'the analyst placed what the reader was unsure of');
+  assert.deepEqual(skeleton.domains!.find((d) => d.id === 'tasks-domain')!.members, ['tasks']);
+});
+
+test('a merge: the stronger placement wins, and a refuted domain gives up what it held', () => {
+  const claims = [
+    ...claimsFromSkeleton(WITH_DOMAINS as never),
+    // The architect moves notes into tasks-domain and refutes base; a verifier agrees.
+    ...['architect:tree', 'verifier:architect'].map((by) => ({ kind: 'contains', subject: 'tasks-domain', object: 'notes', by, stance: 'assert', evidence: cite('apps/server/src/notes/notes.module.ts', 4, 'TasksModule') })),
+    { kind: 'domain', subject: 'base', by: 'architect:tree', stance: 'refute', evidence: cite('apps/server/src/notes/notes.module.ts', 4, 'TasksModule') },
+  ];
+  const { skeleton } = toSkeleton(reconcile(claims as never, FILES), WITH_DOMAINS as never);
+  assert.deepEqual(skeleton.domains!.map((d) => d.id), ['tasks-domain']);
+  assert.deepEqual(skeleton.domains![0]!.members, ['notes', 'sweep', 'tasks']);
+});
+
+test('no domain is drawn inside itself, whatever the voices say', () => {
+  const claims = [
+    ...claimsFromSkeleton(WITH_DOMAINS as never),
+    ...[['tasks-domain', 'base'], ['base', 'tasks-domain']].map(([subject, object]) => ({ kind: 'contains', subject, object, by: 'analyst:x', stance: 'assert', evidence: cite('apps/server/src/notes/notes.module.ts', 4, '@Module') })),
+  ];
+  const { skeleton } = toSkeleton(reconcile(claims as never, FILES), WITH_DOMAINS as never);
+  const parents = Object.fromEntries(skeleton.domains!.map((d) => [d.id, d.parent]));
+  assert.ok(!(parents['base'] === 'tasks-domain' && parents['tasks-domain'] === 'base'), 'the cycle is cut');
+});

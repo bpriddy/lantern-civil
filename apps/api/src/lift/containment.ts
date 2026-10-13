@@ -2,7 +2,7 @@ import { posix } from 'node:path';
 import ts from 'typescript';
 import { byString, isTestSupport, isUnder, RepoContext } from './read.js';
 import type { Evidence } from './claims.js';
-import type { FileMap, Skeleton, SkeletonService } from './skeleton.js';
+import type { FileMap, Skeleton, SkeletonDomain, SkeletonService } from './skeleton.js';
 
 /**
  * Containment: the levels a lifted graph is drawn at (docs/lift-repo.md, "Levels").
@@ -362,21 +362,15 @@ export function buildContainment(skeleton: Skeleton, files: FileMap): Containmen
     domains.push(found);
   }
 
-  // --- 7. Collapse: a domain of one thing is that thing (nothing to step into). ---
-  const collapse = (list: Domain[]): { domains: Domain[]; loose: string[] } => {
-    const kept: Domain[] = [];
-    const loose: string[] = [];
-    for (const d of list) {
-      const inner = collapse(d.domains);
-      d.domains = inner.domains;
-      d.members.push(...inner.loose);
-      if (d.domains.length === 0 && d.members.length === 1) loose.push(d.members[0]!);
-      else if (d.domains.length === 0 && d.members.length === 0) continue;
-      else kept.push(d);
-    }
-    return { domains: kept, loose };
-  };
-  const top = collapse(domains);
+  // --- 7. Empty domains go. A domain of one thing stays: it is still a capability —
+  //        its surface and its analyst — and the mapper draws it as that one thing
+  //        (documents-model.ts), since there is nothing to step into.
+  const prune = (list: Domain[]): Domain[] =>
+    list.filter((d) => {
+      d.domains = prune(d.domains);
+      return d.domains.length > 0 || d.members.length > 0;
+    });
+  const top = { domains: prune(domains) };
 
   const parentOf: Record<string, string> = {};
   const domainParentOf: Record<string, string> = {};
@@ -447,4 +441,27 @@ function dedupe(evidence: Evidence[]): Evidence[] {
     seen.add(key);
     return true;
   });
+}
+
+/** The tree as skeleton entities, outermost first, so claims can carry it. */
+export function toSkeletonDomains(containment: Containment): SkeletonDomain[] {
+  const out: SkeletonDomain[] = [];
+  const walk = (list: Domain[], parent?: string) => {
+    for (const d of list) {
+      const first = d.evidence[0];
+      out.push({
+        id: d.id,
+        name: d.name,
+        ...(parent ? { parent } : {}),
+        members: [...d.members].sort(byString),
+        ...(d.foundation ? { foundation: true } : {}),
+        surfaces: d.surfaces,
+        unsure: [...d.unsure].sort(byString),
+        source: first ? { file: first.file, ...(first.line ? { line: first.line } : {}) } : { file: d.surfaces[0] ?? '' },
+      });
+      walk(d.domains, d.id);
+    }
+  };
+  walk(containment.domains);
+  return out;
 }

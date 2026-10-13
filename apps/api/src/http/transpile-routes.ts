@@ -14,6 +14,7 @@ import {
 import { applyOps, type ManifestOp } from '../manifest/apply.js';
 import { ManifestEditError } from '../manifest/document.js';
 import { parse } from 'yaml';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { zGraph, type GraphEdge } from '@civil/schema';
 import { getProject, type ProjectRow } from '../project/repository.js';
 import type { ProjectSource } from '../project/source.js';
@@ -72,15 +73,25 @@ export class RunnerError extends Error {
 }
 
 /** POST with a payload, GET without one; auth and error mapping are the same seam. */
+/**
+ * The runner's work happens inside the request: a transpile, or the lift's architect
+ * reviewing a whole domain tree, can take longer than the five minutes fetch waits for
+ * response headers by default. Runner calls wait as long as the API's own request may
+ * run (infra/terraform/run.tf, 1800s); anything slower is the API's timeout, not this.
+ */
+const RUNNER_WAIT_MS = 30 * 60 * 1000;
+const runnerAgent = new Agent({ headersTimeout: RUNNER_WAIT_MS, bodyTimeout: RUNNER_WAIT_MS });
+
 export async function callRunner(
   runnerUrl: string,
   path: string,
   payload?: unknown,
 ): Promise<Record<string, unknown>> {
   const idToken = await idTokenFor(runnerUrl);
-  let response: Response;
+  let response: Awaited<ReturnType<typeof undiciFetch>>;
   try {
-    response = await fetch(`${runnerUrl}${path}`, {
+    response = await undiciFetch(`${runnerUrl}${path}`, {
+      dispatcher: runnerAgent,
       ...(payload === undefined
         ? { method: 'GET' }
         : { method: 'POST', body: JSON.stringify(payload) }),

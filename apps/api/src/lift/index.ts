@@ -9,6 +9,7 @@ import { zProject } from '@civil/schema';
 import type { FileMap, Skeleton } from './skeleton.js';
 import { skeletonToDocuments } from './to-documents.js';
 import { claimsFromSkeleton, reconcile, toSkeleton } from './claims.js';
+import { buildContainment, toSkeletonDomains } from './containment.js';
 import { analysisPaths, analyzeRepository, type AnalysisReport, type AnalyzeAsk, type AnalyzeOptions } from './analysts.js';
 
 /** Where a lift is, for progress: in order. */
@@ -195,6 +196,11 @@ export async function liftRepository(
   // 3. Deterministic reading: frameworks detected by package.json, then each app read
   //    with the TypeScript compiler API. This alone is a complete, valid result.
   const read = readRepo(files);
+  // 3a. Levels (§21): the domains the code shows, found by what it reaches. They are
+  //     claims like everything else below, so an analyst can rename one, move a member
+  //     with evidence, or refute it.
+  const levels = buildContainment(read, files);
+  if (levels.domains.length) read.domains = toSkeletonDomains(levels);
 
   // 3b. Claims (claims.ts): the reader's findings restated as evidence-backed claims,
   //     checked against the code, weighed, and assembled back into a skeleton. Today

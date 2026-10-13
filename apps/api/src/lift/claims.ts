@@ -3,6 +3,7 @@ import type {
   Skeleton,
   SkeletonAgent,
   SkeletonDatastore,
+  SkeletonDomain,
   SkeletonClient,
   SkeletonProcess,
   SkeletonServer,
@@ -27,13 +28,14 @@ import type {
  */
 
 /** Entities: things the graph draws. */
-export type EntityKind = 'server' | 'client' | 'service' | 'agent' | 'process' | 'datastore';
+export type EntityKind = 'server' | 'client' | 'service' | 'agent' | 'process' | 'datastore' | 'domain';
 /** Relations: the lines between them. */
 export type RelationKind =
   | 'depends-on' //   service → service or datastore
   | 'exposes' //      server → service
   | 'calls' //        client → server, process → service, service → another server
-  | 'uses-agent'; //  service → agent
+  | 'uses-agent' //   service → agent
+  | 'contains'; //    domain → service, process, datastore, or domain (§21)
 
 export type ClaimKind = EntityKind | RelationKind;
 
@@ -92,7 +94,7 @@ export const READER = 'reader';
 export const claimKey = (c: Pick<Claim, 'kind' | 'subject' | 'object'>): string =>
   c.object === undefined ? `${c.kind}:${c.subject}` : `${c.kind}:${c.subject}->${c.object}`;
 
-const ENTITY_KINDS: ReadonlySet<string> = new Set(['server', 'client', 'service', 'agent', 'process', 'datastore']);
+const ENTITY_KINDS: ReadonlySet<string> = new Set(['server', 'client', 'service', 'agent', 'process', 'datastore', 'domain']);
 export const isEntity = (kind: ClaimKind): kind is EntityKind => ENTITY_KINDS.has(kind);
 
 /** Fields that are relations, carried as relation claims instead of attributes. */
@@ -103,6 +105,7 @@ const RELATION_FIELDS: Record<EntityKind, readonly string[]> = {
   agent: [],
   process: ['calls'],
   datastore: [],
+  domain: ['members', 'parent'],
 };
 
 const attrsOf = (kind: EntityKind, entity: object): Record<string, unknown> => {
@@ -147,6 +150,14 @@ export function claimsFromSkeleton(skeleton: Skeleton, by: string = READER): Cla
   for (const p of skeleton.processes) {
     entity('process', p);
     for (const target of p.calls) relation('calls', p.id, target, sourceEvidence(p));
+  }
+  // Domains, and what each holds. A member placed on weak evidence is not claimed: its
+  // place is the analysts' question, and the reader's guess stands only if no voice
+  // places it (toSkeleton).
+  for (const d of skeleton.domains ?? []) {
+    entity('domain', d);
+    for (const member of d.members) if (!d.unsure.includes(member)) relation('contains', d.id, member, sourceEvidence(d));
+    if (d.parent) relation('contains', d.parent, d.id, sourceEvidence(d));
   }
   return claims;
 }
@@ -222,6 +233,7 @@ export function reconcile(claims: readonly Claim[], files: FileMap, listed?: Rea
     let attrs: Record<string, unknown> = {};
     let readerSound = false;
     let refuterSound = false;
+    const namedBy = new Set<string>();
 
     for (const claim of group) {
       const problems = checkEvidence(claim, files, listed);
@@ -238,8 +250,19 @@ export function reconcile(claims: readonly Claim[], files: FileMap, listed?: Rea
         evidence.push(...claim.evidence);
         if (claim.by === READER) readerSound = true;
       }
-      // The reader's attributes are exact; others fill only what it left unset.
-      attrs = claim.by === READER ? { ...attrs, ...claim.attrs } : { ...claim.attrs, ...attrs };
+      // The reader's attributes are exact; others fill only what it left unset — except a
+      // domain's name and description, which the reader takes from a directory and an
+      // analyst who read the code says better. The first voice to give one keeps it.
+      if (first.kind === 'domain' && claim.by !== READER) {
+        const words: Record<string, unknown> = {};
+        for (const key of ['name', 'description']) {
+          if (claim.attrs?.[key] !== undefined && !namedBy.has(key)) {
+            words[key] = claim.attrs[key];
+            namedBy.add(key);
+          }
+        }
+        attrs = { ...claim.attrs, ...attrs, ...words };
+      } else attrs = claim.by === READER ? { ...attrs, ...claim.attrs } : { ...claim.attrs, ...attrs };
     }
 
     const soundSupporters = new Set(
@@ -391,6 +414,68 @@ export function toSkeleton(
     base.datastores ?? [],
   );
   if (stores.length > 0 || base.datastores !== undefined) skeleton.datastores = stores;
+
+  // Domains (§21): each member goes where the strongest live `contains` puts it — by
+  // confidence, then by how many voices say so — and otherwise where the reader put it,
+  // when that domain still stands. A domain is placed the same way inside another, never
+  // inside itself. Agents live in their service's graph, so a contains to one is ignored.
+  const liveDomains = live.filter((b) => b.kind === 'domain');
+  if (liveDomains.length > 0 || base.domains !== undefined) {
+    const domainIds = new Set(liveDomains.map((b) => b.subject));
+    const agents = new Set(skeleton.agents.map((a) => a.id));
+    const rank = { high: 3, medium: 2, low: 1 } as const;
+    const best = new Map<string, Belief>();
+    for (const b of live) {
+      if (b.kind !== 'contains' || !domainIds.has(b.subject) || agents.has(b.object!)) continue;
+      const held = best.get(b.object!);
+      const stronger =
+        !held ||
+        rank[b.confidence] > rank[held.confidence] ||
+        (rank[b.confidence] === rank[held.confidence] &&
+          (b.supporters.length > held.supporters.length ||
+            (b.supporters.length === held.supporters.length && b.subject < held.subject)));
+      if (stronger) best.set(b.object!, b);
+    }
+    const parentOf = new Map<string, string>();
+    for (const [member, b] of best) parentOf.set(member, b.subject);
+    for (const d of base.domains ?? []) {
+      if (!domainIds.has(d.id)) continue;
+      for (const m of d.members) if (!parentOf.has(m)) parentOf.set(m, d.id);
+      if (d.parent && domainIds.has(d.parent) && !parentOf.has(d.id)) parentOf.set(d.id, d.parent);
+    }
+    // No domain inside itself: a chain that comes back round is cut where it closes.
+    for (const id of domainIds) {
+      const seen = new Set([id]);
+      for (let at = parentOf.get(id); at !== undefined; at = parentOf.get(at)) {
+        if (seen.has(at)) {
+          parentOf.delete(id);
+          break;
+        }
+        seen.add(at);
+      }
+    }
+    const drawn = new Set(
+      [...skeleton.services, ...skeleton.processes, ...(skeleton.datastores ?? [])].map((e) => e.id),
+    );
+    skeleton.domains = ordered(
+      liveDomains.map((b): SkeletonDomain => {
+        const a = b.attrs as Partial<SkeletonDomain>;
+        const parent = parentOf.get(b.subject);
+        return {
+          id: b.subject,
+          name: typeof a.name === 'string' && a.name ? a.name : b.subject,
+          ...(parent ? { parent } : {}),
+          members: [...parentOf.entries()].filter(([m, p]) => p === b.subject && drawn.has(m)).map(([m]) => m).sort(),
+          ...(a.foundation === true ? { foundation: true } : {}),
+          surfaces: Array.isArray(a.surfaces) ? (a.surfaces as string[]) : [],
+          unsure: (Array.isArray(a.unsure) ? (a.unsure as string[]) : []).filter((m) => !best.has(m)),
+          ...(typeof a.description === 'string' && a.description ? { description: a.description } : {}),
+          source: a.source ?? { file: b.evidence[0]?.file ?? '' },
+        };
+      }),
+      base.domains ?? [],
+    );
+  }
 
   const provenance: Record<string, Provenance> = {};
   for (const b of live) {

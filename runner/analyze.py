@@ -1,4 +1,5 @@
-"""Codebase analysis by agents: analysts propose claims, verifiers try to refute them.
+"""Codebase analysis by agents: analysts propose claims, verifiers try to refute them,
+and an architect reviews the whole domain tree.
 
 The repo lift's agent stage (docs/lift-repo.md, "Claims"). The API's deterministic
 reader has already restated what it found as claims; this module adds independent
@@ -22,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 # Bump whenever a prompt or tool changes: the API keys memoised analyses on it.
-PROMPT_VERSION = "3"
+PROMPT_VERSION = "4"
 
 MAX_TOKENS = int(os.environ.get("CIVIL_ANALYZE_MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("CIVIL_ANALYZE_MAX_TURNS", "14"))
@@ -33,89 +34,122 @@ READ_MAX_CHARS = 24_000
 LIST_MAX = 300
 SEARCH_MAX = 60
 
-ENTITY_KINDS = ("server", "client", "service", "agent", "process", "datastore")
-RELATION_KINDS = ("depends-on", "exposes", "calls", "uses-agent")
+ENTITY_KINDS = ("server", "client", "service", "agent", "process", "datastore", "domain")
+RELATION_KINDS = ("depends-on", "exposes", "calls", "uses-agent", "contains")
 KINDS = ENTITY_KINDS + RELATION_KINDS
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-ATTR_KEYS = {"files", "description", "group", "label", "framework", "path", "schedule", "tools", "engine"}
+ATTR_KEYS = {"files", "description", "name", "foundation", "label", "framework", "path", "schedule", "tools", "engine"}
 
-ALTITUDE = """\
-Civil draws an application's ARCHITECTURE, not its functions. Claims are made at this \
-altitude only:
-- server: a deployable backend (an HTTP/API process, a worker, a job runner) — one \
-per distinct process the code can be deployed as.
-- client: a frontend app (web, mobile) the user runs.
-- service: a medium-to-large unit of product functionality inside a server — a \
-feature module or subsystem (e.g. "billing", "search"), never a single function, \
-helper, or class.
-- agent: an LLM agent the code defines (a prompt plus a model call, often with tools).
-- process: background work on a schedule or trigger (cron jobs, scheduled tasks, \
-queue consumers) — not every function a worker can run.
-- datastore: where the application keeps state — a database, cache, bucket, queue or \
-topic (Postgres, Redis, a storage bucket, Pub/Sub) — with attrs.engine naming the \
-technology. Found in infrastructure code, ORM config, or the client a service uses.
-Relations: depends-on (service → service or datastore it uses), exposes (server → \
-service it serves over its API), calls (client → server it talks to; process → service \
-it runs; service → ANOTHER server it calls), uses-agent (service → agent its code \
-invokes).
-Calls BETWEEN deployables matter most and are easy to miss: when code in one server \
-calls another server — over HTTP (a fetch or client to another service's URL), RPC, \
-or a queue — claim calls from the calling service to that server, even though they \
-run in different processes. Cite the call site (the URL, client, or queue name) as \
-evidence. When a service reads or writes a store, claim depends-on from the service to \
-the datastore, citing the client it uses.
-Routes, operations, endpoints and functions are NEVER claims; mention them only as \
-evidence. Infrastructure plumbing (config, logging, database clients, auth guards, \
-health checks) is not a service unless it is product functionality."""
+# Levels a domain may hold before the architect is asked to group it (containment.ts).
+MAX_CHILDREN = 12
 
-EVIDENCE_RULES = """\
-Every claim MUST cite evidence: the file path exactly as listed, the 1-based line \
-number shown by read_file, and a short quote copied EXACTLY from that line (or the \
-lines right around it). Evidence is checked mechanically; a misquoted line counts \
-for nothing. Prefer the line that most directly shows the claim (a module \
-declaration, a bootstrap call, an import, an agent definition)."""
+# The prompts follow Civil's technical writing rules: imperative, one instruction per
+# sentence, each term defined once with the schema's word, checkable criteria, no
+# emphasis, no reasons (they live here, in comments), lists over prose. Their word
+# budgets are tested (tests/test_analyze.py).
+
+TERMS = """\
+Terms
+- server: a deployable backend process.
+- client: a frontend app.
+- service: server code with product behaviour, larger than one class.
+- agent: a model call with a prompt, and optionally tools.
+- process: work the deployed application starts on a schedule, a queue, or an event. \
+CI and deploy pipelines are not processes.
+- datastore: a database, cache, bucket, queue, or topic.
+- domain: members Civil draws as one level. A capability domain holds a product \
+feature and its services. A foundation domain holds code that several capabilities use.
+- member: a service, process, datastore, or domain inside a domain.
+
+Relations
+- depends-on: service to a service or datastore it uses.
+- exposes: server to a service it serves.
+- calls: client to a server; process to a service it runs; service to another server.
+- uses-agent: service to an agent its code calls.
+- contains: domain to a member."""
+
+EVIDENCE = """\
+Evidence
+- Cite each claim: the path as listed, the line number from read_file, and a quote \
+copied from that line.
+- Omit a claim you cannot cite."""
 
 ANALYST_SYSTEM = f"""\
-You are one of several independent analysts reading a codebase so Civil can draw its \
-architecture. You are given one AREA of the repository. Read it with the tools, then \
-call submit_claims once.
+You analyse one area of a codebase for Civil. Read the code with the tools. Call \
+submit_claims once.
 
-{ALTITUDE}
+{TERMS}
 
-{EVIDENCE_RULES}
+Input
+- The area: its paths. When the area is a domain: its id, name, members, and unsure members.
+- The reader's claims about these paths.
 
-Civil's deterministic reader has already made some claims, listed in the request. \
-For each that concerns your area: if the code supports it, repeat it (same kind, \
-subject, object) with your OWN evidence — that is independent confirmation; if the \
-code contradicts it (for example, a "service" that is only a test helper, or an \
-"agent" that is a fake), submit it with stance "refute" and evidence showing why. \
-Example, sample, and demo projects bundled in the repository are not the product: \
-never claim anything from them. \
-Then add what the reader missed, especially agents, background work, and services \
-it could not see. Use the reader's ids for things it found; for new things use \
-short kebab-case ids from the directory or module name. When unsure, leave it out — \
-a missing claim costs less than a wrong one.
+Tasks
+1. When the area is a domain, claim the domain with attrs.name in 1 to 3 words. Use the \
+module or folder name if one exists.
+2. Add attrs.description: one sentence on what the domain does for the user.
+3. For each unsure member, claim contains from the domain that holds it. Omit the claim \
+if the code does not show which domain.
+4. Claim each agent, process, and datastore in the area. When the area is a domain, \
+claim contains from the domain to each process, and to each datastore no other domain uses.
+5. Claim calls for each call to another server. Cite the URL, client, or queue name.
+6. Refute a reader claim that the code contradicts, for example a test double.
+7. Refute the domain if it is test code, example code, or tooling.
 
-Attributes (optional, on entity claims): files (the paths implementing it, \
-directories as "dir/**"), description (one plain sentence on what it does for the \
-product), group (a 2–4 word name of the larger subsystem it belongs to, shared by \
-related services), label, framework, path, schedule (cron), tools \
-([{{"name","file"}}] for an agent).
+Rules
+{EVIDENCE}
+- Use the reader's ids. Give a new entity a kebab-case id from its directory or module.
+- Claim a new datastore only where it is declared: infrastructure code or an ORM config.
+- Do not claim routes, endpoints, functions, or classes.
+- Do not claim code in example, sample, or demo projects.
+- Attributes: files, description, label, framework, path, schedule (cron), tools \
+([{{"name","file"}}]), engine; name and foundation for a domain.
 
-Budget: about {MAX_TURNS} tool calls and {MAX_READS} file reads. Read what tells you \
-the most: entry points, module and registry files, agent definitions, schedulers."""
+Budget: {MAX_TURNS} tool calls and {MAX_READS} file reads."""
 
 VERIFIER_SYSTEM = f"""\
-You are a skeptical verifier. Another analyst proposed the claims below about a \
-codebase. For EACH claim, check it against the code with the tools — do not trust its \
-cited evidence; read the code yourself — then call submit_verdicts once with a \
-verdict per claim: "support" (the code clearly shows it, at this altitude) or \
-"refute" (it is wrong, below the altitude, a test helper, or not shown by the code). \
-When in doubt, refute.
+You check claims another analyst made about a codebase. Read the code with the tools \
+for each claim. Do not rely on the analyst's evidence. Call submit_verdicts once, with \
+one verdict per claim.
 
-{ALTITUDE}
+Verdicts
+- support: the code shows the claim.
+- refute: the code contradicts the claim, the claim names a route or a function, or \
+the code is a test double or an example.
+- Refute a claim the code does not show.
 
-{EVIDENCE_RULES}"""
+{TERMS}
+
+{EVIDENCE}"""
+
+ARCHITECT_SYSTEM = f"""\
+You review the domain tree Civil drew for a codebase. Read the repository's docs \
+(README.md, docs/) first: they may name the product's parts. Read the code with the \
+tools. Call submit_claims once.
+
+{TERMS}
+
+Input: the tree. Each level lists its members. Each domain has an id, a name, a \
+description, and its unsure members. A level marked over holds more than {MAX_CHILDREN} \
+members.
+
+Tasks
+1. Bring each level marked over to {MAX_CHILDREN} members or fewer. Group related \
+members: claim contains from an existing domain, or propose a domain (claim it with \
+attrs.name) and claim contains to each of its members.
+2. Claim contains to move a member to the domain that holds it.
+3. Merge two domains that implement one product feature: claim contains from one to \
+each member of the other, and refute the other.
+4. Claim the domain with attrs.foundation true when most other domains depend on it.
+5. Refute a domain whose members share no feature, data, or caller.
+
+Rules
+{EVIDENCE}
+- For contains, cite code or docs that tie the member to the domain: an import, a call, \
+or a description.
+- For a proposed domain, cite a file of one of its members.
+- Use the ids in the tree. Give a new domain a kebab-case id that ends in -domain.
+- Do not rename an existing domain."""
 
 _EVIDENCE_SCHEMA = {
     "type": "array",
@@ -274,11 +308,13 @@ class Workspace:
         return f"(unknown tool {name})"
 
 
-def _loop(client: Any, model: str, system: str, prompt: str, submit: dict, ws: Workspace) -> tuple[dict | None, int]:
+def _loop(client: Any, model: str, system: str, prompt: str, submit: dict, ws: Workspace,
+          turns: int | None = None) -> tuple[dict | None, int]:
     """A bounded tool loop that ends in one forced call to `submit`."""
+    limit = turns or MAX_TURNS
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
-    for turn in range(1, MAX_TURNS + 1):
-        final = turn == MAX_TURNS or ws.reads >= MAX_READS
+    for turn in range(1, limit + 1):
+        final = turn == limit or ws.reads >= MAX_READS
         response = client.messages.create(
             model=model,
             max_tokens=MAX_TOKENS,
@@ -303,7 +339,7 @@ def _loop(client: Any, model: str, system: str, prompt: str, submit: dict, ws: W
                 for b in uses
             ],
         })
-    return None, MAX_TURNS
+    return None, limit
 
 
 def _decode(value: Any) -> Any:
@@ -372,12 +408,17 @@ def _area_prompt(area: dict[str, Any], reader_claims: list[dict[str, Any]], ws: 
         if any(any(ev.get("file", "").startswith(x) for x in prefixes) for ev in c.get("evidence", []))
     ]
     listing = "\n".join(inside[:LIST_MAX]) + (f"\n… and {len(inside) - LIST_MAX} more" if len(inside) > LIST_MAX else "")
+    domain = area.get("domain")
+    described = (
+        "Domain:\n" + json.dumps({k: domain[k] for k in ("id", "name", "members", "unsure", "surfaces") if k in domain}, indent=1)
+        if isinstance(domain, dict) else "Domain: none. Skip tasks 1 to 3 and 7."
+    )
     return (
-        f"AREA: {area.get('title', area['id'])} — paths under {', '.join(prefixes) or '(the whole repository)'}\n"
-        f"{area.get('hint', '')}\n\nFiles in this area:\n{listing}\n\n"
-        "The reader's claims touching this area (kind, subject, object, evidence):\n"
-        + (json.dumps(concerning, indent=1)[:20_000] if concerning else "(none — the reader saw nothing here)")
-        + "\n\nYou may read files outside the area when following an import. Read, then submit_claims."
+        f"Area: {area.get('title', area['id'])}. Paths: {', '.join(prefixes) or 'the whole repository'}.\n"
+        f"{area.get('hint', '')}\n\n{described}\n\nFiles:\n{listing}\n\n"
+        "Reader claims:\n"
+        + (json.dumps(concerning, indent=1)[:20_000] if concerning else "none")
+        + "\n\nRead files outside the area to follow an import."
     )
 
 
@@ -416,8 +457,39 @@ def verify(client: Any, model: str, label: str, claims: list[dict[str, Any]],
     return {"label": label, "claims": out, "issues": issues, "turns": turns, "reads": ws.reads}
 
 
+# The architect reads across the whole tree, so it gets a larger budget than an area.
+ARCHITECT_TURNS = int(os.environ.get("CIVIL_ARCHITECT_MAX_TURNS", "28"))
+
+
+def architect(client: Any, model: str, tree: Any, files: dict[str, str], index: list[str]) -> dict[str, Any]:
+    """One review of the whole domain tree: the questions no single area's analyst can
+    answer (which domain a member belongs to across areas, what to merge, how to group an
+    overfull level). Its claims are verified like an analyst's."""
+    ws = Workspace(files, index)
+    levels = tree.get("levels", []) if isinstance(tree, dict) else []
+    over = [f"{lv.get('domain') or 'top'} ({len(lv.get('members', []))} members)" for lv in levels if lv.get("over")]
+    prompt = (
+        ("Levels over the limit: " + ", ".join(over) + ".\n\n" if over else "")
+        + "Tree:\n" + json.dumps(tree, indent=1)[:40_000]
+    )
+    answer, turns = _loop(client, model, ARCHITECT_SYSTEM, prompt, SUBMIT_CLAIMS, ws, ARCHITECT_TURNS)
+    claims, issues = validate_claims((answer or {}).get("claims"), set(ws.index), "architect:tree")
+    checked = [c for c in claims if c["stance"] == "assert"]
+    verified = verify(client, model, "architect", checked, files, index) if checked else {"claims": [], "issues": []}
+    return {
+        "claims": claims + verified["claims"],
+        "areas": [{"area": "architect", "turns": turns, "reads": ws.reads, "issues": issues,
+                   **({} if answer is not None else {"error": "no answer within the turn budget"})}],
+        "verifiers": [{k: verified[k] for k in ("label", "turns", "reads", "issues") if k in verified}] if checked else [],
+        "promptVersion": PROMPT_VERSION,
+    }
+
+
 def analyze(body: dict[str, Any], client: Any, model: str) -> dict[str, Any]:
-    """Every area's analyst, then a verifier per analyst, concurrently and bounded."""
+    """Every area's analyst, then a verifier per analyst, concurrently and bounded. With
+    mode "architect", the one review of the whole tree instead."""
+    if body.get("mode") == "architect":
+        return architect(client, model, body.get("tree"), body["files"], body.get("index") or sorted(body["files"]))
     files: dict[str, str] = body["files"]
     index: list[str] = body.get("index") or sorted(files)
     reader_claims: list[dict[str, Any]] = body.get("claims") or []

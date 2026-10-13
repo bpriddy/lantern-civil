@@ -175,17 +175,43 @@ drawn.
   trustworthy on its own, uncertain parts are shown as uncertain, and the author
   corrects by editing the graph, which Update respects.
 
-### The agent stage (analysts and verifiers)
+### The agent stage (analysts, verifiers, and the architect)
 
-`lift/analysts.ts` splits the repository into areas by directory (a directory over
-80 source files is split by its subdirectories, small siblings share an analyst, at
-most 12 areas, infrastructure files are an area of their own). The runner
+`lift/analysts.ts` splits the repository into areas. When the reader found levels
+(see "Levels"), each domain is an area that carries the domain — its name, members,
+unsure members and frontend surfaces — and the rest of the source shares at most six
+areas by directory. Without levels, areas are by directory (a directory over 80 source
+files is split by its subdirectories, small siblings share an analyst, at most 12
+areas). Infrastructure files are an area of their own either way. The runner
 (`runner/analyze.py`, POST /lift/analyze) gives each area to an **analyst** with
 read-only tools over the files the API sent (list, read with line numbers, search) and
 a bounded budget, ending in one forced `submit_claims`. Each analyst's claims then go to
 a **verifier** that is shown the claims but not their evidence and must check each
 against the code itself: support or refute. Analysts read any language, so when the
 agent stage runs, the lift also loads the source files the reader does not understand.
+
+**Domains are claims** (2026-10-13). The reader claims each domain and what it holds,
+except members it placed on weak evidence. A domain's analyst names it (a reader name
+from a directory gives way to an analyst's), describes it in one sentence, places its
+unsure members with `contains` claims, and may refute it. A member goes where the
+strongest live `contains` puts it (confidence, then voices), otherwise where the reader
+put it; no domain is ever inside itself.
+
+**The architect** is one more call after every area: it is shown the whole tree — each
+level, what it holds, what is unsure, which level is over twelve — and answers what no
+single area can see: a member in the wrong domain, two domains that are one feature
+(contains to the members, and a refutation), a domain the others all depend on
+(foundation), a group for an overfull level. A verifier checks its claims like an
+analyst's. It is memoised on the tree it is shown.
+
+**How the prompts are written** (owner's rules, 2026-10-13). What can be decided from
+the code is decided in code — reach, containment, roll-up, readability — and the model
+is asked only what needs judgement: names, descriptions, unsure placements, and the
+architect's review. The prompts in `runner/analyze.py` follow technical writing rules:
+imperative mood, one instruction per sentence; each term defined once, with the
+schema's word; checkable criteria rather than adjectives; no emphasis; no reasons
+(those live in code comments and here); lists over prose; an example only when it
+settles an ambiguity. Each prompt has a word budget its tests enforce.
 
 Nothing the runner returns is trusted: claims are re-validated on the API side (a voice
 may not speak as the reader, evidence must name listed files), and a new entity's
@@ -207,8 +233,9 @@ Update graph from repo runs the agent stage:
   runner that cannot say its version gets nothing reused.
 - **Provenance on the graph**: each unit's confidence, cited places, and voices (reader,
   analysts, verifiers) are in the registry and reach the inspector through liftStatus.
-- **Time**: a first read of a large repository takes minutes; the API's request timeout
-  is 900s (infra/terraform/run.tf). Later Updates reuse unchanged areas.
+- **Time**: a first read of a large repository takes minutes — eight areas at a time,
+  inside the API's 1800s request timeout (infra/terraform/run.tf). Later Updates reuse
+  unchanged areas.
 
 The CLI keeps `--analyze` for evaluation without the app.
 

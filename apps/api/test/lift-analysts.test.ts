@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parse } from 'yaml';
-import { AREA_LIMIT, AREA_MAX_FILES, buildAreas, normalizeClaims, validateAnswer } from '../dist/lift/analysts.js';
+import { AREA_LIMIT, AREA_MAX_FILES, buildAreas, domainAreas, normalizeClaims, treeForArchitect, validateAnswer } from '../dist/lift/analysts.js';
 import { liftRepository } from '../dist/lift/index.js';
 
 /**
@@ -316,4 +316,41 @@ test('Civil\'s own documents are never analysed as the product', async () => {
     },
   });
   assert.ok(!sentPaths.some((p) => p.startsWith('civil/')) && !indexed.some((p) => p.startsWith('civil/')), 'civil/ is the lift\'s output, not its input');
+});
+
+test('with levels, each domain is an area that carries the domain; top-level services and the rest follow', () => {
+  const service = (id: string) => ({
+    id, server: 'api', moduleClass: id, source: { file: `apps/api/src/${id}/index.ts` }, controllers: [], providers: [],
+    dependsOn: [], agents: [], infrastructure: false, directory: `apps/api/src/${id}`,
+  });
+  const reader = {
+    clients: [], servers: [], agents: [], processes: [], unresolved: [], frameworks: [],
+    services: [service('orders'), service('payments'), service('search'), service('auth')],
+    domains: [
+      { id: 'orders-domain', name: 'Orders', members: ['orders', 'payments'], surfaces: ['apps/web/src/features/checkout'], unsure: ['payments'], source: { file: 'apps/api/src/orders/index.ts' } },
+      { id: 'foundation', name: 'Foundation', foundation: true, members: ['auth'], surfaces: [], unsure: [], source: { file: 'apps/api/src/auth/index.ts' } },
+    ],
+  };
+  const listed = [
+    'apps/api/src/orders/index.ts', 'apps/api/src/payments/index.ts', 'apps/api/src/search/index.ts', 'apps/api/src/auth/index.ts',
+    'apps/web/src/features/checkout/page.tsx', 'apps/api/src/main.ts', 'infra/main.tf',
+  ];
+  const areas = domainAreas(reader as never, listed);
+  const orders = areas.find((a) => a.id === 'orders-domain')!;
+  assert.deepEqual(orders.prefixes, ['apps/api/src/orders/', 'apps/api/src/payments/', 'apps/web/src/features/checkout/']);
+  assert.deepEqual(orders.domain?.unsure, ['payments'], 'the analyst is told what to place');
+  assert.ok(areas.some((a) => a.id === 'search' && !a.domain), 'a service at the top is an area of its own');
+  assert.ok(areas.some((a) => a.prefixes.includes('apps/api/src/main.ts')), 'the rest of the source is still read');
+  assert.ok(areas.some((a) => a.title === 'Infrastructure and deployment'));
+  assert.equal(new Set(areas.map((a) => a.id)).size, areas.length, 'ids are unique');
+});
+
+test('the architect is shown every level, what it holds, and what is unsure', () => {
+  const tree = treeForArchitect({
+    clients: [{ id: 'web' }], servers: [{ id: 'api' }], agents: [], processes: [], unresolved: [], frameworks: [], datastores: [{ id: 'db' }],
+    services: [{ id: 'orders', infrastructure: false }, { id: 'auth', infrastructure: false }, { id: 'config', infrastructure: true }],
+    domains: [{ id: 'orders-domain', name: 'Orders', members: ['orders'], surfaces: [], unsure: ['orders'], source: { file: 'x' } }],
+  } as never) as { levels: { domain: string | null; members: { id: string }[]; unsure?: string[] }[] };
+  assert.deepEqual(tree.levels[0]!.members.map((m) => m.id), ['orders-domain', 'web', 'api', 'auth', 'db'], 'infrastructure is not drawn, so not shown');
+  assert.deepEqual(tree.levels[1]!.unsure, ['orders']);
 });

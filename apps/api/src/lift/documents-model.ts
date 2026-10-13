@@ -1,7 +1,7 @@
 import { ID_PATTERN } from '@civil/schema';
 import { applyRefinement } from './refine.js';
-import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonServer, SkeletonService } from './skeleton.js';
-import { buildContainment, type Containment, type Domain } from './containment.js';
+import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonDomain, SkeletonServer, SkeletonService } from './skeleton.js';
+import { buildContainment, MAX_CHILDREN, toSkeletonDomains, type Containment } from './containment.js';
 
 /**
  * The lifted model: what the civil/ documents should say about the repository, before
@@ -546,54 +546,77 @@ export function buildModel(input: Skeleton, refinement: Refinement | null, files
     node.column = 2 + Math.min(MAX_SERVICE_LAYERS - 1, levelOf(node.id, new Set()));
   }
 
-  // Levels (§21): the domains the code shows, each drawn as a node you step into, and
-  // every lifted node placed inside the domain that holds it. Only with the files: reach
-  // is read from them, and a model built without them is the flat one.
-  const containment = files ? buildContainment(skeleton, files) : undefined;
+  // Levels (§21): the domains, each drawn as a node you step into, and every lifted
+  // node placed inside the domain that holds it. The skeleton carries them when the
+  // lift weighed them as claims; otherwise they are found here from the files, and a
+  // model built with neither is the flat one.
+  const containment = !skeleton.domains && files ? buildContainment(skeleton, files) : undefined;
+  const found: SkeletonDomain[] = skeleton.domains ?? (containment ? toSkeletonDomains(containment) : []);
   const domainId = new Map<string, string>();
-  if (containment) {
-    const all: { domain: Domain; parent?: string }[] = [];
-    const walk = (list: Domain[], parent?: string) => {
-      for (const d of list) {
-        all.push({ domain: d, ...(parent ? { parent } : {}) });
-        walk(d.domains, d.id);
+  if (found.length) {
+    const entityNode = new Map(nodes.filter((n) => n.entity).map((n) => [n.entity!, n]));
+    // What a domain holds as drawn: members on the canvas (a service read as
+    // infrastructure is not) and the domains inside it. Empty, it is not drawn; holding
+    // one thing, it is that thing — nothing to step into (containment.ts, rule 3).
+    const parentOf = new Map<string, string | undefined>(found.map((d) => [d.id, d.parent]));
+    const holdOf = new Map<string, string[]>(found.map((d) => [d.id, d.members.filter((m) => entityNode.has(m))]));
+    const placeOf = new Map<string, string>(); // entity id → domain id
+    for (const [d, members] of holdOf) for (const m of members) placeOf.set(m, d);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const d of found) {
+        if (!holdOf.has(d.id)) continue;
+        const children = found.filter((c) => holdOf.has(c.id) && parentOf.get(c.id) === d.id).map((c) => c.id);
+        const things = holdOf.get(d.id)!.length + children.length;
+        if (things > 1) continue;
+        const up = parentOf.get(d.id);
+        for (const m of holdOf.get(d.id)!) up ? placeOf.set(m, up) : placeOf.delete(m);
+        if (up) holdOf.get(up)!.push(...holdOf.get(d.id)!);
+        for (const c of children) parentOf.set(c, up);
+        holdOf.delete(d.id);
+        changed = true;
       }
-    };
-    walk(containment.domains);
-    for (const { domain } of all) domainId.set(domain.id, take(toId(domain.id, 'domain'), 'domain'));
-    for (const { domain, parent } of all) {
-      const id = domainId.get(domain.id)!;
-      const surfaceFiles = files ? Object.keys(files).filter((f) => domain.surfaces.some((dir) => f.startsWith(`${dir}/`))) : [];
+    }
+    const kept = found.filter((d) => holdOf.has(d.id));
+    for (const d of kept) domainId.set(d.id, take(toId(d.id, 'domain'), 'domain'));
+    for (const d of kept) {
+      const id = domainId.get(d.id)!;
+      const up = parentOf.get(d.id);
+      const parent = up ? domainId.get(up) : undefined;
+      const surfaceFiles = files ? Object.keys(files).filter((f) => d.surfaces.some((dir) => f.startsWith(`${dir}/`))) : [];
       nodes.push({
         id,
         type: 'domain',
-        node: { id, type: 'domain', ...(parent ? { parent: domainId.get(parent)! } : {}), name: domain.name },
+        entity: d.id,
+        node: { id, type: 'domain', ...(parent ? { parent } : {}), name: d.name },
         // Capabilities beside the services; the foundation at the far side, before the stores.
-        column: domain.foundation ? 1 + MAX_SERVICE_LAYERS : 2,
-        ...(parent ? { parent: domainId.get(parent)! } : {}),
+        column: d.foundation ? 1 + MAX_SERVICE_LAYERS : 2,
+        ...(parent ? { parent } : {}),
         // Matched on Update by its id; a domain has no file of its own to anchor on.
         anchors: [],
         // A capability's frontend feature is part of it: its files are the domain's.
-        files: sortedUnique(surfaceFiles.length ? surfaceFiles : domain.evidence.map((e) => e.file)),
-        label: domain.name,
+        files: sortedUnique(surfaceFiles.length ? surfaceFiles : d.source.file ? [d.source.file] : []),
+        label: d.name,
+        ...(d.description ? { description: d.description } : {}),
       });
     }
-    for (const node of nodes) {
-      if (node.type === 'domain' || !node.entity) continue;
-      const home = containment.parentOf[node.entity];
-      if (!home || !domainId.has(home)) continue;
-      const parent = domainId.get(home)!;
+    for (const [entity, home] of placeOf) {
+      const node = entityNode.get(entity);
+      const parent = domainId.get(home);
+      if (!node || !parent) continue;
       node.parent = parent;
       // The house order: id, type, then where it sits, then what it is.
       const { id, type, ...rest } = node.node;
       node.node = { id, type, parent, ...rest };
     }
+    const top = nodes.filter((n) => n.parent === undefined).length;
+    if (top > MAX_CHILDREN) notes.push(`the top level holds ${top} things, more than ${MAX_CHILDREN}: some may belong together`);
   }
 
   for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values(), ...domainId.values()]) {
     if (!ID_PATTERN.test(id)) notes.push(`"${id}" is not a valid Civil id`);
   }
-  if (containment) notes.push(...containment.notes);
+  if (containment) notes.push(...containment.notes.filter((n) => !n.startsWith('the top level holds')));
 
   return {
     nodes,

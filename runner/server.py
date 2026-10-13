@@ -259,7 +259,12 @@ class Handler(BaseHTTPRequestHandler):
         if claims is not None and not (isinstance(claims, list) and all(isinstance(c, dict) for c in claims)):
             self._json(400, {"error": '"claims" must be a list of claim objects'})
             return
-        if not (
+        if body.get("mode") == "architect":
+            # One review of the whole domain tree: no areas, the tree instead.
+            if not isinstance(body.get("tree"), dict):
+                self._json(400, {"error": '"tree" must be the domain tree as an object'})
+                return
+        elif not (
             isinstance(areas, list) and areas
             and all(isinstance(a, dict) and isinstance(a.get("id"), str)
                     and isinstance(a.get("prefixes"), list) for a in areas)

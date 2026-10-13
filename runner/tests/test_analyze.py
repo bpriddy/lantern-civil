@@ -8,6 +8,7 @@ evidence-free claim out, and the mapping of verdicts onto the claims they judge.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -156,6 +157,60 @@ def test_analyze_runs_analysts_then_verifiers() -> None:
     out = A.analyze({"files": FILES, "index": INDEX, "claims": [], "areas": [{"id": "orders", "prefixes": ["apps/server/src/orders/"]}]}, client, "m")
     ok([c["by"] for c in out["claims"]] == ["analyst:orders", "verifier:orders"], "one analyst voice, one verifier voice")
     ok(out["areas"][0]["area"] == "orders" and out["promptVersion"] == A.PROMPT_VERSION, "the run is reported")
+
+
+def test_prompts_keep_their_word_budgets_and_the_writing_rules() -> None:
+    print("test_prompts_keep_their_word_budgets_and_the_writing_rules")
+    budgets = {"TERMS": 160, "EVIDENCE": 35, "ANALYST_SYSTEM": 450, "VERIFIER_SYSTEM": 270, "ARCHITECT_SYSTEM": 410}
+    for name, most in budgets.items():
+        words = len(getattr(A, name).split())
+        ok(words <= most, f"{name} is {words} words, at most {most}")
+    for name in budgets:
+        text = getattr(A, name)
+        ok(not re.search(r"\b(MUST|NEVER|ALWAYS|IMPORTANT|CRITICAL)\b", text), f"{name} uses no emphasis words")
+        ok("group" not in text.split(), f"{name} does not ask the model to invent groups")
+
+
+def test_domains_and_containment_are_claims() -> None:
+    print("test_domains_and_containment_are_claims")
+    raw = [
+        {"kind": "domain", "subject": "orders-domain", "stance": "assert",
+         "evidence": [{"file": "apps/server/src/orders/orders.module.ts", "line": 1, "quote": "@Module"}],
+         "attrs": {"name": "Orders", "description": "Takes orders.", "group": "x"}},
+        {"kind": "contains", "subject": "orders-domain", "object": "pricing", "stance": "assert",
+         "evidence": [{"file": "apps/server/src/orders/orders.agent.ts", "line": 1, "quote": "composeAgent"}]},
+    ]
+    claims, issues = A.validate_claims(raw, set(INDEX), "analyst:orders")
+    ok([c["kind"] for c in claims] == ["domain", "contains"] and not issues, "domain and contains are claim kinds")
+    ok(claims[0]["attrs"] == {"name": "Orders", "description": "Takes orders."}, "a domain keeps its name; group is gone")
+
+
+def test_an_area_names_its_domain_or_says_it_has_none() -> None:
+    print("test_an_area_names_its_domain_or_says_it_has_none")
+    ws = A.Workspace(FILES, INDEX)
+    domain = {"id": "orders-domain", "name": "Orders", "members": ["orders"], "unsure": ["pricing"], "surfaces": []}
+    prompt = A._area_prompt({"id": "orders", "prefixes": ["apps/server/src/orders/"], "domain": domain}, [], ws)
+    ok('"unsure": [' in prompt and '"orders-domain"' in prompt, "the domain and its unsure members ride the prompt")
+    plain = A._area_prompt({"id": "misc", "prefixes": ["apps/server/src/"]}, [], ws)
+    ok("Domain: none. Skip tasks 1 to 3 and 7." in plain, "an area that is no domain says which tasks to skip")
+
+
+def test_the_architect_reviews_the_tree_and_is_verified() -> None:
+    print("test_the_architect_reviews_the_tree_and_is_verified")
+    move = {"kind": "contains", "subject": "orders-domain", "object": "pricing", "stance": "assert",
+            "evidence": [{"file": "apps/server/src/orders/orders.agent.ts", "line": 1, "quote": "composeAgent"}]}
+    client = FakeClient(
+        Response(ToolUse("submit_claims", {"claims": [move]})),
+        Response(ToolUse("submit_verdicts", {"verdicts": [
+            {"key": "contains:orders-domain->pricing", "verdict": "support",
+             "evidence": [{"file": "apps/server/src/orders/orders.agent.ts", "line": 1, "quote": "composeAgent"}]}]})),
+    )
+    tree = {"levels": [{"domain": None, "members": ["orders-domain", "pricing"], "over": True}]}
+    out = A.analyze({"mode": "architect", "tree": tree, "files": FILES, "index": INDEX}, client, "m")
+    ok([c["by"] for c in out["claims"]] == ["architect:tree", "verifier:architect"], "one architect voice, one verifier voice")
+    ok('"orders-domain"' in client.calls[0]["messages"][0]["content"], "the tree rides the prompt")
+    ok(client.calls[0]["messages"][0]["content"].startswith("Levels over the limit: top (2 members)."), "an overfull level is named first")
+    ok(client.calls[0]["system"] == A.ARCHITECT_SYSTEM, "the architect has its own instructions")
 
 
 def main() -> int:

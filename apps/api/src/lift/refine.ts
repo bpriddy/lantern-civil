@@ -248,6 +248,10 @@ export function applyRefinement(skeleton: Skeleton, refinement: Refinement): Ske
     })),
     agents: skeleton.agents.map((a) => ({ ...a, id: r(a.id) })),
     processes: skeleton.processes.map((p) => ({ ...p, id: r(p.id), calls: rs(p.calls) })),
+    // Domains keep their ids (the model pass does not name them); what they hold follows.
+    ...(skeleton.domains
+      ? { domains: skeleton.domains.map((d) => ({ ...d, members: rs(d.members), unsure: rs(d.unsure) })) }
+      : {}),
   };
 }
 

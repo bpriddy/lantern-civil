@@ -78,7 +78,7 @@ const files: Record<string, string> = {
 test('a surface and the service it shares a contract with are one capability, with what only it uses', () => {
   const c = buildContainment(skeleton(), files);
   const byName = Object.fromEntries(c.domains.map((d) => [d.name, d]));
-  assert.deepEqual(Object.keys(byName).sort(), ['Catalog', 'Foundation', 'Orders']);
+  assert.deepEqual(Object.keys(byName).sort(), ['Catalog', 'Foundation', 'Orders', 'Users']);
   // Reviews is used only by catalog, so it is inside it; the schedule that runs catalog's code goes with it.
   assert.deepEqual(byName['Catalog']!.members, ['catalog', 'reindex', 'reviews']);
   assert.deepEqual(byName['Catalog']!.surfaces, ['apps/web/src/features/catalog']);
@@ -88,9 +88,11 @@ test('a surface and the service it shares a contract with are one capability, wi
   // What several capabilities use is the shared foundation.
   assert.deepEqual(byName['Foundation']!.members, ['audit', 'auth', 'mail', 'storage']);
   assert.equal(byName['Foundation']!.foundation, true);
-  // A capability of one service is that service: nothing to step into. A store several
-  // use stays at the top, beside the client and the API.
-  assert.deepEqual(c.members, ['api', 'db', 'users', 'web']);
+  // A capability of one service is still a capability (the mapper draws it as the
+  // service). A store several use stays at the top, beside the client and the API.
+  assert.deepEqual(byName['Users']!.members, ['users']);
+  assert.deepEqual(byName['Users']!.surfaces, ['apps/web/src/features/account']);
+  assert.deepEqual(c.members, ['api', 'db', 'web']);
 });
 
 test('a domain id never takes an entity id, and every member knows its domain', () => {
@@ -128,9 +130,8 @@ test('without feature directories, capabilities are the served services nothing 
   const c = buildContainment(s, files);
   const names = c.domains.map((d) => d.name).sort();
   // orders and users are served and used by nothing; catalog is used only by orders, so
-  // it is inside Orders. Users holds only itself, so it is drawn as itself.
-  assert.deepEqual(names, ['Foundation', 'Orders']);
-  assert.ok(c.members.includes('users'));
+  // it is inside Orders.
+  assert.deepEqual(names, ['Foundation', 'Orders', 'Users']);
   assert.ok(c.domains.find((d) => d.name === 'Orders')!.members.includes('catalog'));
   assert.match(c.notes.join(' '), /no frontend feature directories/);
 });

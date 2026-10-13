@@ -73,6 +73,14 @@ server.analyze = fake_analyze
 server.transpile = fake_transpile
 server.lift_graph = fake_lift_graph
 
+
+def fake_analyze_codebase(body: dict, client: object, model: str) -> dict:
+    RECORD["lift_analyze"] = body
+    return {"claims": [], "promptVersion": "test"}
+
+
+server.analyze_codebase = fake_analyze_codebase
+
 # The real _model_client is the one seam that would need a key; hand the handlers
 # a sentinel instead, and keep the real one to exercise its 502 guard directly.
 ORIGINAL_MODEL_CLIENT = server.Handler._model_client
@@ -280,6 +288,19 @@ def test_lift_rejects_bad_body() -> None:
     ok(status == 400, "an empty graphPath answers 400")
     status, _ = request("POST", "/lift", {"graphPath": "g", "graphDoc": 1, "orchestration": "o"})
     ok(status == 400, "a non-string graphDoc answers 400")
+
+
+def test_lift_analyze_takes_areas_or_the_architect_tree() -> None:
+    print("test_lift_analyze_takes_areas_or_the_architect_tree")
+    files = {"a.ts": "export {}"}
+    status, _ = request("POST", "/lift/analyze", {"files": files, "areas": [{"id": "a", "prefixes": [""]}]})
+    ok(status == 200, "an area request reaches the analysts")
+    status, _ = request("POST", "/lift/analyze", {"files": files, "mode": "architect", "tree": {"levels": []}})
+    ok(status == 200 and RECORD["lift_analyze"]["mode"] == "architect", "an architect request needs no areas")
+    status, body = request("POST", "/lift/analyze", {"files": files, "mode": "architect"})
+    ok(status == 400 and "tree" in body["error"], "an architect request without a tree answers 400")
+    status, _ = request("POST", "/lift/analyze", {"files": files})
+    ok(status == 400, "an area request without areas answers 400")
 
 
 def test_unknown_routes_404() -> None:
