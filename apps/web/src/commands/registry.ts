@@ -18,6 +18,7 @@ export type CommandId =
   | 'project.switch'
   | 'project.settings'
   | 'canvas.fit'
+  | 'view.next'
   | 'node.add'
   | 'canvas.delete'
   | 'edit.undo'
@@ -64,6 +65,11 @@ export interface CommandContext {
   /** Reading the repo would be refused on this project (a Python project Civil
    *  generates for, or documents still at the root). Optional: absent reads as no. */
   liftRefused?: boolean;
+  /** How many views the project keeps (§21). Optional: absent reads as none. */
+  viewCount?: number;
+  /** The composition is on screen through a view, which groups parts but never
+   *  adds or removes one. Optional: absent reads as no. */
+  inView?: boolean;
 }
 
 /**
@@ -181,6 +187,15 @@ export const COMMANDS: readonly Command[] = [
     enabled: (c) => c.where === 'canvas',
   },
   {
+    id: 'view.next',
+    title: 'Next view',
+    description:
+      'Look at the composition another way: the parts as written, then each view the project ' +
+      'keeps (concept, architecture…). A view groups the same parts into domains you step into.',
+    keys: ['v'],
+    enabled: (c) => c.where === 'canvas' && (c.viewCount ?? 0) > 0,
+  },
+  {
     id: 'canvas.clearSelection',
     title: 'Clear selection',
     description: 'Deselect the current node.',
@@ -194,7 +209,8 @@ export const COMMANDS: readonly Command[] = [
       'Add a node to the current canvas. The vocabulary is closed — client, service ' +
       'or process at the top level; agent, io, subgraph or code inside a graph.',
     keys: ['n'],
-    enabled: (c) => c.where === 'canvas',
+    // A view only groups parts: they are added where they are written, in the parts view.
+    enabled: (c) => c.where === 'canvas' && !c.inView,
   },
   {
     id: 'canvas.delete',

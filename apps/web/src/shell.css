@@ -54,6 +54,27 @@ body {
 
 /* ---- top bar ------------------------------------------------------------ */
 
+/* §21: the view switch — the same parts, grouped another way. */
+.view-switch {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-right: 12px;
+}
+.view-tab {
+  background: var(--bg-inset);
+  color: var(--text-dim);
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.view-tab:last-child { border-right: 0; }
+.view-tab.active { background: var(--accent-dim); color: var(--text); }
+
 .top {
   grid-area: top;
   display: flex;

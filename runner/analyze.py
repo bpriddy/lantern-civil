@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 # Bump whenever a prompt or tool changes: the API keys memoised analyses on it.
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "6"
 
 MAX_TOKENS = int(os.environ.get("CIVIL_ANALYZE_MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("CIVIL_ANALYZE_MAX_TURNS", "14"))
@@ -117,6 +117,7 @@ Verdicts
 - refute: the code contradicts the claim, the claim names a route or a function, or \
 the code is a test double or an example.
 - Refute a claim the code does not show.
+- When the budget ends, submit the verdicts you have.
 
 {TERMS}
 
@@ -129,15 +130,16 @@ tools. Call submit_claims once.
 
 {TERMS}
 
-Input: the tree. Each level lists its members. Each domain has an id, a name, a \
-description, and its unsure members. A level marked over holds more than {MAX_CHILDREN} \
-members.
+Input: the concept view's tree: services, processes, and datastores. Clients and \
+servers are not in this view. Each domain has an id, a name, a description, and its \
+unsure members. A level marked over holds more than \
+{MAX_CHILDREN} members.
 
 Tasks
 1. Bring each level marked over to {MAX_CHILDREN} members or fewer. Group related \
 members: claim contains from an existing domain, or propose a domain (claim it with \
 attrs.name) and claim contains to each of its members.
-2. Claim contains to move a member to the domain that holds it.
+2. Claim contains to move a member to its domain.
 3. Merge two domains that implement one product feature: claim contains from one to \
 each member of the other, and refute the other.
 4. Claim the domain with attrs.foundation true when most other domains depend on it.
@@ -149,7 +151,7 @@ Rules
 or a description.
 - For a proposed domain, cite a file of one of its members.
 - Use the ids in the tree. Give a new domain a kebab-case id that ends in -domain.
-- Do not rename an existing domain."""
+- Do not rename a domain in the tree."""
 
 _EVIDENCE_SCHEMA = {
     "type": "array",
@@ -433,13 +435,13 @@ def analyze_area(client: Any, model: str, area: dict[str, Any], reader_claims: l
 
 
 def verify(client: Any, model: str, label: str, claims: list[dict[str, Any]],
-           files: dict[str, str], index: list[str]) -> dict[str, Any]:
+           files: dict[str, str], index: list[str], turns: int | None = None) -> dict[str, Any]:
     """One verifier over one analyst's claims: a verdict per claim, as new claims."""
     ws = Workspace(files, index)
     by = f"verifier:{label}"
     shown = [{"key": claim_key(c), **{k: c[k] for k in ("kind", "subject", "object", "attrs", "note") if k in c}} for c in claims]
     prompt = "Claims to check:\n" + json.dumps(shown, indent=1)[:30_000] + "\n\nCheck each against the code, then submit_verdicts."
-    answer, turns = _loop(client, model, VERIFIER_SYSTEM, prompt, SUBMIT_VERDICTS, ws)
+    answer, turns = _loop(client, model, VERIFIER_SYSTEM, prompt, SUBMIT_VERDICTS, ws, turns)
     by_key = {claim_key(c): c for c in claims}
     out: list[dict[str, Any]] = []
     issues: list[str] = []
@@ -475,7 +477,9 @@ def architect(client: Any, model: str, tree: Any, files: dict[str, str], index: 
     answer, turns = _loop(client, model, ARCHITECT_SYSTEM, prompt, SUBMIT_CLAIMS, ws, ARCHITECT_TURNS)
     claims, issues = validate_claims((answer or {}).get("claims"), set(ws.index), "architect:tree")
     checked = [c for c in claims if c["stance"] == "assert"]
-    verified = verify(client, model, "architect", checked, files, index) if checked else {"claims": [], "issues": []}
+    # A whole tree's claims take longer to check than an area's: the verifier gets the
+    # architect's budget.
+    verified = verify(client, model, "architect", checked, files, index, ARCHITECT_TURNS) if checked else {"claims": [], "issues": []}
     return {
         "claims": claims + verified["claims"],
         "areas": [{"area": "architect", "turns": turns, "reads": ws.reads, "issues": issues,

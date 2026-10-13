@@ -87,30 +87,29 @@ export function architectureMarkdown(input: ArchitectureInput): string {
 
   const describe = (n: ModelNode) => (n.description ? ` ${n.description}` : '');
 
-  // §21: the levels. The top first, then each domain as an indented outline of what it
-  // holds — the shape a reader steps through on the canvas, in one place.
-  const domains = of('domain');
-  if (domains.length) {
-    out.push('## Levels', '');
+  // §21: the views. Each as an outline of its domains and what each holds — the shape
+  // a reader steps through on the canvas, in one place.
+  if (model.views.length) {
+    out.push('## Views', '');
     out.push(
-      'The canvas has levels. Each domain is a part of the application you step into: a capability ' +
-        '(a frontend feature and the services behind it) or a part of the shared foundation.',
+      'The composition holds every part once. Each view groups the same parts in its own way; ' +
+        'switch views on the canvas, and step into a domain to see what it holds.',
       '',
     );
-    const label = (n: ModelNode) => (n.type === 'domain' ? `**${cell(n.label)}** (${idOf(n.id)})` : idOf(n.id));
-    const outline = (parent: string | undefined, depth: number) => {
-      const here = model.nodes.filter((n) => n.parent === parent && n.type === 'domain');
-      for (const d of here) {
-        const members = model.nodes.filter((n) => n.parent === d.id && n.type !== 'domain').map((n) => idOf(n.id));
-        out.push(`${'  '.repeat(depth)}- ${label(d)}${describe(d)}${members.length ? ` — ${members.join(', ')}` : ''}`);
-        outline(d.id, depth + 1);
-      }
-    };
-    outline(undefined, 0);
-    const top = model.nodes.filter((n) => n.parent === undefined && n.type !== 'domain').map((n) => idOf(n.id));
-    if (top.length) out.push(`- At the top level: ${top.join(', ')}`);
-    for (const note of model.containment?.notes ?? []) out.push('', `> ${note}`);
-    out.push('');
+    for (const view of model.views) {
+      out.push(`### ${view.name}`, '', view.description, '');
+      const outline = (parent: string | undefined, depth: number) => {
+        for (const d of view.domains.filter((x) => x.parent === parent)) {
+          const what = d.description ? ` ${d.description}` : '';
+          const members = d.members.map(idOf);
+          out.push(`${'  '.repeat(depth)}- **${cell(d.name)}**${what}${members.length ? ` — ${members.join(', ')}` : ''}`);
+          outline(d.id, depth + 1);
+        }
+      };
+      outline(undefined, 0);
+      if (view.top.length) out.push(`- At the top level: ${view.top.map(idOf).join(', ')}`);
+      out.push('');
+    }
   }
 
   out.push('## The canvas', '');

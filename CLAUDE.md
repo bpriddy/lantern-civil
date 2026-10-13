@@ -79,6 +79,13 @@ are not in git *yet* and are Civil's own state in the same sense as `runs`.
 - The node vocabulary is closed and edited by hand. Adding a type is a commit to
   Civil, not a feature of Civil. See PRD §3 before reaching for a new one.
 
+## Views
+
+PRD-deltas §21. `app.yaml` (with `graphs/`) is the master: every part and every edge,
+said once. A view under `civil/views/<id>/` groups and places those parts and never
+adds, removes or changes one. Generation reads only the master. A new way of looking
+is a new view directory with the same shape, never a new node type.
+
 ## Data
 
 - `owner_id` on every table, from the first migration.

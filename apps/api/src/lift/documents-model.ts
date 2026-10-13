@@ -1,7 +1,7 @@
 import { ID_PATTERN } from '@civil/schema';
 import { applyRefinement } from './refine.js';
-import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonDomain, SkeletonServer, SkeletonService } from './skeleton.js';
-import { buildContainment, MAX_CHILDREN, toSkeletonDomains, type Containment } from './containment.js';
+import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonServer, SkeletonService } from './skeleton.js';
+import { architectureView, conceptView, type ModelView, type ViewPart } from './views.js';
 
 /**
  * The lifted model: what the civil/ documents should say about the repository, before
@@ -71,7 +71,7 @@ export function idAllocator(taken: Iterable<string> = []) {
 
 const dirOf = (path: string): string => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
 
-export type CompositionType = 'client' | 'boundary' | 'service' | 'process' | 'datastore' | 'domain';
+export type CompositionType = 'client' | 'boundary' | 'service' | 'process' | 'datastore';
 
 export interface ModelNode {
   /** The lift's id for it; the merge may map it to the author's. */
@@ -81,8 +81,6 @@ export interface ModelNode {
   node: Record<string, unknown>;
   /** Layout column: clients, boundaries, services, processes. */
   column: number;
-  /** The lift id of the domain it is drawn inside (§21); absent at the top. */
-  parent?: string;
   /** Files that identify it across runs, primary first — what the registry is matched on. */
   anchors: string[];
   /** The repo files that implement the composition node (registry unit app/<id>). */
@@ -137,8 +135,8 @@ export interface LiftModel {
   boundaryOf: Record<string, string>;
   /** What the mapping had to leave out or assume, in words. */
   notes: string[];
-  /** The levels, when the repository's files were given (containment.ts). */
-  containment?: Containment;
+  /** The views written beside the composition (views.ts). */
+  views: ModelView[];
 }
 
 const allIds = (s: Skeleton): Set<string> =>
@@ -546,77 +544,28 @@ export function buildModel(input: Skeleton, refinement: Refinement | null, files
     node.column = 2 + Math.min(MAX_SERVICE_LAYERS - 1, levelOf(node.id, new Set()));
   }
 
-  // Levels (§21): the domains, each drawn as a node you step into, and every lifted
-  // node placed inside the domain that holds it. The skeleton carries them when the
-  // lift weighed them as claims; otherwise they are found here from the files, and a
-  // model built with neither is the flat one.
-  const containment = !skeleton.domains && files ? buildContainment(skeleton, files) : undefined;
-  const found: SkeletonDomain[] = skeleton.domains ?? (containment ? toSkeletonDomains(containment) : []);
-  const domainId = new Map<string, string>();
-  if (found.length) {
-    const entityNode = new Map(nodes.filter((n) => n.entity).map((n) => [n.entity!, n]));
-    // What a domain holds as drawn: members on the canvas (a service read as
-    // infrastructure is not) and the domains inside it. Empty, it is not drawn; holding
-    // one thing, it is that thing — nothing to step into (containment.ts, rule 3).
-    const parentOf = new Map<string, string | undefined>(found.map((d) => [d.id, d.parent]));
-    const holdOf = new Map<string, string[]>(found.map((d) => [d.id, d.members.filter((m) => entityNode.has(m))]));
-    const placeOf = new Map<string, string>(); // entity id → domain id
-    for (const [d, members] of holdOf) for (const m of members) placeOf.set(m, d);
-    for (let changed = true; changed; ) {
-      changed = false;
-      for (const d of found) {
-        if (!holdOf.has(d.id)) continue;
-        const children = found.filter((c) => holdOf.has(c.id) && parentOf.get(c.id) === d.id).map((c) => c.id);
-        const things = holdOf.get(d.id)!.length + children.length;
-        if (things > 1) continue;
-        const up = parentOf.get(d.id);
-        for (const m of holdOf.get(d.id)!) up ? placeOf.set(m, up) : placeOf.delete(m);
-        if (up) holdOf.get(up)!.push(...holdOf.get(d.id)!);
-        for (const c of children) parentOf.set(c, up);
-        holdOf.delete(d.id);
-        changed = true;
-      }
+  // Views (§21): the composition holds every part; the views group and place them.
+  const homeOf = (n: ModelNode): string => {
+    const id = n.entity;
+    if (n.type === 'client') return skeleton.clients.find((c) => c.id === id)?.path ?? n.anchors[0] ?? '';
+    if (n.type === 'boundary') return skeleton.servers.find((s) => s.id === id)?.path ?? n.anchors[0] ?? '';
+    if (n.type === 'service') {
+      const s = skeleton.services.find((x) => x.id === id);
+      return s?.directory ?? s?.source.file ?? '';
     }
-    const kept = found.filter((d) => holdOf.has(d.id));
-    for (const d of kept) domainId.set(d.id, take(toId(d.id, 'domain'), 'domain'));
-    for (const d of kept) {
-      const id = domainId.get(d.id)!;
-      const up = parentOf.get(d.id);
-      const parent = up ? domainId.get(up) : undefined;
-      const surfaceFiles = files ? Object.keys(files).filter((f) => d.surfaces.some((dir) => f.startsWith(`${dir}/`))) : [];
-      nodes.push({
-        id,
-        type: 'domain',
-        entity: d.id,
-        node: { id, type: 'domain', ...(parent ? { parent } : {}), name: d.name },
-        // Capabilities beside the services; the foundation at the far side, before the stores.
-        column: d.foundation ? 1 + MAX_SERVICE_LAYERS : 2,
-        ...(parent ? { parent } : {}),
-        // Matched on Update by its id; a domain has no file of its own to anchor on.
-        anchors: [],
-        // A capability's frontend feature is part of it: its files are the domain's.
-        files: sortedUnique(surfaceFiles.length ? surfaceFiles : d.source.file ? [d.source.file] : []),
-        label: d.name,
-        ...(d.description ? { description: d.description } : {}),
-      });
-    }
-    for (const [entity, home] of placeOf) {
-      const node = entityNode.get(entity);
-      const parent = domainId.get(home);
-      if (!node || !parent) continue;
-      node.parent = parent;
-      // The house order: id, type, then where it sits, then what it is.
-      const { id, type, ...rest } = node.node;
-      node.node = { id, type, parent, ...rest };
-    }
-    const top = nodes.filter((n) => n.parent === undefined).length;
-    if (top > MAX_CHILDREN) notes.push(`the top level holds ${top} things, more than ${MAX_CHILDREN}: some may belong together`);
-  }
+    if (n.type === 'process') return skeleton.processes.find((p) => p.id === id)?.source.file ?? '';
+    return (skeleton.datastores ?? []).find((d) => d.id === id)?.source.file ?? '';
+  };
+  const parts: ViewPart[] = nodes.map((n) => ({ id: n.id, type: n.type, ...(n.entity ? { entity: n.entity } : {}), home: homeOf(n) }));
+  const ids = nodes.map((n) => n.id);
+  const views = [conceptView(parts, skeleton, files, ids), files ? architectureView(parts, ids) : undefined].filter(
+    (v): v is ModelView => v !== undefined,
+  );
+  for (const v of views) notes.push(...v.notes);
 
-  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values(), ...domainId.values()]) {
+  for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values()]) {
     if (!ID_PATTERN.test(id)) notes.push(`"${id}" is not a valid Civil id`);
   }
-  if (containment) notes.push(...containment.notes.filter((n) => !n.startsWith('the top level holds')));
 
   return {
     nodes,
@@ -627,7 +576,7 @@ export function buildModel(input: Skeleton, refinement: Refinement | null, files
     summary: refinement?.summary ?? null,
     boundaryOf: Object.fromEntries(boundaryId),
     notes,
-    ...(containment ? { containment } : {}),
+    views,
   };
 }
 

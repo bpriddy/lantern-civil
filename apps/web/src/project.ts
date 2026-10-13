@@ -1,3 +1,4 @@
+import type { LoadedView } from './canvas/levels.js';
 import type {
   Composition,
   Diagnostic,
@@ -103,6 +104,11 @@ export interface ProjectBundle {
   };
   compositionPath: string;
   composition: Composition | undefined;
+  /**
+   * Ways of looking at the composition (civil/views/<id>/), by view id: each groups
+   * and places its parts. Optional: an older server omits it, and most projects keep none.
+   */
+  views?: Record<string, LoadedView>;
   graphs: Record<string, Graph>;
   agents: Record<string, AgentEntry>;
   diagnostics: Diagnostic[];

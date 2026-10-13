@@ -178,7 +178,7 @@ drawn.
 ### The agent stage (analysts, verifiers, and the architect)
 
 `lift/analysts.ts` splits the repository into areas. When the reader found levels
-(see "Levels"), each domain is an area that carries the domain — its name, members,
+(see "Views"), each domain is an area that carries the domain — its name, members,
 unsure members and frontend surfaces — and the rest of the source shares at most six
 areas by directory. Without levels, areas are by directory (a directory over 80 source
 files is split by its subdirectories, small siblings share an analyst, at most 12
@@ -346,11 +346,27 @@ Added 2026-10-11 (`reader-stores.ts`), general rules by shape:
   `unresolved` as ambiguous, none as a client with no declared store. The
   infrastructure module that owns the client wrapper uses the store too.
 
-## Levels
+## Views
 
-Added 2026-10-13 (`containment.ts`; the vocabulary is prd-deltas §21). A lifted graph
-has levels when it needs them: a system of twelve things or fewer is drawn on one
-level, and a larger one in domains.
+Added 2026-10-13 (`containment.ts`, `views.ts`, `documents-views.ts`; the format is
+prd-deltas §21). The lift writes the composition (every part and edge, no grouping) and
+two views beside it, each only when the system is larger than one readable level
+(twelve things):
+
+- **concept** (`civil/views/concept/`): what the application is — capabilities and the
+  shared foundation, found as below and weighed as claims by the reader, analysts and
+  architect. It places services, processes and data; clients and boundaries are the
+  architecture view's, so it hides what it does not place.
+- **architecture** (`civil/views/architecture/`): how the codebase is built — a domain
+  for every directory where the code branches (two or more parts beneath it), nested as
+  the directories are, a chain of single-child directories folded into one name. Every
+  part sits where its code is filed: a service by its module directory, a client and a
+  boundary by their package, a process and a store by the file that declares them.
+
+In both, a domain holding one thing is drawn as that thing, an empty one is not
+written, and a level over twelve is noted.
+
+How the concept view's capabilities are found:
 
 Units are found by what the code **reaches**, not by where it is filed. Folder layout
 is a filing choice (an MVC app files every model together); what belongs together is
@@ -380,10 +396,11 @@ what is reached together.
    thing is that thing. A top level still over twelve is noted for the model to judge.
 
 Each domain carries its evidence (the surface, the shared files) and its unsure
-members. The lift writes the domains as nodes, each lifted node's `parent`, one grid
-per level, and a "Levels" outline in architecture.md; a domain's registry unit lists
-its surface's files. On Update a node's `parent` is filled only when it has none, so a
-node the author moved stays where they put it.
+members. Each level is laid out on its own grid, and architecture.md outlines every
+view. On Update (`documents-views.ts`) the author's arrangement wins: a part the view
+already places stays where it is, a domain file the author has is kept, only parts the
+view does not place yet are placed (into their proposed domain, created if absent, or
+at the top), nothing is removed, and a view with nothing new is left byte for byte.
 
 ## Update: the merge
 
@@ -460,8 +477,9 @@ it is not a server path and is not part of the product.
 
 ## The canvas
 
-- Each level is laid out on its own grid. A domain's card counts what it holds and
-  descends into its inside.
+- A view switch (Parts, Concept, Architecture…; `v` cycles). In a view each level is
+  laid out on its own grid; a domain's card counts what it holds and descends into
+  its inside, and the inspector shows its description, members, evidence and file.
 - Services are laid out in columns by dependency: each sits right of what
   depends on it, at most four service columns; processes sit beside the
   boundaries. Generate fits the view to the result.

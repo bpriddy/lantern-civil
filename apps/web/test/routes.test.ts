@@ -38,8 +38,11 @@ test('anything unrecognized is home', () => {
   assert.deepEqual(parseRoute('/p/abc'), { kind: 'project', projectId: 'abc' });
 });
 
-test('a domain is a place on the composition canvas', () => {
-  const route: Route = { kind: 'domain', projectId: 'p1', domain: 'billing-domain' };
-  assert.equal(routePath(route), '/p/p1/d/billing-domain');
-  assert.deepEqual(parseRoute('/p/p1/d/billing-domain'), route);
+test('a view, and a domain inside it, are places on the composition canvas', () => {
+  const top: Route = { kind: 'view', projectId: 'p1', view: 'concept' };
+  assert.equal(routePath(top), '/p/p1/v/concept');
+  assert.deepEqual(parseRoute('/p/p1/v/concept'), top);
+  const inside: Route = { kind: 'view', projectId: 'p1', view: 'concept', domain: 'billing-domain' };
+  assert.equal(routePath(inside), '/p/p1/v/concept/d/billing-domain');
+  assert.deepEqual(parseRoute('/p/p1/v/concept/d/billing-domain'), inside);
 });

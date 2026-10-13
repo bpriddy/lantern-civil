@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { CompositionNode, Diagnostic, GraphNode } from '@civil/schema';
 import type { Contract } from '../project.js';
+import type { DomainItem } from './levels.js';
 
 /**
  * PRD 3: node types are units of architecture, never units of computation. Every face
@@ -38,7 +39,8 @@ export interface NodeData extends Record<string, unknown> {
   contractError: string | undefined;
   diagnostics: Diagnostic[];
   detail: string | undefined;
-  manifest: CompositionNode | GraphNode;
+  /** What the node is: a composition part, a graph node, or a view's domain. */
+  manifest: CompositionNode | GraphNode | DomainItem;
   /**
    * A lifted node's weighed confidence (docs/lift-repo.md, "Claims"). Low is drawn
    * as uncertain — a dashed edge and a "?" — so the unsure parts of a read read as

@@ -36,7 +36,7 @@ export const DIAGNOSTIC_CODES = [
   'flow-cycle',
   'parent-not-domain',
   'domain-cycle',
-  'edge-touches-domain',
+  'placed-twice',
 ] as const;
 
 export type DiagnosticCode = (typeof DIAGNOSTIC_CODES)[number];

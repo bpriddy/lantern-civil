@@ -485,16 +485,13 @@ Subsystems (grouping ~30 services) were deliberately *not* added to the vocabula
 grouping is proposed as a layout-level view (`layout.groups`), reversible, to be
 promoted only if real use shows it is architecture. Real use did: see §21.
 
-## 21. Domains: a graph has levels — **owner's decision, 2026-10-13, extends §4's vocabulary**
+## 21. Views and domains: one application, several ways of looking — **owner's decision, 2026-10-13, extends §4 and §6**
 
 The north star asks Civil to make any application's architecture easy to understand.
 A real codebase read into one flat canvas (50 nodes, 136 edges) was correct and not
-readable: an inventory, not an architecture. The owner's description of that codebase
-was a set of capabilities over a shared foundation, each with an inside of its own —
-something you step into, which a view-only group cannot be. §20's condition for
-promoting grouping is met.
+readable: an inventory, not an architecture. Two decisions followed.
 
-The owner's rules for levels, universal rather than per codebase:
+**Levels.** The owner's rules, universal rather than per codebase:
 
 1. Containment is recursive and as deep as the codebase needs.
 2. The top is the whole system; the bottom is code.
@@ -502,25 +499,37 @@ The owner's rules for levels, universal rather than per codebase:
 4. Edges roll up: a level shows one line between two domains, the detail one step in.
 5. Domains come from evidence in the code, and Civil says when it is unsure.
 
-- **`domain` node**: `{ id, type: domain, name? }` — a part of the application you
-  step into: a capability (a frontend feature and the services behind it) or a part of
-  the shared foundation. One general nestable container; what a codebase calls its
-  domains (mini apps, bounded contexts, packages) is its name, not a Civil concept.
-- **`parent` on every composition node**: the domain it is drawn inside; absent means
-  the top. Containment is architecture, so it is in `spec`; position stays in `layout`.
-- **Validation**: a parent must be a domain that exists; a domain is never inside
-  itself (the cycle is named); no edge starts or ends at a domain — its lines are those
-  of what is inside it.
-- **The canvas** draws one level at a time: the top, or a domain's inside, reached by
-  double-click and left by Escape or the breadcrumb (`/p/<project>/d/<domain>`). Every
-  edge is stored once, between the units it connects; a level projects it — as itself,
-  rolled up to the domain holding an end (one line per pair and kind, counted), or
-  ending at a faint stub naming what lies outside the domain. Rolled-up lines and stubs
-  are not in the file and cannot be edited; a line is drawn where both ends are drawn.
-  A node added inside a domain is added to it; a domain deleted gives what it held to
-  the level above.
-- **Generation (Pillar 1)**: emits nothing for a domain — a codeless unit; the
-  transpiler is told (prompt version 12).
-- **The lift** finds domains by what the code reaches (docs/lift-repo.md, "Levels").
-- **Reversal**: drop the node type and `parent`; a migration would remove the domain
-  nodes and the field, flattening every canvas back to one level.
+**Views.** The conceptual structure of an application (its mini apps, capabilities,
+the foundation they share) is not the structure of its codebase (packages, modules,
+what is deployed). Both relate to the same parts; they do not share one tree. So:
+
+- **The composition (`app.yaml`, with `graphs/`) is the master.** Every part and every
+  edge, said once, with no grouping. Generation reads only these.
+- **A view groups and places the master's parts**, never adds, removes or changes one.
+  It is a directory, `civil/views/<id>/`: `view.yaml` (`kind: View` — the parts at its
+  top level, whether parts it does not place are hidden or shown at the top, and the
+  top level's layout) and one file per domain, named for its id (`kind: Domain` —
+  name, description, parent domain, members, the evidence it rests on, members placed
+  on weak evidence, and the layout of its inside).
+- **Every view has that shape**, so the canvas draws any directory under
+  `civil/views/` without knowing what it means. Civil builds two from code — `concept`
+  (what the application is) and `architecture` (how the codebase is built) — and a
+  project may keep others; a new framing is a directory, not a feature of Civil.
+  `domain` is not a node type: §3's vocabulary is unchanged.
+- **Validation**: a view names only parts the composition has, places each once, a
+  domain's parent is a domain of the same view, no domain is inside itself, a domain
+  never takes a part's id, files are named for their ids.
+- **The canvas** has a view switch (Parts — the composition as written — then each view;
+  `v` cycles). One level at a time: double-click a domain to step in, Escape or the
+  breadcrumb to leave, `/p/<project>/v/<view>[/d/<domain>]` to link. Every edge is
+  drawn where both ends are drawn — as itself, rolled up to the domain holding an end
+  (one line per pair and kind, counted), or ending at a faint stub naming what lies
+  outside the domain; lines to hidden parts are not drawn. Dragging inside a view
+  moves positions in that view's files. Parts are added and removed in the parts view;
+  a view never removes one.
+- **Generation (Pillar 1)** is unchanged and reads only the master. Owner's direction:
+  an engineer must be able to move the build forward from the graph — explicitly, by
+  Apply, never automatically — and some view edits (a module moved between deployables
+  in the architecture view) mean code. Deferred: comprehension first.
+- **The lift** writes both views (docs/lift-repo.md, "Views").
+- **Reversal**: delete `civil/views/`; nothing else refers to it.

@@ -157,13 +157,21 @@ type Load =
 
 const ACTIVE_PROJECT_KEY = 'civil.activeProject';
 
+/** Views in reading order: what the application is, then how it is built, then the rest. */
+const viewOrder = (ids: string[]): string[] => {
+  const rank = (id: string) => (id === 'concept' ? 0 : id === 'architecture' ? 1 : 2);
+  return [...ids].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
+};
+
 /** Where the address bar says to start; read once, before state exists. */
 const BOOT_ROUTE = parseRoute(window.location.pathname);
 
 /** What the stack looks like on arrival at a route (labels firm up at bundle load). */
 const stackForRoute = (route: Route): Altitude[] => {
-  const base: Altitude[] = [{ kind: 'composition', label: 'app' }];
-  if (route.kind === 'domain') base.push({ kind: 'composition', domain: route.domain, label: route.domain });
+  const base: Altitude[] = [
+    route.kind === 'view' ? { kind: 'composition', view: route.view, label: 'app' } : { kind: 'composition', label: 'app' },
+  ];
+  if (route.kind === 'view' && route.domain) base.push({ kind: 'composition', view: route.view, domain: route.domain, label: route.domain });
   if (route.kind === 'graph') {
     base.push({
       kind: 'graph',
@@ -282,23 +290,23 @@ function Workspace({ me }: { me: Me }) {
   const currentPath = useMemo(() => {
     if (atHome || !activeId) return '/';
     let graph: string | undefined;
-    let domain: string | undefined;
+    let place: { view: string; domain?: string } | undefined;
     for (let i = stack.length - 1; i >= 0; i--) {
       const level = stack[i];
       if (level?.kind === 'graph') {
         graph = level.path;
         break;
       }
-      if (level?.kind === 'composition' && level.domain) {
-        domain = level.domain;
+      if (level?.kind === 'composition' && level.view) {
+        place = { view: level.view, ...(level.domain ? { domain: level.domain } : {}) };
         break;
       }
     }
     return routePath(
       graph
         ? { kind: 'graph', projectId: activeId, graphPath: graph }
-        : domain
-          ? { kind: 'domain', projectId: activeId, domain }
+        : place
+          ? { kind: 'view', projectId: activeId, ...place }
           : { kind: 'project', projectId: activeId },
     );
   }, [atHome, activeId, stack]);
@@ -388,21 +396,28 @@ function Workspace({ me }: { me: Me }) {
         // A deep-linked graph survives the load when the bundle actually has it
         // (its label firms up from the document); anything else lands at the top.
         setStack((current) => {
+          // The view survives the load when the bundle still has it. Arriving at a
+          // project with no view chosen opens its concept view when it has one: what
+          // the application is, before how it is built.
+          const asked = current.find((l): l is Extract<Altitude, { kind: 'composition' }> => l.kind === 'composition')?.view;
+          const views = bundle.views ?? {};
+          const view = asked !== undefined ? (views[asked] ? asked : undefined) : views['concept'] ? 'concept' : undefined;
           const composition: Altitude = {
             kind: 'composition',
             label: bundle.project.name || 'app',
+            ...(view ? { view } : {}),
           };
           const top = current[current.length - 1];
-          // A level inside the composition survives when the domain still exists: the
-          // chain of domains above it is rebuilt from the document, so the breadcrumb
-          // reads from the top however the place was reached.
-          const domainAt = (id: string) => bundle.composition?.spec.nodes.find((n) => n.id === id && n.type === 'domain');
-          if (top?.kind === 'composition' && top.domain && domainAt(top.domain)) {
+          // A level inside a view survives when its domain still exists: the chain of
+          // domains above it is rebuilt from the view, so the breadcrumb reads from the top
+          // however the place was reached.
+          const loaded = view ? views[view] : undefined;
+          if (top?.kind === 'composition' && top.domain && loaded?.domains[top.domain]) {
             const chain: Altitude[] = [];
-            for (let at: string | undefined = top.domain; at && chain.length < 32; at = domainAt(at)?.parent) {
-              const node = domainAt(at);
-              if (!node) break;
-              chain.unshift({ kind: 'composition', domain: at, label: (node.type === 'domain' && node.name) || at });
+            for (let at: string | undefined = top.domain; at && chain.length < 32; at = loaded.domains[at]?.doc.spec.parent) {
+              const d = loaded.domains[at];
+              if (!d) break;
+              chain.unshift({ kind: 'composition', view: view!, domain: at, label: d.doc.metadata.name ?? at });
             }
             return [composition, ...chain];
           }
@@ -499,6 +514,16 @@ function Workspace({ me }: { me: Me }) {
     setStack((s) => s.slice(0, index + 1));
   }, [clearSelection]);
 
+  /** Another way of looking at the composition (§21): its top, in that view. */
+  const switchView = useCallback((view: string | undefined) => {
+    clearSelection();
+    setStack((s) => {
+      const root = s[0];
+      const label = root?.label ?? 'app';
+      return [view ? { kind: 'composition', label, view } : { kind: 'composition', label }];
+    });
+  }, [clearSelection]);
+
   const bundle = load.status === 'ready' ? load.bundle : undefined;
   const current = stack[stack.length - 1]!;
   const pendingCount = bundle?.pending.length ?? 0;
@@ -560,6 +585,8 @@ function Workspace({ me }: { me: Me }) {
     hasComposition: bundle?.composition !== undefined,
     // A project the lift would refuse is not offered it (Source control says why).
     liftRefused: !!bundle?.lift?.refusal,
+    viewCount: Object.keys(bundle?.views ?? {}).length,
+    inView: current.kind === 'composition' && !!current.view,
   };
   // One name for the verb everywhere it appears — buttons, title attributes, toasts.
   const liftTitle = titleOf(commandById('project.liftRepo'), commandContext);
@@ -596,7 +623,14 @@ function Workspace({ me }: { me: Me }) {
         const flow =
           current.kind === 'composition'
             ? bundle.composition &&
-              compositionToFlow(bundle.composition, bundle.compositionPath, bundle.diagnostics, context, current.domain)
+              compositionToFlow(
+                bundle.composition,
+                bundle.compositionPath,
+                bundle.diagnostics,
+                context,
+                current.view ? bundle.views?.[current.view] : undefined,
+                current.domain,
+              )
             : bundle.graphs[current.path] &&
               graphToFlow(bundle.graphs[current.path]!, current.path, bundle.diagnostics, context);
         const flowNode = flow?.nodes.find((n) => n.id === selectedIds[0]);
@@ -604,6 +638,15 @@ function Workspace({ me }: { me: Me }) {
         if (!target) return `“${selectedIds[0]}” is a leaf — nothing to enter.`;
         descend(target);
         return `Entered ${target.label}.`;
+      },
+      'view.next': () => {
+        const views = Object.values(bundle?.views ?? {});
+        if (views.length === 0) return undefined;
+        const ids = [undefined, ...viewOrder(views.map((v) => v.view.metadata.id))];
+        const at = stack.find((l): l is Extract<Altitude, { kind: 'composition' }> => l.kind === 'composition')?.view;
+        const next = ids[(ids.indexOf(at) + 1) % ids.length];
+        switchView(next);
+        return next ? `Showing the ${bundle!.views![next]!.view.metadata.name ?? next} view.` : 'Showing the parts as written.';
       },
       'canvas.fit': () => {
         if (!canvasActions.current) return undefined;
@@ -620,6 +663,11 @@ function Workspace({ me }: { me: Me }) {
         // Deleting destroys information, so it asks first. The modal is the
         // feedback, so the command itself is silent.
         if (selectedIds.length === 0 && selectedEdgeIds.length === 0) return undefined;
+        // A view groups parts; it never removes one (§21). Lines are the composition's,
+        // so those may go from here.
+        if (commandContext.inView && selectedIds.length > 0) {
+          return 'A view only groups parts. Remove a part in the parts view (press v until it shows).';
+        }
         setConfirming({ nodes: selectedIds, edges: selectedEdgeIds });
         return null;
       },
@@ -1259,12 +1307,14 @@ function Workspace({ me }: { me: Me }) {
   }, [stack, load]);
 
   const runOps = useCallback(
-    async (ops: ManifestOp[], title: string, opts?: { quiet?: boolean }): Promise<boolean> => {
-      if (!activeId || !manifestPath) return false;
+    async (ops: ManifestOp[], title: string, opts?: { quiet?: boolean; path?: string }): Promise<boolean> => {
+      // `path` sends the ops to another document than the canvas's manifest: a view's.
+      const target = opts?.path ?? manifestPath;
+      if (!activeId || !target) return false;
       try {
-        const { summary, previous, hadPending } = await applyOps(activeId, manifestPath, ops);
+        const { summary, previous, hadPending } = await applyOps(activeId, target, ops);
         // Every application is one undoable step, whatever gesture produced it.
-        undoStack.current.push({ path: manifestPath, previous, hadPending, summary });
+        undoStack.current.push({ path: target, previous, hadPending, summary });
         if (undoStack.current.length > UNDO_LIMIT) undoStack.current.shift();
         setUndoDepth(undoStack.current.length);
         await refresh();
@@ -1328,20 +1378,7 @@ function Workspace({ me }: { me: Me }) {
       const edge = graphOrComposition?.spec.edges.find((e) => e.id === id);
       return !edge || (!doomed.has(edge.from.node) && !doomed.has(edge.to.node));
     });
-    // A domain removed gives what it held to the level above (§21): its contents are
-    // the application, the domain only a way of drawing it.
-    const lifted: ManifestOp[] =
-      current.kind === 'composition'
-        ? (bundle?.composition?.spec.nodes ?? [])
-            .filter((n) => n.parent !== undefined && doomed.has(n.parent) && !doomed.has(n.id))
-            .map((n): ManifestOp => {
-              let above = bundle?.composition?.spec.nodes.find((d) => d.id === n.parent)?.parent;
-              while (above !== undefined && doomed.has(above)) above = bundle?.composition?.spec.nodes.find((d) => d.id === above)?.parent;
-              return { op: 'updateNode', id: n.id, patch: { parent: above ?? null } };
-            })
-        : [];
     const ops: ManifestOp[] = [
-      ...lifted,
       ...confirming.nodes.map((id): ManifestOp => ({ op: 'removeNode', id })),
       ...edgeIds.map((id): ManifestOp => ({ op: 'removeEdge', id })),
       // Only for edges removed on their own; removeNode leaves exposes deliberately
@@ -1428,11 +1465,9 @@ function Workspace({ me }: { me: Me }) {
           return;
         }
       }
-      // Added where you are: inside the domain on screen, if any.
-      const here = current.kind === 'composition' && current.domain ? { parent: current.domain } : {};
       await runOps(
         [
-          { op: 'addNode', node: { ...node, ...here } },
+          { op: 'addNode', node },
           // Somewhere visible rather than at the origin. Where exactly is the open
           // question about what a command targets — see docs/roadmap.md.
           { op: 'setLayout', id: String(node['id']), x: 120, y: 420 },
@@ -1559,6 +1594,31 @@ function Workspace({ me }: { me: Me }) {
             />
           ) : null}
         </span>
+        {bundle && Object.keys(bundle.views ?? {}).length > 0 && stack[stack.length - 1]?.kind !== 'code' ? (
+          // §21: the ways of looking at this composition. The same parts in each; the
+          // grouping changes. Buttons call the same switch the `v` command does.
+          <span className="view-switch" role="group" aria-label="View">
+            {[undefined, ...viewOrder(Object.keys(bundle.views ?? {}))].map((id) => {
+              const active = (stack[0]?.kind === 'composition' ? stack[0].view : undefined) === id;
+              const name = id ? (bundle.views![id]!.view.metadata.name ?? id) : 'Parts';
+              const title = id
+                ? (bundle.views![id]!.view.spec.description ?? `The ${name} view`)
+                : 'Every part and connection, as civil/app.yaml writes them';
+              return (
+                <button
+                  key={id ?? 'parts'}
+                  type="button"
+                  className={active ? 'view-tab active' : 'view-tab'}
+                  title={title}
+                  aria-pressed={active}
+                  onClick={() => switchView(id)}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </span>
+        ) : null}
         <nav className="breadcrumb" aria-label="Location">
           {stack.map((level, index) => (
             <span key={`${level.kind}-${index}`}>
@@ -1785,7 +1845,7 @@ function Workspace({ me }: { me: Me }) {
             }}
             onConnect={(edge) => void connectEdge(edge)}
             onRefuse={(reason) => report({ title: 'Connect', detail: reason, refused: true })}
-            onMoveNode={(id, x, y) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true })}
+            onMoveNode={(id, x, y, path) => void runOps([{ op: 'setLayout', id, x, y }], 'Move', { quiet: true, ...(path ? { path } : {}) })}
           />
           </>
         )}

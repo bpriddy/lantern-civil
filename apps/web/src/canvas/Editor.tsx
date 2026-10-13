@@ -28,12 +28,13 @@ import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js'
  */
 /** The altitudes the canvas itself can draw. A code level is a takeover, not a canvas. */
 export type CanvasAltitude =
-  // `domain` is the level inside one domain (§21); absent, the top.
-  | { kind: 'composition'; label: string; domain?: string }
+  // `view` is a view of the composition (§21), absent for the composition as written;
+  // `domain` is the level inside one of that view's domains, absent for its top.
+  | { kind: 'composition'; label: string; view?: string; domain?: string }
   | { kind: 'graph'; path: string; label: string };
 
 export type Altitude =
-  | { kind: 'composition'; label: string; domain?: string }
+  | { kind: 'composition'; label: string; view?: string; domain?: string }
   | { kind: 'graph'; path: string; label: string }
   // PRD 5: a node is a canvas or it is code. A code level is a viewport takeover,
   // not another canvas, which is why it carries files rather than a manifest path.
@@ -74,7 +75,8 @@ export interface EditorProps {
   onConnect: (edge: Record<string, unknown>) => void;
   /** Refused connections say why rather than silently not happening. */
   onRefuse: (reason: string) => void;
-  onMoveNode: (id: string, x: number, y: number) => void;
+  /** `path` is the file that places this level when it is not the canvas's own manifest: a view's. */
+  onMoveNode: (id: string, x: number, y: number, path?: string) => void;
 }
 
 export function Editor(props: EditorProps) {
@@ -144,7 +146,14 @@ function Surface({
       const composition = bundle.composition;
       if (!composition) return { nodes: [], edges: [], nodeTypes: compositionNodeTypes };
       return {
-        ...compositionToFlow(composition, bundle.compositionPath, bundle.diagnostics, context, current.domain),
+        ...compositionToFlow(
+          composition,
+          bundle.compositionPath,
+          bundle.diagnostics,
+          context,
+          current.view ? bundle.views?.[current.view] : undefined,
+          current.domain,
+        ),
         nodeTypes: compositionNodeTypes,
       };
     }
@@ -216,12 +225,13 @@ function Surface({
 
   /** The manifest nodes behind the current canvas, for inferring what a link means. */
   const manifestNodes = useMemo(() => {
-    // Only what this level draws: a line can be drawn between those, and nothing else.
+    // Only the parts this level draws: a line can be drawn between those, and nothing else.
     if (current.kind === 'composition') {
-      return (bundle.composition?.spec.nodes ?? []).filter((n) => n.parent === current.domain);
+      const drawn = new Set(computedNodes.map((n) => n.id));
+      return (bundle.composition?.spec.nodes ?? []).filter((n) => drawn.has(n.id));
     }
     return bundle.graphs[current.path]?.spec.nodes ?? [];
-  }, [bundle, current]);
+  }, [bundle, current, computedNodes]);
 
   const existingEdgeIds = useMemo(() => edges.map((e) => e.id), [edges]);
 
@@ -242,6 +252,11 @@ function Surface({
       }
       if (connection.source.startsWith(OUTSIDE) || connection.target.startsWith(OUTSIDE)) {
         onRefuse('That is outside this domain. Go up to the level that holds both ends to connect them.');
+        return;
+      }
+      const isDomain = (id: string) => computedNodes.some((n) => n.id === id && n.type === 'domain');
+      if (isDomain(connection.source) || isDomain(connection.target)) {
+        onRefuse("A domain's lines are those of what is inside it. Step in and connect its parts.");
         return;
       }
 
@@ -323,7 +338,12 @@ function Surface({
       // live in liveNodes above.
       onNodeDragStop={(_e, node) => {
         dragging.current = false;
-        onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y));
+        // In a view, positions live in the view's files: its view.yaml at the top, a
+        // domain's file inside it. A stub is never moved; it stands for something elsewhere.
+        if (node.id.startsWith(OUTSIDE)) return;
+        const loaded = current.kind === 'composition' && current.view ? bundle.views?.[current.view] : undefined;
+        const path = loaded ? (current.kind === 'composition' && current.domain ? loaded.domains[current.domain]?.path : loaded.path) : undefined;
+        onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y), path);
       }}
       // Deletion belongs to the command registry — one named action, one op path,
       // one toast — so React Flow's own delete key is turned off rather than letting
@@ -361,8 +381,8 @@ export function descentTarget(data: NodeData): Altitude | undefined {
     return { kind: 'code', label, files: descent.files };
   }
 
-  if (manifest.type === 'domain' && !data.outside) {
-    return { kind: 'composition', domain: manifest.id, label: data.label };
+  if (manifest.type === 'domain' && !data.outside && 'view' in manifest) {
+    return { kind: 'composition', view: manifest.view, domain: manifest.id, label: data.label };
   }
   if (manifest.type === 'subgraph') {
     return { kind: 'graph', path: manifest.ref, label: manifest.id };

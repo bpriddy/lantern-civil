@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CompositionEdge, CompositionNode, GraphEdge, GraphNode } from '@civil/schema';
+import type { CompositionEdge, CompositionNode, Domain, GraphEdge, GraphNode } from '@civil/schema';
 import type { Altitude } from '../canvas/Editor.js';
 import type { LiftUnit, ProjectBundle } from '../project.js';
 import { confidenceSentence, parseEvidence, voicesSentence } from '../lift.js';
@@ -44,13 +44,23 @@ export function Inspector({
   const singleEdge = selectedEdgeIds.length === 1 && selectedIds.length === 0;
   const many = selectedIds.length + selectedEdgeIds.length > 1;
   const node = single ? findNode(bundle, altitude, selectedIds[0]!) : undefined;
+  // A domain is the view's, not the composition's (§21): its own detail, from its file.
+  const loaded = altitude.kind === 'composition' && altitude.view ? bundle?.views?.[altitude.view] : undefined;
+  const domain = single && !node ? loaded?.domains[selectedIds[0]!] : undefined;
   const edge = singleEdge ? findEdge(bundle, altitude, selectedEdgeIds[0]!) : undefined;
 
   return (
     <>
       <div className="pane-title">Inspector</div>
       <div className="pane-body">
-        {node ? (
+        {domain ? (
+          <DomainDetail
+            id={selectedIds[0]!}
+            path={domain.path}
+            doc={domain.doc}
+            {...(onOpenFile ? { onOpenFile } : {})}
+          />
+        ) : node ? (
           <NodeDetail
             node={node}
             bundle={bundle}
@@ -285,8 +295,8 @@ function Provenance({
         <>
           <div className="provenance-label muted">Where it rests in the code</div>
           <ul className="repo-files provenance-evidence">
-            {evidence.slice(0, EVIDENCE_SHOWN).map(({ item, parsed }) => (
-              <li key={item} title={parsed.line ? `Open ${parsed.path} at line ${parsed.line}` : `Open ${parsed.path}`}>
+            {evidence.slice(0, EVIDENCE_SHOWN).map(({ item, parsed }, i) => (
+              <li key={`${i}-${item}`} title={parsed.line ? `Open ${parsed.path} at line ${parsed.line}` : `Open ${parsed.path}`}>
                 {onOpenFile ? (
                   <button
                     type="button"
@@ -407,12 +417,6 @@ function NodeDetail({
           placeholder="postgres, redis, gcs…"
           onCommit={optional('engine')}
         />,
-      );
-      break;
-    case 'domain':
-      // What the canvas calls it; emptying it shows the id.
-      fields.push(
-        <Field key="name" label="name" value={node.name ?? ''} placeholder={node.id} onCommit={optional('name')} />,
       );
       break;
     case 'io':
@@ -618,6 +622,62 @@ function EdgeDetail({
       <button type="button" className="danger-link" onClick={onRemove}>
         Disconnect
       </button>
+    </>
+  );
+}
+
+/**
+ * A domain of a view: what it is, what it holds, and where its reading rests. Read
+ * here; arranged in its file (civil/views/<view>/<id>.yaml), which the link opens.
+ */
+function DomainDetail({
+  id,
+  path,
+  doc,
+  onOpenFile,
+}: {
+  id: string;
+  path: string;
+  doc: Domain;
+  onOpenFile?: (path: string, line?: number) => void;
+}) {
+  const link = (target: string) => {
+    const [file, line] = target.split(':');
+    return onOpenFile ? (
+      <button type="button" className="repo-file-link" onClick={() => onOpenFile(file!, line ? Number(line) : undefined)}>
+        <code>{target}</code>
+      </button>
+    ) : (
+      <code>{target}</code>
+    );
+  };
+  return (
+    <>
+      <dl className="kv">
+        <dt>domain</dt>
+        <dd>{doc.metadata.name ?? id}{doc.spec.foundation ? ' · foundation' : ''}</dd>
+        <dt>holds</dt>
+        <dd>{doc.spec.members.length ? doc.spec.members.join(', ') : 'only domains'}</dd>
+        {doc.spec.unsure?.length ? (
+          <>
+            <dt>unsure</dt>
+            <dd title="Placed here on weak evidence.">{doc.spec.unsure.join(', ')}</dd>
+          </>
+        ) : null}
+        <dt>file</dt>
+        <dd>{link(path)}</dd>
+      </dl>
+      {doc.spec.description ? <p className="repo-description">{doc.spec.description}</p> : null}
+      {doc.spec.evidence?.length ? (
+        <>
+          <div className="provenance-label muted">Where it rests in the code</div>
+          <ul className="repo-files provenance-evidence">
+            {doc.spec.evidence.map((e, i) => (
+              <li key={`${i}-${e}`}>{link(e)}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </>
   );
 }

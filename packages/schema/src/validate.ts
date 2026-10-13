@@ -50,7 +50,7 @@ function flattenIssues(issues: readonly z.ZodIssue[]): z.ZodIssue[] {
   return out;
 }
 
-function fromZod(issues: readonly z.ZodIssue[], file: string): Diagnostic[] {
+export function fromZod(issues: readonly z.ZodIssue[], file: string): Diagnostic[] {
   return flattenIssues(issues).map((issue) => ({
     file,
     jsonPointer: issue.path.length ? ptr(...issue.path) : '',
@@ -246,44 +246,7 @@ export function validateComposition(
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const serviceIds = new Set(nodes.filter((n) => n.type === 'service').map((n) => n.id));
 
-  // §21: containment. A node sits inside a domain or at the top; a domain sits inside
-  // another or at the top, never inside itself.
   nodes.forEach((node, i) => {
-    if (node.parent === undefined) return;
-    const parent = byId.get(node.parent);
-    if (parent?.type === 'domain') return;
-    s.push({
-      jsonPointer: ptr('spec', 'nodes', i, 'parent'),
-      code: 'parent-not-domain',
-      message: parent
-        ? `${node.type} "${node.id}" is inside "${node.parent}", which is a ${parent.type}, not a domain`
-        : `${node.type} "${node.id}" is inside "${node.parent}", which is not a node in this composition`,
-      nodeId: node.id,
-    });
-  });
-  nodes.forEach((node, i) => {
-    if (node.type !== 'domain') return;
-    const path = [node.id];
-    for (let at = node.parent; at !== undefined; at = byId.get(at)?.parent) {
-      if (at === node.id) {
-        s.push({
-          jsonPointer: ptr('spec', 'nodes', i, 'parent'),
-          code: 'domain-cycle',
-          message: `domain "${node.id}" is inside itself: ${[...path, at].join(' → ')}`,
-          nodeId: node.id,
-          cyclePath: [...path, at],
-        });
-        return;
-      }
-      if (path.includes(at) || path.length > nodes.length) return; // another domain's cycle, reported there
-      path.push(at);
-    }
-  });
-
-  nodes.forEach((node, i) => {
-    // A domain has no code of its own: nothing to resolve.
-    if (node.type === 'domain') return;
-
     if (node.type === 'service') {
       // PRD 4: a service is a graph or a function — one thing at two resolutions.
       const target = 'graph' in node.impl ? node.impl.graph : node.impl.entrypoint;
@@ -370,19 +333,6 @@ export function validateComposition(
     const from = byId.get(edge.from.node);
     const to = byId.get(edge.to.node);
     if (!from || !to) return;
-
-    // §21: a domain's edges are those of what is inside it, rolled up by the canvas.
-    // Drawn on the domain itself, an edge would say nothing about which part uses what.
-    if (from.type === 'domain' || to.type === 'domain') {
-      const end = from.type === 'domain' ? from : to;
-      s.push({
-        jsonPointer: ptr('spec', 'edges', i, from.type === 'domain' ? 'from' : 'to', 'node'),
-        code: 'edge-touches-domain',
-        message: `edge "${edge.id}" ${from.type === 'domain' ? 'starts' : 'ends'} at domain "${end.id}"; connect what is inside it instead`,
-        edgeId: edge.id,
-      });
-      return;
-    }
 
     // The owner's revision of PRD 4 (docs/prd-deltas.md): traffic is
     // client -> boundary -> service. A client is a consumer, so nothing routes TO

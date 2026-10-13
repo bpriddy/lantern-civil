@@ -351,6 +351,6 @@ test('the architect is shown every level, what it holds, and what is unsure', ()
     services: [{ id: 'orders', infrastructure: false }, { id: 'auth', infrastructure: false }, { id: 'config', infrastructure: true }],
     domains: [{ id: 'orders-domain', name: 'Orders', members: ['orders'], surfaces: [], unsure: ['orders'], source: { file: 'x' } }],
   } as never) as { levels: { domain: string | null; members: { id: string }[]; unsure?: string[] }[] };
-  assert.deepEqual(tree.levels[0]!.members.map((m) => m.id), ['orders-domain', 'web', 'api', 'auth', 'db'], 'infrastructure is not drawn, so not shown');
+  assert.deepEqual(tree.levels[0]!.members.map((m) => m.id), ['orders-domain', 'auth', 'db'], 'infrastructure, clients and servers are not in the concept view');
   assert.deepEqual(tree.levels[1]!.unsure, ['orders']);
 });

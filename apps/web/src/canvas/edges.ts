@@ -40,9 +40,6 @@ export function proposeCompositionEdge(
   const to = index.get(connection.target);
   if (!from || !to) return { kind: '', refusal: 'One end of that connection is not a node.' };
 
-  if (from.type === 'domain' || to.type === 'domain') {
-    return { kind: '', refusal: "A domain's lines are those of what is inside it. Step in and connect its parts." };
-  }
   if (to.type === 'client') {
     return { kind: '', refusal: 'A client consumes; nothing routes to it.' };
   }

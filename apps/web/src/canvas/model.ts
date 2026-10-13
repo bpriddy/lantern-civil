@@ -2,7 +2,7 @@ import { MarkerType, type Edge, type Node } from '@xyflow/react';
 import type { Composition, Diagnostic, Graph } from '@civil/schema';
 import { isContract, type AgentEntry, type ContractResult, type LiftUnit } from '../project.js';
 import type { Descent, NodeData } from './nodes.js';
-import { domainSummary, projectLevel } from './levels.js';
+import { domainSummary, projectLevel, type LoadedView } from './levels.js';
 
 /**
  * Turns a manifest into what React Flow draws. Positions come from the `layout`
@@ -93,25 +93,40 @@ export function compositionToFlow(
   file: string,
   diagnostics: Diagnostic[],
   context: FlowContext,
+  view?: LoadedView,
   scope?: string,
 ): { nodes: Node<NodeData>[]; edges: Edge[] } {
-  const layout = composition.layout.nodes;
-  const level = projectLevel(composition, scope);
+  const level = projectLevel(composition, file, view, scope);
+  const layout = level.layout;
 
-  const nodes = level.nodes.map((node, index): Node<NodeData> => {
+  const nodes = level.items.map((item, index): Node<NodeData> => {
+    if (item.kind === 'domain') {
+      // A level of its own, in this view: stepping in shows what it holds, so the
+      // interior preview says what that is.
+      const d = item.domain;
+      const summary = domainSummary(composition, view!, d.id);
+      return {
+        id: d.id,
+        type: 'domain',
+        position: position(layout, d.id, index),
+        data: {
+          label: d.name,
+          descent: { into: 'canvas', ports: [], summary },
+          detail: undefined,
+          contract: undefined,
+          contractError: undefined,
+          diagnostics: diagnostics.filter((x) => x.file === d.path),
+          manifest: d,
+          ...(d.unsure?.length ? { confidence: 'low' as const } : {}),
+        },
+      };
+    }
+    const node = item.node;
     let detail: string | undefined;
     let descent: Descent;
-    let label: string = node.id;
+    const label: string = node.id;
 
     switch (node.type) {
-      case 'domain': {
-        // A level of its own: stepping in shows what it holds, so the face says what that is.
-        const summary = domainSummary(composition, node.id);
-        label = node.name ?? node.id;
-        // The interior preview says what it holds; the face needs nothing more.
-        descent = { into: 'canvas', ports: [], summary };
-        break;
-      }
       case 'service':
         // PRD 4: one thing at two resolutions. Which resolution decides which kind
         // of context opens, and the face has to say which.
@@ -194,7 +209,7 @@ export function compositionToFlow(
         contractError: undefined,
         diagnostics: [],
         // A stub stands for a node elsewhere; it is never edited here.
-        manifest: { id: stub.target, type: 'domain' },
+        manifest: { id: stub.target, type: 'domain', name: stub.path[stub.path.length - 1] ?? stub.target, path: '', view: view?.view.metadata.id ?? '' },
         outside: true,
       },
     });

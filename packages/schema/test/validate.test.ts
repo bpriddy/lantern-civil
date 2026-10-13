@@ -6,6 +6,7 @@ import {
   validateComposition,
   validateGraph,
   validateProject,
+  validateView,
 } from '../dist/index.js';
 import { DiskFiles, EXAMPLE_ROOT, codes, loadYaml } from './helpers.ts';
 
@@ -335,71 +336,69 @@ test('unresolved refs are reported per node, not as one blanket failure', () => 
 });
 
 // ---------------------------------------------------------------------------
-// §21: domains and containment.
+// §21: views. The composition is the master; a view only groups and places its parts.
 // ---------------------------------------------------------------------------
 
-test('a node may sit inside a domain, and domains nest', () => {
-  const r = validateComposition(
-    composition({
-      nodes: [
-        { id: 'base', type: 'domain', name: 'Foundation' },
-        { id: 'auth', type: 'domain', parent: 'base' },
-        { id: 'users', type: 'service', parent: 'auth', impl: { entrypoint: 'u.py' } },
-        { id: 'db', type: 'datastore', parent: 'base' },
+const view = (members: string[] = [], extra: Record<string, unknown> = {}) => ({
+  apiVersion: 'civil/v1', kind: 'View', metadata: { id: 'concept' }, spec: { members, ...extra },
+});
+const domain = (id: string, spec: Record<string, unknown>) => ({
+  apiVersion: 'civil/v1', kind: 'Domain', metadata: { id }, spec,
+});
+const PARTS = new Set(['web', 'orders', 'payments', 'db']);
+const D = 'civil/views/concept';
+
+test('a view places parts in domains, and domains nest', () => {
+  const r = validateView(
+    {
+      path: `${D}/view.yaml`,
+      raw: view(['web']),
+      domains: [
+        { path: `${D}/shop.yaml`, raw: domain('shop', { members: ['orders'] }) },
+        { path: `${D}/money.yaml`, raw: domain('money', { parent: 'shop', members: ['payments'], description: 'Takes payment.' }) },
       ],
-      edges: [{ id: 'e1', kind: 'depends-on', from: { node: 'users' }, to: { node: 'db' } }],
-    }),
-    'app.yaml',
-    MemoryFiles.from({ 'u.py': '' }),
+    },
+    PARTS,
   );
   assert.deepEqual(r.diagnostics, []);
+  assert.equal(r.view?.spec.unplaced, 'top', 'an unplaced part is drawn at the top unless the view hides it');
+  assert.deepEqual(Object.keys(r.domains).sort(), ['money', 'shop']);
 });
 
-test('a parent must be a domain that exists', () => {
-  const r = validateComposition(
-    composition({
-      nodes: [
-        { id: 'db', type: 'datastore' },
-        { id: 'a', type: 'datastore', parent: 'db' },
-        { id: 'b', type: 'datastore', parent: 'nowhere' },
-      ],
-      edges: [],
-    }),
-    'app.yaml',
-    emptyFiles,
+test('a view names only parts the composition has, and places each once', () => {
+  const r = validateView(
+    {
+      path: `${D}/view.yaml`,
+      raw: view(['orders']),
+      domains: [{ path: `${D}/shop.yaml`, raw: domain('shop', { members: ['orders', 'ghost'] }) }],
+    },
+    PARTS,
   );
-  assert.deepEqual(codes(r.diagnostics), ['parent-not-domain', 'parent-not-domain']);
-  assert.match(r.diagnostics[0]!.message, /which is a datastore, not a domain/);
-  assert.match(r.diagnostics[1]!.message, /not a node in this composition/);
+  assert.deepEqual(codes(r.diagnostics), ['placed-twice', 'unknown-node']);
+  assert.match(r.diagnostics[0]!.message, /placed in the top level and in domain "shop"/);
 });
 
-test('a domain cannot be inside itself, and the cycle is named', () => {
-  const r = validateComposition(
-    composition({
-      nodes: [
-        { id: 'a', type: 'domain', parent: 'b' },
-        { id: 'b', type: 'domain', parent: 'a' },
+test('a domain parent is a domain of the same view, never itself', () => {
+  const r = validateView(
+    {
+      path: `${D}/view.yaml`,
+      raw: view(),
+      domains: [
+        { path: `${D}/a.yaml`, raw: domain('a', { parent: 'b' }) },
+        { path: `${D}/b.yaml`, raw: domain('b', { parent: 'a' }) },
+        { path: `${D}/c.yaml`, raw: domain('c', { parent: 'nowhere' }) },
       ],
-      edges: [],
-    }),
-    'app.yaml',
-    emptyFiles,
+    },
+    PARTS,
   );
-  assert.deepEqual(codes(r.diagnostics), ['domain-cycle', 'domain-cycle']);
-  assert.deepEqual(r.diagnostics[0]!.cyclePath, ['a', 'b', 'a']);
+  assert.deepEqual(codes(r.diagnostics).sort(), ['domain-cycle', 'parent-not-domain']);
+  assert.deepEqual(r.diagnostics.find((d) => d.code === 'domain-cycle')!.cyclePath, ['a', 'b', 'a']);
 });
 
-test('edges connect what is inside a domain, never the domain itself', () => {
-  const r = validateComposition(
-    composition({
-      nodes: [
-        { id: 'shop', type: 'domain' },
-        { id: 'db', type: 'datastore' },
-      ],
-      edges: [{ id: 'e1', kind: 'depends-on', from: { node: 'shop' }, to: { node: 'db' } }],
-    }),
-    'app.yaml',
-    emptyFiles,
+test('a domain file is named for its id, and a domain never takes a part id', () => {
+  const r = validateView(
+    { path: `${D}/view.yaml`, raw: view(), domains: [{ path: `${D}/misnamed.yaml`, raw: domain('orders', {}) }] },
+    PARTS,
   );
-  assert.deepEqual(codes(r.diagnostics), ['edge-touches-domain']);
+  assert.deepEqual(codes(r.diagnostics).sort(), ['duplicate-id', 'invalid-manifest']);
 });

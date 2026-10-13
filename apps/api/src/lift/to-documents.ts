@@ -1,5 +1,5 @@
 import { parse } from 'yaml';
-import { MemoryFiles, validateProject, zProject, type Diagnostic } from '@civil/schema';
+import { MemoryFiles, validateProject, validateView, VIEWS_DIR, zProject, type Diagnostic } from '@civil/schema';
 import { applyOps } from '../manifest/apply.js';
 import { readManifest, applySplices } from '../manifest/document.js';
 import { deriveUnits, REGISTRY_PATH } from '../project/registry.js';
@@ -28,6 +28,7 @@ import {
   type ModelNode,
 } from './documents-model.js';
 import { compositionYaml, graphYaml, projectYaml } from './documents-yaml.js';
+import { viewDocuments } from './documents-views.js';
 import { LIFT_ROLE, liftRegistry, readLiftProvenance, type LiftProvenance } from './documents-registry.js';
 import type { Provenance } from './claims.js';
 import type { FileMap, Refinement, Skeleton } from './skeleton.js';
@@ -226,16 +227,7 @@ function canvas(opts: {
   // boundary's exposes or process's calls.
   const gone = new Set([...deleted.keys()].map((id) => ids.get(id)!));
   const wanted = opts.wanted.filter((w) => !deleted.has(w.id));
-  // One grid per level (§21): a domain's inside is its own canvas, laid out on its own.
-  const levels = new Map<string, typeof wanted>();
-  for (const w of wanted) {
-    const level = String(w.node['parent'] ?? '');
-    levels.set(level, [...(levels.get(level) ?? []), w]);
-  }
-  const fresh = new Map<string, { x: number; y: number }>();
-  for (const level of levels.values()) {
-    for (const [id, at] of columnLayout(level.map((w) => ({ id: ids.get(w.id)!, column: w.column })))) fresh.set(id, at);
-  }
+  const fresh = columnLayout(wanted.map((w) => ({ id: ids.get(w.id)!, column: w.column })));
   const existingById = new Map((existing?.nodes ?? []).map((n) => [n['id'] as string, n]));
   const desired: DesiredNode[] = wanted.map((w) => {
     const id = ids.get(w.id)!;
@@ -351,11 +343,6 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
       const m = w as ModelNode;
       const id = ids.get(m.id)!;
       const node: Node = { ...m.node, id };
-      if (typeof node['parent'] === 'string') node['parent'] = ids.get(node['parent']) ?? node['parent'];
-      // Where a node sits is the lift's proposal the first time and the author's after:
-      // a node they moved to another domain stays there.
-      const fill = ['parent'];
-      if (m.type === 'domain') return { id, node, owned: [], fill: [...fill, 'name'] };
       if (m.type === 'boundary') node['exposes'] = (m.node['exposes'] as string[]).map((s) => ids.get(s) ?? s);
       if (m.type === 'process') node['calls'] = (m.node['calls'] as string[]).map((s) => ids.get(s) ?? s);
       if (m.type === 'service') {
@@ -369,12 +356,12 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
           // The author drew this service at a higher resolution than the code shows
           // (no agents found): their graph stands, and the lift says so.
           notes.push(`service "${id}" is a graph in the documents but the repository shows no agents in it; the graph is kept`);
-          return { id, node, owned: [], fill };
+          return { id, node, owned: [] };
         }
       }
-      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'], datastore: ['engine'], domain: [] }[m.type];
-      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'], datastore: [], domain: [] }[m.type];
-      return { id, node, owned, union, fill };
+      const owned = { client: ['client', 'path', 'dev'], boundary: ['boundary'], service: ['impl'], process: ['trigger'], datastore: ['engine'] }[m.type];
+      const union = { client: [], boundary: ['exposes'], service: [], process: ['calls'], datastore: [] }[m.type];
+      return { id, node, owned, union };
     },
     wasLifted: (n) => previous.has(`app/${n['id'] as string}`),
     render: (nodes, edges, layout) => compositionYaml(projectId, opts.projectName, nodes, edges, layout),
@@ -441,6 +428,19 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
     graphNodeIds.set(service.id, result.ids);
     if (result.plan) graphPlans.push({ path, plan: result.plan });
   }
+
+  // ---- views (§21) --------------------------------------------------------------
+
+  const finalParts = new Set(((readCanvas(composition.text, 'Composition')?.nodes ?? []) as Node[]).map((n) => n['id'] as string));
+  const written = viewDocuments(
+    model.views,
+    ids,
+    finalParts,
+    new Map(model.nodes.map((n) => [ids.get(n.id) ?? n.id, n.column])),
+    existing,
+  );
+  Object.assign(files, written.files);
+  notes.push(...written.notes);
 
   // ---- registry ----------------------------------------------------------------
 
@@ -529,6 +529,17 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
   }
   const docs = { ...existing, ...files };
   all.push(...validateProject(compositionPath, { files: view, loadDoc: (p) => parseSafely(docs[p]) }).diagnostics);
+  // Every view this lift wrote into, whole — the author's files and the lift's together.
+  for (const viewPath of Object.keys(files).filter((p) => p.startsWith(`${VIEWS_DIR}/`) && p.endsWith('/view.yaml'))) {
+    const dir = viewPath.slice(0, viewPath.lastIndexOf('/'));
+    const domainPaths = Object.keys(docs).filter((p) => p !== viewPath && p.slice(0, p.lastIndexOf('/')) === dir && /\.ya?ml$/.test(p));
+    all.push(
+      ...validateView(
+        { path: viewPath, raw: parseSafely(docs[viewPath]), domains: domainPaths.map((p) => ({ path: p, raw: parseSafely(docs[p]) })) },
+        finalParts,
+      ).diagnostics,
+    );
+  }
   for (const d of all) {
     diagnostics.push(`${d.severity === 'error' ? 'error' : 'warning'}: ${d.file}${d.jsonPointer ? ` ${d.jsonPointer}` : ''}: ${d.message}`);
   }

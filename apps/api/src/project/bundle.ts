@@ -1,10 +1,14 @@
 import {
   validateProject,
+  validateView,
+  VIEWS_DIR,
   zGraph,
   zProject,
   type Composition,
   type Diagnostic,
+  type Domain,
   type Graph,
+  type View,
 } from '@civil/schema';
 import { parse } from 'yaml';
 import { validateComposition } from '@civil/schema';
@@ -40,8 +44,22 @@ export interface AgentEntry {
   prompt: string | undefined;
 }
 
+/** One view as the canvas needs it (docs/prd-deltas.md §21). */
+export interface LoadedView {
+  /** civil/views/<id>/view.yaml */
+  path: string;
+  view: View;
+  /** Domain id → its document and the file it is in. */
+  domains: Record<string, { path: string; doc: Domain }>;
+}
+
 export interface ProjectBundle {
   compositionPath: string;
+  /**
+   * Ways of looking at the composition, by view id (civil/views/<id>/). Each groups and
+   * places the composition's parts; none adds one. Empty when the project keeps none.
+   */
+  views: Record<string, LoadedView>;
   /**
    * PRD 7.2: discovered contracts, keyed `manifestPath:nodeId`. Read from source
    * rather than declared, so editing the function is editing the ports.
@@ -135,8 +153,26 @@ export async function loadBundle(source: ProjectSource): Promise<ProjectBundle> 
     };
   }
 
+  // Views: every civil/views/<id>/view.yaml and the domain files beside it, checked
+  // against the composition's parts. A view that does not parse is reported, not drawn.
+  const viewFiles = source.list().filter((p) => p.startsWith(`${VIEWS_DIR}/`) && /\.ya?ml$/.test(p));
+  await source.ensure?.(viewFiles);
+  const parts = new Set((compositionResult.doc?.spec.nodes ?? []).map((n) => n.id));
+  const views: Record<string, LoadedView> = {};
+  for (const path of viewFiles.filter((p) => /^[^/]+\/views\/[^/]+\/view\.ya?ml$/.test(p)).sort()) {
+    const dir = path.slice(0, path.lastIndexOf('/'));
+    const domainFiles = viewFiles.filter((p) => p !== path && p.slice(0, p.lastIndexOf('/')) === dir);
+    const result = validateView(
+      { path, raw: parseYaml(source, path), domains: domainFiles.map((p) => ({ path: p, raw: parseYaml(source, p) })) },
+      parts,
+    );
+    diagnostics.push(...result.diagnostics);
+    if (result.view) views[result.view.metadata.id] = { path, view: result.view, domains: result.domains };
+  }
+
   return {
     compositionPath,
+    views,
     composition: compositionResult.doc,
     graphs,
     agents,

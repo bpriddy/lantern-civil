@@ -209,9 +209,9 @@ export function domainAreas(reader: Skeleton, listed: readonly string[]): Area[]
 
 /** The tree as the architect is shown it: every level, what it holds, and what is unsure. */
 export function treeForArchitect(skeleton: Skeleton): Record<string, unknown> {
+  // The concept view (§21): what the application is. Clients and servers are how it
+  // is run — the architecture view's — so the architect is not shown them.
   const kinds = new Map<string, string>();
-  for (const c of skeleton.clients) kinds.set(c.id, 'client');
-  for (const s of skeleton.servers) kinds.set(s.id, 'server');
   for (const s of skeleton.services) if (!s.infrastructure) kinds.set(s.id, 'service');
   for (const p of skeleton.processes) kinds.set(p.id, 'process');
   for (const d of skeleton.datastores ?? []) kinds.set(d.id, 'datastore');
