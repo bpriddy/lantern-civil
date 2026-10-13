@@ -4,6 +4,10 @@ import { parse } from 'yaml';
 import { AREA_LIMIT, AREA_MAX_FILES, buildAreas, domainAreas, normalizeClaims, treeForArchitect, validateAnswer } from '../dist/lift/analysts.js';
 import { liftRepository } from '../dist/lift/index.js';
 
+/** The request the runner would parse: the lift sends it serialised once (JsonText). */
+const decoded = (body: unknown): unknown =>
+  body && typeof body === 'object' && typeof (body as { text?: unknown }).text === 'string' ? JSON.parse((body as { text: string }).text) : body;
+
 /**
  * The agent stage adds voices to the reader's, and every one is weighed by the same
  * rules. What is pinned here is everything around the model: how the repository is
@@ -115,7 +119,7 @@ const USES_EVIDENCE = [{ file: `${S}/orders/orders.module.ts`, line: 2, quote: "
 test('an agent the reader missed is added when an analyst finds it and a verifier confirms it', async () => {
   let asked: { areas?: unknown[]; claims?: unknown[] } = {};
   const analyze = async (body: unknown) => {
-    asked = body as typeof asked;
+    asked = decoded(body) as typeof asked;
     return {
       claims: [
         { kind: 'agent', subject: 'pricing', by: 'analyst:orders', stance: 'assert', evidence: AGENT_EVIDENCE, note: 'Prices an order through the LLM gateway.' },
@@ -250,7 +254,7 @@ test('an unchanged area is not asked again; a changed one is, alone', async () =
   let calls = 0;
   const analyze = async (body: unknown) => {
     calls += 1;
-    const area = (body as { areas: { id: string }[] }).areas[0]!;
+    const area = (decoded(body) as { areas: { id: string }[] }).areas[0]!;
     return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
   };
   const opts = { projectName: 'Shop', analyze, analyzeOptions: { memo, version: 'v1:model' } };
@@ -290,7 +294,7 @@ test('progress is reported stage by stage, with areas counted', async () => {
 test('an area that cannot be asked keeps its last answer, and says so', async () => {
   const { memo } = memoStore();
   const answer = async (body: unknown) => {
-    const area = (body as { areas: { id: string }[] }).areas[0]!;
+    const area = (decoded(body) as { areas: { id: string }[] }).areas[0]!;
     return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
   };
   const first = await liftRepository(source(REPO) as never, { projectName: 'Shop', analyze: answer, analyzeOptions: { memo, version: 'v1' } });
@@ -309,7 +313,7 @@ test('Civil\'s own documents are never analysed as the product', async () => {
   await liftRepository(source({ ...REPO, 'civil/app.yaml': 'apiVersion: civil/v1\nkind: Composition\nmetadata:\n  id: shop\n  name: Shop\nspec:\n  nodes: []\n  edges: []\n', 'civil/registry.yaml': 'kind: Registry\n' }) as never, {
     projectName: 'Shop',
     analyze: async (body: unknown) => {
-      const b = body as { files: Record<string, string>; index: string[] };
+      const b = decoded(body) as { files: Record<string, string>; index: string[] };
       sentPaths = Object.keys(b.files);
       indexed = b.index;
       return { claims: [] };

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { isSampleCode, isTestSupport } from './read.js';
 import { claimKey, isEntity, READER, reconcile, toSkeleton, type Claim, type Evidence } from './claims.js';
 import { MAX_CHILDREN } from './containment.js';
+import { JsonText } from '../http/transpile-routes.js';
 import type { FileMap, Skeleton, SkeletonDomain } from './skeleton.js';
 
 /**
@@ -578,6 +579,12 @@ export async function analyzeRepository(
   const total = areas.length + (reader.domains?.length ? 1 : 0);
   opts.progress?.(0, total);
 
+  // The repository is the bulk of every request and the same in each: serialised once,
+  // with each request's own fields spliced in (JsonText).
+  const shared = JSON.stringify({ files: sent, index: product }).slice(0, -1);
+  const body = (fields: Record<string, unknown>) =>
+    new JsonText(`${shared},${JSON.stringify(fields).slice(1)}`);
+
   const one = async (area: Area): Promise<void> => {
     const fingerprint = opts.version ? areaFingerprint(area, sent, readerClaims, opts.version) : undefined;
     const remembered = fingerprint ? await opts.memo?.get(fingerprint) : undefined;
@@ -586,7 +593,7 @@ export async function analyzeRepository(
       raw.push(...remembered);
     } else {
       try {
-        const answer = await ask({ files: sent, index: product, claims: readerClaims, areas: [area] });
+        const answer = await ask(body({ claims: readerClaims, areas: [area] }));
         const valid = validateAnswer(answer, productSet);
         raw.push(...valid.claims);
         issues.push(...valid.issues);
@@ -636,7 +643,7 @@ export async function analyzeRepository(
       review = remembered;
     } else {
       try {
-        const answer = await ask({ mode: 'architect', tree, files: sent, index: product });
+        const answer = await ask(body({ mode: 'architect', tree }));
         const valid = validateAnswer(answer, productSet);
         review = valid.claims;
         issues.push(...valid.issues);

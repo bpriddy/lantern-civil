@@ -63,7 +63,8 @@ resource "google_cloud_run_v2_service" "civil" {
       resources {
         limits = {
           cpu    = "1"
-          memory = "512Mi"
+          # A lift holds a large repository in memory while its areas are analysed.
+          memory = "1Gi"
         }
         # Throttled between requests. Keeps a warm instance affordable, but see the
         # note on var.min_instances: M4's long-running jobs will need this false.

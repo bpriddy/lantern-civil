@@ -80,6 +80,16 @@ export class RunnerError extends Error {
  * run (infra/terraform/run.tf, 1800s); anything slower is the API's timeout, not this.
  */
 const RUNNER_WAIT_MS = 30 * 60 * 1000;
+
+/**
+ * A request body already serialised. The lift sends the same repository to the runner
+ * once per area, several at a time; serialising it once and splicing each area in keeps
+ * one copy in memory instead of one per request in flight (found live: eight copies of
+ * a large repository exceeded the API's memory).
+ */
+export class JsonText {
+  constructor(readonly text: string) {}
+}
 const runnerAgent = new Agent({ headersTimeout: RUNNER_WAIT_MS, bodyTimeout: RUNNER_WAIT_MS });
 
 export async function callRunner(
@@ -94,7 +104,7 @@ export async function callRunner(
       dispatcher: runnerAgent,
       ...(payload === undefined
         ? { method: 'GET' }
-        : { method: 'POST', body: JSON.stringify(payload) }),
+        : { method: 'POST', body: payload instanceof JsonText ? payload.text : JSON.stringify(payload) }),
       headers: {
         ...(payload === undefined ? {} : { 'content-type': 'application/json' }),
         ...(idToken ? { authorization: `Bearer ${idToken}` } : {}),
