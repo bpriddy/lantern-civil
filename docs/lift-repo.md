@@ -175,7 +175,7 @@ drawn.
   trustworthy on its own, uncertain parts are shown as uncertain, and the author
   corrects by editing the graph, which Update respects.
 
-### The agent stage (analysts, verifiers, and the architect)
+### The agent stage (analysts and verifiers; interpretation beside them)
 
 `lift/analysts.ts` splits the repository into areas. When the reader found levels
 (see "Views"), each domain is an area that carries the domain — its name, members,
@@ -197,17 +197,10 @@ unsure members with `contains` claims, and may refute it. A member goes where th
 strongest live `contains` puts it (confidence, then voices), otherwise where the reader
 put it; no domain is ever inside itself.
 
-**The architect** is one more call after every area: it is shown the whole tree — each
-level, what it holds, what is unsure, which level is over twelve — and answers what no
-single area can see: a member in the wrong domain, two domains that are one feature
-(contains to the members, and a refutation), a domain the others all depend on
-(foundation), a group for an overfull level. A verifier checks its claims like an
-analyst's. It is memoised on the tree it is shown.
-
 **How the prompts are written** (owner's rules, 2026-10-13). What can be decided from
 the code is decided in code — reach, containment, roll-up, readability — and the model
 is asked only what needs judgement: names, descriptions, unsure placements, and the
-architect's review. The prompts in `runner/analyze.py` follow technical writing rules:
+reading of flow and architecture. The prompts in `runner/analyze.py` and `runner/interpret.py` follow technical writing rules:
 imperative mood, one instruction per sentence; each term defined once, with the
 schema's word; checkable criteria rather than adjectives; no emphasis; no reasons
 (those live in code comments and here); lists over prose; an example only when it
@@ -348,25 +341,13 @@ Added 2026-10-11 (`reader-stores.ts`), general rules by shape:
 
 ## Views
 
-Added 2026-10-13 (`containment.ts`, `views.ts`, `documents-views.ts`; the format is
-prd-deltas §21). The lift writes the composition (every part and edge, no grouping) and
-two views beside it, each only when the system is larger than one readable level
-(twelve things):
+Added 2026-10-13, revised 2026-10-14. The lift writes the composition (every part and
+edge, no grouping) and, when a runner is configured, two readings beside it: **flow**
+(how the application thinks) and **architecture** (what it is built on). How they are
+read is docs/interpretation.md. Capabilities, found as below, are the unit a flow is
+traced in, and the area each analyst reads.
 
-- **concept** (`civil/views/concept/`): what the application is — capabilities and the
-  shared foundation, found as below and weighed as claims by the reader, analysts and
-  architect. It places services, processes and data; clients and boundaries are the
-  architecture view's, so it hides what it does not place.
-- **architecture** (`civil/views/architecture/`): how the codebase is built — a domain
-  for every directory where the code branches (two or more parts beneath it), nested as
-  the directories are, a chain of single-child directories folded into one name. Every
-  part sits where its code is filed: a service by its module directory, a client and a
-  boundary by their package, a process and a store by the file that declares them.
-
-In both, a domain holding one thing is drawn as that thing, an empty one is not
-written, and a level over twelve is noted.
-
-How the concept view's capabilities are found:
+How capabilities are found:
 
 Units are found by what the code **reaches**, not by where it is filed. Folder layout
 is a filing choice (an MVC app files every model together); what belongs together is
@@ -395,12 +376,8 @@ what is reached together.
    filed in — layout as supporting evidence, never as the decider. A domain holding one
    thing is that thing. A top level still over twelve is noted for the model to judge.
 
-Each domain carries its evidence (the surface, the shared files) and its unsure
-members. Each level is laid out on its own grid, and architecture.md outlines every
-view. On Update (`documents-views.ts`) the author's arrangement wins: a part the view
-already places stays where it is, a domain file the author has is kept, only parts the
-view does not place yet are placed (into their proposed domain, created if absent, or
-at the top), nothing is removed, and a view with nothing new is left byte for byte.
+Each capability carries its evidence (the surface, the shared files) and its unsure
+members, which the area analysts are asked to place.
 
 ## Update: the merge
 

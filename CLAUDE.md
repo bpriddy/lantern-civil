@@ -83,8 +83,9 @@ are not in git *yet* and are Civil's own state in the same sense as `runs`.
 
 PRD-deltas §21. `app.yaml` (with `graphs/`) is the master: every part and every edge,
 said once. A view under `civil/views/<id>/` groups and places those parts and never
-adds, removes or changes one. Generation reads only the master. A new way of looking
-is a new view directory with the same shape, never a new node type.
+adds, removes or changes one. Generation reads only the master. A view is a grouping
+(domains over parts) or a set of diagrams (flow, architecture — docs/interpretation.md);
+a new way of looking is a new view directory of a known shape, never a new node type.
 
 ## Data
 

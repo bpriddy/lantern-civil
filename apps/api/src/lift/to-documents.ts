@@ -28,7 +28,8 @@ import {
   type ModelNode,
 } from './documents-model.js';
 import { compositionYaml, graphYaml, projectYaml } from './documents-yaml.js';
-import { viewDocuments } from './documents-views.js';
+import { readingDocuments } from './documents-diagrams.js';
+import type { Reading } from './interpret.js';
 import { LIFT_ROLE, liftRegistry, readLiftProvenance, type LiftProvenance } from './documents-registry.js';
 import type { Provenance } from './claims.js';
 import type { FileMap, Refinement, Skeleton } from './skeleton.js';
@@ -91,6 +92,12 @@ export interface DocumentsOptions {
    * lift did not load (a JSON schema, a Python module) is not reported as missing.
    */
   listed?: readonly string[];
+  /**
+   * How the application thinks and what it is built on, read by the agent stage
+   * (interpret.ts): written as the flow and architecture views. Optional: without a
+   * runner there is no reading, and no such view is written.
+   */
+  readings?: readonly Reading[];
 }
 
 export interface DocumentsResult {
@@ -284,7 +291,7 @@ const implOf = (node: Node | undefined): { graph?: string; entrypoint?: string }
 
 export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions): DocumentsResult {
   const diagnostics: string[] = [];
-  const model = buildModel(skeleton, opts.refinement, opts.repo);
+  const model = buildModel(skeleton, opts.refinement);
   const projectId = toId(opts.projectName, 'project');
   const existing = opts.existing;
   const previous = readPreviousRegistry(existing[REGISTRY_PATH]);
@@ -429,18 +436,17 @@ export function skeletonToDocuments(skeleton: Skeleton, opts: DocumentsOptions):
     if (result.plan) graphPlans.push({ path, plan: result.plan });
   }
 
-  // ---- views (§21) --------------------------------------------------------------
+  // ---- flow and architecture (docs/interpretation.md) ------------------------------
 
+  // A reading names parts by their skeleton entity; the documents by their ids here —
+  // only parts the composition will have (not one the author removed).
   const finalParts = new Set(((readCanvas(composition.text, 'Composition')?.nodes ?? []) as Node[]).map((n) => n['id'] as string));
-  const written = viewDocuments(
-    model.views,
-    ids,
-    finalParts,
-    new Map(model.nodes.map((n) => [ids.get(n.id) ?? n.id, n.column])),
-    existing,
+  const partId = new Map(
+    model.nodes
+      .filter((n) => n.entity && finalParts.has(ids.get(n.id) ?? n.id))
+      .map((n) => [n.entity!, ids.get(n.id) ?? n.id]),
   );
-  Object.assign(files, written.files);
-  notes.push(...written.notes);
+  for (const reading of opts.readings ?? []) Object.assign(files, readingDocuments(reading, partId, existing));
 
   // ---- registry ----------------------------------------------------------------
 

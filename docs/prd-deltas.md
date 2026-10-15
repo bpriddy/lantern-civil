@@ -533,3 +533,15 @@ what is deployed). Both relate to the same parts; they do not share one tree. So
   in the architecture view) mean code. Deferred: comprehension first.
 - **The lift** writes both views (docs/lift-repo.md, "Views").
 - **Reversal**: delete `civil/views/`; nothing else refers to it.
+
+**Revised the next day (owner, 2026-10-14): flow and architecture.** Civil read the
+codebase's structure but not the application. The owner set two views, separate graphs
+answering different questions: **flow** — how the application thinks (an intent read
+by an agent, an orchestrator choosing agents, a harness constraining them, a check
+before the person sees the result, the tools that fire) — and **architecture** — what it
+is built on and the decisions behind it (frameworks, data, the auth and security
+models, the AI subsystem, hosting). Both are a new view shape, **diagrams**: closed node
+kinds per shape, edges that say what passes, decisions with evidence, doors between
+diagrams, loops allowed because nothing executes. The lift writes them by
+interpretation (docs/interpretation.md) and no longer writes the concept and
+architecture groupings above; a grouping view stays a shape a project may keep by hand.

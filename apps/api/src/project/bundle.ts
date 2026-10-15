@@ -6,6 +6,7 @@ import {
   zProject,
   type Composition,
   type Diagnostic,
+  type Diagram,
   type Domain,
   type Graph,
   type View,
@@ -49,8 +50,10 @@ export interface LoadedView {
   /** civil/views/<id>/view.yaml */
   path: string;
   view: View;
-  /** Domain id → its document and the file it is in. */
+  /** Domain id → its document and the file it is in (a grouping view). */
   domains: Record<string, { path: string; doc: Domain }>;
+  /** Diagram id → its document and the file it is in (a flow or architecture view). */
+  diagrams: Record<string, { path: string; doc: Diagram }>;
 }
 
 export interface ProjectBundle {
@@ -167,7 +170,7 @@ export async function loadBundle(source: ProjectSource): Promise<ProjectBundle> 
       parts,
     );
     diagnostics.push(...result.diagnostics);
-    if (result.view) views[result.view.metadata.id] = { path, view: result.view, domains: result.domains };
+    if (result.view) views[result.view.metadata.id] = { path, view: result.view, domains: result.domains, diagrams: result.diagrams };
   }
 
   return {

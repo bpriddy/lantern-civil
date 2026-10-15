@@ -2,6 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { CompositionNode, Diagnostic, GraphNode } from '@civil/schema';
 import type { Contract } from '../project.js';
 import type { DomainItem } from './levels.js';
+import type { RoleItem } from './diagram.js';
 
 /**
  * PRD 3: node types are units of architecture, never units of computation. Every face
@@ -40,7 +41,7 @@ export interface NodeData extends Record<string, unknown> {
   diagnostics: Diagnostic[];
   detail: string | undefined;
   /** What the node is: a composition part, a graph node, or a view's domain. */
-  manifest: CompositionNode | GraphNode | DomainItem;
+  manifest: CompositionNode | GraphNode | DomainItem | RoleItem;
   /**
    * A lifted node's weighed confidence (docs/lift-repo.md, "Claims"). Low is drawn
    * as uncertain — a dashed edge and a "?" — so the unsure parts of a read read as
@@ -49,6 +50,8 @@ export interface NodeData extends Record<string, unknown> {
   confidence?: 'high' | 'medium' | 'low';
   /** A stub for something outside the level being drawn (§21): drawn faint, never edited. */
   outside?: boolean;
+  /** A short note on the face, e.g. how many decisions a diagram node carries. */
+  badge?: string;
 }
 
 function Face({
@@ -99,6 +102,7 @@ function Face({
       </div>
       <div className="node-label">{data.label}</div>
       {data.detail ? <div className="node-detail">{data.detail}</div> : null}
+      {data.badge ? <div className="node-badge">{data.badge}</div> : null}
 
       {/* PRD 5: "Node face shows its io nodes as ports." The interior, previewed. */}
       {descent?.into === 'canvas' ? (
@@ -218,6 +222,18 @@ const DomainNode = (props: NodeProps) => {
   return <Face kind="domain" glyph="▣" data={data} ports={{ in: true, out: true }} />;
 };
 
+/** A flow role or an architecture piece (docs/interpretation.md): its kind names the face. */
+const ROLE_GLYPHS: Record<string, string> = {
+  actor: '☺', trigger: '⚡', agent: '✦', orchestrator: '⎇', guard: '⛨', step: '▸', tools: '⚒', store: '≣', output: '⇥', flow: '⧉',
+  client: '▤', service: '◈', worker: '⚙', datastore: '≣', queue: '⋯', external: '☁', platform: '▦', concern: '⛨',
+};
+
+const RoleNode = (props: NodeProps) => {
+  const data = props.data as NodeData;
+  const kind = (data.manifest as RoleItem).kind;
+  return <Face kind={kind} glyph={ROLE_GLYPHS[kind] ?? '•'} data={data} ports={{ in: true, out: true }} />;
+};
+
 const OutsideNode = (props: NodeProps) => {
   const data = props.data as NodeData;
   // Something beyond this level that a line reaches: named, faint, and not a door —
@@ -267,6 +283,7 @@ export const compositionNodeTypes = {
   datastore: DatastoreNode,
   domain: DomainNode,
   outside: OutsideNode,
+  role: RoleNode,
 };
 
 export const graphNodeTypes = {

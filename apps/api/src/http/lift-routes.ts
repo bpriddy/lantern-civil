@@ -303,6 +303,7 @@ export function registerLiftRoutes(app: FastifyInstance, deps: LiftDeps): void {
       diagnostics: result.diagnostics,
       counts,
       ...(result.analysis ? { analysis: result.analysis } : {}),
+      ...(result.interpretation ? { interpretation: result.interpretation } : {}),
     };
   });
 }

@@ -454,6 +454,17 @@ export interface LiftRepoResult {
   counts: Record<string, number>;
   /** The agent stage (analysts and verifiers), when it ran. */
   analysis?: LiftAnalysis;
+  /** The flow and architecture reading, when it ran (docs/interpretation.md). */
+  interpretation?: LiftInterpretation;
+}
+
+export interface LiftInterpretation {
+  tasks: number;
+  cached: number;
+  dropped: number;
+  note: string | null;
+  flows: number;
+  angles: number;
 }
 
 /** What the analysts and verifiers did (docs/lift-repo.md, "The agent stage"). */

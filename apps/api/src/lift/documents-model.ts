@@ -1,7 +1,6 @@
 import { ID_PATTERN } from '@civil/schema';
 import { applyRefinement } from './refine.js';
 import type { FileMap, Refinement, Skeleton, SkeletonAgent, SkeletonServer, SkeletonService } from './skeleton.js';
-import { architectureView, conceptView, type ModelView, type ViewPart } from './views.js';
 
 /**
  * The lifted model: what the civil/ documents should say about the repository, before
@@ -135,8 +134,6 @@ export interface LiftModel {
   boundaryOf: Record<string, string>;
   /** What the mapping had to leave out or assume, in words. */
   notes: string[];
-  /** The views written beside the composition (views.ts). */
-  views: ModelView[];
 }
 
 const allIds = (s: Skeleton): Set<string> =>
@@ -544,25 +541,6 @@ export function buildModel(input: Skeleton, refinement: Refinement | null, files
     node.column = 2 + Math.min(MAX_SERVICE_LAYERS - 1, levelOf(node.id, new Set()));
   }
 
-  // Views (§21): the composition holds every part; the views group and place them.
-  const homeOf = (n: ModelNode): string => {
-    const id = n.entity;
-    if (n.type === 'client') return skeleton.clients.find((c) => c.id === id)?.path ?? n.anchors[0] ?? '';
-    if (n.type === 'boundary') return skeleton.servers.find((s) => s.id === id)?.path ?? n.anchors[0] ?? '';
-    if (n.type === 'service') {
-      const s = skeleton.services.find((x) => x.id === id);
-      return s?.directory ?? s?.source.file ?? '';
-    }
-    if (n.type === 'process') return skeleton.processes.find((p) => p.id === id)?.source.file ?? '';
-    return (skeleton.datastores ?? []).find((d) => d.id === id)?.source.file ?? '';
-  };
-  const parts: ViewPart[] = nodes.map((n) => ({ id: n.id, type: n.type, ...(n.entity ? { entity: n.entity } : {}), home: homeOf(n) }));
-  const ids = nodes.map((n) => n.id);
-  const views = [conceptView(parts, skeleton, files, ids), files ? architectureView(parts, ids) : undefined].filter(
-    (v): v is ModelView => v !== undefined,
-  );
-  for (const v of views) notes.push(...v.notes);
-
   for (const id of [...clientId.values(), ...boundaryId.values(), ...serviceId.values(), ...processId.values(), ...storeId.values()]) {
     if (!ID_PATTERN.test(id)) notes.push(`"${id}" is not a valid Civil id`);
   }
@@ -576,7 +554,6 @@ export function buildModel(input: Skeleton, refinement: Refinement | null, files
     summary: refinement?.summary ?? null,
     boundaryOf: Object.fromEntries(boundaryId),
     notes,
-    views,
   };
 }
 

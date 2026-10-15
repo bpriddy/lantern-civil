@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CompositionEdge, CompositionNode, Domain, GraphEdge, GraphNode } from '@civil/schema';
-import type { Altitude } from '../canvas/Editor.js';
+import type { CompositionEdge, CompositionNode, DiagramNode, Domain, GraphEdge, GraphNode } from '@civil/schema';
+import { diagramShown, type Altitude } from '../canvas/Editor.js';
 import type { LiftUnit, ProjectBundle } from '../project.js';
 import { confidenceSentence, parseEvidence, voicesSentence } from '../lift.js';
 
@@ -43,17 +43,23 @@ export function Inspector({
   const single = selectedIds.length === 1 && selectedEdgeIds.length === 0;
   const singleEdge = selectedEdgeIds.length === 1 && selectedIds.length === 0;
   const many = selectedIds.length + selectedEdgeIds.length > 1;
-  const node = single ? findNode(bundle, altitude, selectedIds[0]!) : undefined;
+  // A flow or architecture view's node is the diagram's, never the composition's —
+  // even when an id is shared — so it is looked up there first.
+  const shown = bundle ? diagramShown(bundle, altitude) : undefined;
+  const role = single && shown ? shown.doc.spec.nodes.find((n) => n.id === selectedIds[0]) : undefined;
+  const node = single && !shown ? findNode(bundle, altitude, selectedIds[0]!) : undefined;
   // A domain is the view's, not the composition's (§21): its own detail, from its file.
   const loaded = altitude.kind === 'composition' && altitude.view ? bundle?.views?.[altitude.view] : undefined;
   const domain = single && !node ? loaded?.domains[selectedIds[0]!] : undefined;
-  const edge = singleEdge ? findEdge(bundle, altitude, selectedEdgeIds[0]!) : undefined;
+  const edge = singleEdge && !shown ? findEdge(bundle, altitude, selectedEdgeIds[0]!) : undefined;
 
   return (
     <>
       <div className="pane-title">Inspector</div>
       <div className="pane-body">
-        {domain ? (
+        {role && shown ? (
+          <RoleDetail node={role} path={shown.path} {...(onOpenFile ? { onOpenFile } : {})} />
+        ) : domain ? (
           <DomainDetail
             id={selectedIds[0]!}
             path={domain.path}
@@ -676,6 +682,82 @@ function DomainDetail({
               <li key={`${i}-${e}`}>{link(e)}</li>
             ))}
           </ul>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A node of a flow or architecture diagram (docs/interpretation.md): what it is, the
+ * decisions that define it and why, where that rests in the code and docs, and the
+ * parts of the composition that implement it.
+ */
+function RoleDetail({
+  node,
+  path,
+  onOpenFile,
+}: {
+  node: DiagramNode;
+  path: string;
+  onOpenFile?: (path: string, line?: number) => void;
+}) {
+  const link = (target: string, i: number) => {
+    const [file, line] = target.split(':');
+    return (
+      <li key={`${i}-${target}`}>
+        {onOpenFile ? (
+          <button type="button" className="repo-file-link" onClick={() => onOpenFile(file!, line ? Number(line) : undefined)}>
+            <code>{target}</code>
+          </button>
+        ) : (
+          <code>{target}</code>
+        )}
+      </li>
+    );
+  };
+  return (
+    <>
+      <dl className="kv">
+        <dt>{node.kind}</dt>
+        <dd>{node.name}</dd>
+        {node.realizedBy.length ? (
+          <>
+            <dt>parts</dt>
+            <dd>{node.realizedBy.join(', ')}</dd>
+          </>
+        ) : null}
+        {node.confidence ? (
+          <>
+            <dt>confidence</dt>
+            <dd>{node.confidence}</dd>
+          </>
+        ) : null}
+        <dt>file</dt>
+        <dd>
+          <ul className="repo-files">{link(path, 0)}</ul>
+        </dd>
+      </dl>
+      {node.summary ? <p className="repo-description">{node.summary}</p> : null}
+      {node.decisions.length ? (
+        <>
+          <div className="provenance-label muted">Decisions</div>
+          {node.decisions.map((d, i) => (
+            <div key={i} className="decision">
+              <p>
+                {d.statement}
+                {d.source ? <span className="muted"> · {d.source}</span> : null}
+              </p>
+              {d.why ? <p className="muted">Why: {d.why}</p> : null}
+              {d.evidence.length ? <ul className="repo-files provenance-evidence">{d.evidence.map(link)}</ul> : null}
+            </div>
+          ))}
+        </>
+      ) : null}
+      {node.evidence.length ? (
+        <>
+          <div className="provenance-label muted">Where it rests</div>
+          <ul className="repo-files provenance-evidence">{node.evidence.map(link)}</ul>
         </>
       ) : null}
     </>

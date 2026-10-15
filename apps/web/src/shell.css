@@ -463,6 +463,23 @@ body {
 }
 .node-domain .node-label { font-weight: 600; }
 
+/* Diagram views (docs/interpretation.md): a role's or a piece's kind names its colour. */
+.node-badge { margin-top: 4px; font-size: 9px; color: var(--text-faint); }
+.decision { border-left: 2px solid var(--border-strong); padding-left: 8px; margin: 6px 0; }
+.decision p { margin: 2px 0; }
+.node-agent .node-glyph, .node-orchestrator .node-glyph { color: #c792ea; }
+.node-guard .node-glyph, .node-concern .node-glyph { color: var(--warn); }
+.node-trigger .node-glyph, .node-actor .node-glyph { color: #7cc4ff; }
+.node-tools .node-glyph, .node-step .node-glyph, .node-worker .node-glyph { color: var(--ok); }
+.node-store .node-glyph, .node-queue .node-glyph, .node-external .node-glyph, .node-platform .node-glyph { color: #b4c3d6; }
+.node-output .node-glyph, .node-flow .node-glyph { color: #e8c36a; }
+.node-concern { border-style: dashed; }
+.react-flow__edge.edge-diagram .react-flow__edge-path { stroke: var(--text-dim); stroke-width: 1.4; }
+.react-flow__edge.edge-diagram-uses .react-flow__edge-path,
+.react-flow__edge.edge-diagram-governs .react-flow__edge-path { stroke: var(--text-faint); }
+.react-flow__edge.edge-diagram .react-flow__edge-text { fill: var(--text-dim); }
+.react-flow__edge.edge-uncertain path { opacity: 0.45; }
+
 /* Something outside the level being drawn: named, faint, not a door. */
 .node-outside {
   opacity: 0.6;

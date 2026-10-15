@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parse } from 'yaml';
-import { AREA_LIMIT, AREA_MAX_FILES, buildAreas, domainAreas, normalizeClaims, treeForArchitect, validateAnswer } from '../dist/lift/analysts.js';
+import { AREA_LIMIT, AREA_MAX_FILES, buildAreas, domainAreas, normalizeClaims, validateAnswer } from '../dist/lift/analysts.js';
 import { liftRepository } from '../dist/lift/index.js';
+
+/** An interpretation task (interpret.ts) rides the same runner call; these tests are about areas. */
+const reading = (body: unknown): boolean => (decoded(body) as { mode?: string }).mode === 'interpret';
+const EMPTY_READING = { diagram: { nodes: [], edges: [] }, verdicts: {} };
 
 /** The request the runner would parse: the lift sends it serialised once (JsonText). */
 const decoded = (body: unknown): unknown =>
@@ -119,6 +123,7 @@ const USES_EVIDENCE = [{ file: `${S}/orders/orders.module.ts`, line: 2, quote: "
 test('an agent the reader missed is added when an analyst finds it and a verifier confirms it', async () => {
   let asked: { areas?: unknown[]; claims?: unknown[] } = {};
   const analyze = async (body: unknown) => {
+    if (reading(body)) return EMPTY_READING;
     asked = decoded(body) as typeof asked;
     return {
       claims: [
@@ -253,6 +258,7 @@ test('an unchanged area is not asked again; a changed one is, alone', async () =
   const { memo } = memoStore();
   let calls = 0;
   const analyze = async (body: unknown) => {
+    if (reading(body)) return EMPTY_READING;
     calls += 1;
     const area = (decoded(body) as { areas: { id: string }[] }).areas[0]!;
     return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
@@ -294,6 +300,7 @@ test('progress is reported stage by stage, with areas counted', async () => {
 test('an area that cannot be asked keeps its last answer, and says so', async () => {
   const { memo } = memoStore();
   const answer = async (body: unknown) => {
+    if (reading(body)) return EMPTY_READING;
     const area = (decoded(body) as { areas: { id: string }[] }).areas[0]!;
     return { claims: [{ kind: 'agent', subject: 'pricing', by: `analyst:${area.id}`, stance: 'assert', evidence: AGENT_EVIDENCE }] };
   };
@@ -313,6 +320,7 @@ test('Civil\'s own documents are never analysed as the product', async () => {
   await liftRepository(source({ ...REPO, 'civil/app.yaml': 'apiVersion: civil/v1\nkind: Composition\nmetadata:\n  id: shop\n  name: Shop\nspec:\n  nodes: []\n  edges: []\n', 'civil/registry.yaml': 'kind: Registry\n' }) as never, {
     projectName: 'Shop',
     analyze: async (body: unknown) => {
+      if (reading(body)) return EMPTY_READING;
       const b = decoded(body) as { files: Record<string, string>; index: string[] };
       sentPaths = Object.keys(b.files);
       indexed = b.index;
@@ -349,12 +357,3 @@ test('with levels, each domain is an area that carries the domain; top-level ser
   assert.equal(new Set(areas.map((a) => a.id)).size, areas.length, 'ids are unique');
 });
 
-test('the architect is shown every level, what it holds, and what is unsure', () => {
-  const tree = treeForArchitect({
-    clients: [{ id: 'web' }], servers: [{ id: 'api' }], agents: [], processes: [], unresolved: [], frameworks: [], datastores: [{ id: 'db' }],
-    services: [{ id: 'orders', infrastructure: false }, { id: 'auth', infrastructure: false }, { id: 'config', infrastructure: true }],
-    domains: [{ id: 'orders-domain', name: 'Orders', members: ['orders'], surfaces: [], unsure: ['orders'], source: { file: 'x' } }],
-  } as never) as { levels: { domain: string | null; members: { id: string }[]; unsure?: string[] }[] };
-  assert.deepEqual(tree.levels[0]!.members.map((m) => m.id), ['orders-domain', 'auth', 'db'], 'infrastructure, clients and servers are not in the concept view');
-  assert.deepEqual(tree.levels[1]!.unsure, ['orders']);
-});

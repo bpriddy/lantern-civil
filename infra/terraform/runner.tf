@@ -51,7 +51,9 @@ resource "google_cloud_run_v2_service" "runner" {
 
     scaling {
       min_instance_count = 0
-      max_instance_count = 3
+      # A lift asks up to fourteen things at once (area analysts beside the flow and
+      # architecture readers), four per instance.
+      max_instance_count = 6
     }
 
     # Runs are heavier than requests; a handful per instance is plenty.

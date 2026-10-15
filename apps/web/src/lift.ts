@@ -1,4 +1,4 @@
-import type { LiftAnalysis, LiftRunProgress, LiftUnit } from './project.js';
+import type { LiftAnalysis, LiftInterpretation, LiftRunProgress, LiftUnit } from './project.js';
 
 /**
  * Reading the repository, said in words (docs/lift-repo.md). Pure, so the strings
@@ -122,4 +122,19 @@ export function parseEvidence(item: string): { path: string; line?: number } | n
     return line > 0 ? { path: match[1]!, line } : { path: match[1]! };
   }
   return { path: trimmed };
+}
+
+/**
+ * The reading's line in the result note (docs/interpretation.md): how many flows and
+ * architecture angles were drawn, and where to look. Null when there was no reading.
+ */
+export function liftInterpretationNote(reading: LiftInterpretation | undefined): string | null {
+  if (!reading || (reading.flows === 0 && reading.angles === 0)) return reading?.note ?? null;
+  const drawn = [
+    reading.flows ? `${plural(reading.flows, 'flow diagram')}` : '',
+    reading.angles ? `${plural(reading.angles, 'architecture diagram')}` : '',
+  ].filter(Boolean);
+  return [`Read how it works and what it is built on: ${drawn.join(' and ')} — switch to Flow or Architecture at the top.`, reading.note]
+    .filter(Boolean)
+    .join(' ');
 }

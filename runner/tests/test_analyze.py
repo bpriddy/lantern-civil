@@ -161,7 +161,7 @@ def test_analyze_runs_analysts_then_verifiers() -> None:
 
 def test_prompts_keep_their_word_budgets_and_the_writing_rules() -> None:
     print("test_prompts_keep_their_word_budgets_and_the_writing_rules")
-    budgets = {"TERMS": 160, "EVIDENCE": 35, "ANALYST_SYSTEM": 450, "VERIFIER_SYSTEM": 270, "ARCHITECT_SYSTEM": 410}
+    budgets = {"TERMS": 160, "EVIDENCE": 35, "ANALYST_SYSTEM": 450, "VERIFIER_SYSTEM": 270}
     for name, most in budgets.items():
         words = len(getattr(A, name).split())
         ok(words <= most, f"{name} is {words} words, at most {most}")
@@ -193,24 +193,6 @@ def test_an_area_names_its_domain_or_says_it_has_none() -> None:
     ok('"unsure": [' in prompt and '"orders-domain"' in prompt, "the domain and its unsure members ride the prompt")
     plain = A._area_prompt({"id": "misc", "prefixes": ["apps/server/src/"]}, [], ws)
     ok("Domain: none. Skip tasks 1 to 3 and 7." in plain, "an area that is no domain says which tasks to skip")
-
-
-def test_the_architect_reviews_the_tree_and_is_verified() -> None:
-    print("test_the_architect_reviews_the_tree_and_is_verified")
-    move = {"kind": "contains", "subject": "orders-domain", "object": "pricing", "stance": "assert",
-            "evidence": [{"file": "apps/server/src/orders/orders.agent.ts", "line": 1, "quote": "composeAgent"}]}
-    client = FakeClient(
-        Response(ToolUse("submit_claims", {"claims": [move]})),
-        Response(ToolUse("submit_verdicts", {"verdicts": [
-            {"key": "contains:orders-domain->pricing", "verdict": "support",
-             "evidence": [{"file": "apps/server/src/orders/orders.agent.ts", "line": 1, "quote": "composeAgent"}]}]})),
-    )
-    tree = {"levels": [{"domain": None, "members": ["orders-domain", "pricing"], "over": True}]}
-    out = A.analyze({"mode": "architect", "tree": tree, "files": FILES, "index": INDEX}, client, "m")
-    ok([c["by"] for c in out["claims"]] == ["architect:tree", "verifier:architect"], "one architect voice, one verifier voice")
-    ok('"orders-domain"' in client.calls[0]["messages"][0]["content"], "the tree rides the prompt")
-    ok(client.calls[0]["messages"][0]["content"].startswith("Levels over the limit: top (2 members)."), "an overfull level is named first")
-    ok(client.calls[0]["system"] == A.ARCHITECT_SYSTEM, "the architect has its own instructions")
 
 
 def main() -> int:

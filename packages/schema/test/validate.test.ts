@@ -402,3 +402,70 @@ test('a domain file is named for its id, and a domain never takes a part id', ()
   );
   assert.deepEqual(codes(r.diagnostics).sort(), ['duplicate-id', 'invalid-manifest']);
 });
+
+// ---------------------------------------------------------------------------
+// Diagram views (docs/interpretation.md): flow and architecture.
+// ---------------------------------------------------------------------------
+
+const diagram = (id: string, nodes: unknown[], edges: unknown[] = []) => ({
+  apiVersion: 'civil/v1', kind: 'Diagram', metadata: { id }, spec: { nodes, edges },
+});
+const F = 'civil/views/flow';
+const flowView = (entry = 'overview') => ({
+  apiVersion: 'civil/v1', kind: 'View', metadata: { id: 'flow' }, spec: { shape: 'flow', entry },
+});
+
+test('a flow view is diagrams: roles, what passes, doors into other flows, and loops', () => {
+  const r = validateView(
+    {
+      path: `${F}/view.yaml`,
+      raw: flowView(),
+      domains: [
+        {
+          path: `${F}/overview.yaml`,
+          raw: diagram(
+            'overview',
+            [
+              { id: 'user', kind: 'actor', name: 'Shopper' },
+              { id: 'intent', kind: 'agent', name: 'Intent agent', realizedBy: ['orders'], evidence: ['o.py:3'] },
+              { id: 'checkout', kind: 'flow', name: 'Checkout', ref: 'checkout' },
+            ],
+            [
+              { id: 'e1', from: 'user', to: 'intent', kind: 'next', label: 'a request' },
+              { id: 'e2', from: 'intent', to: 'checkout', kind: 'next', label: 'an order' },
+              { id: 'e3', from: 'checkout', to: 'intent', kind: 'next', label: 'a draft to confirm' },
+            ],
+          ),
+        },
+        { path: `${F}/checkout.yaml`, raw: diagram('checkout', [{ id: 'pay', kind: 'step', name: 'Take payment' }]) },
+      ],
+    },
+    PARTS,
+  );
+  assert.deepEqual(r.diagnostics, []);
+  assert.deepEqual(Object.keys(r.diagrams).sort(), ['checkout', 'overview']);
+});
+
+test('a diagram keeps to its shape, its own nodes, real parts, and real doors', () => {
+  const r = validateView(
+    {
+      path: `${F}/view.yaml`,
+      raw: flowView('nowhere'),
+      domains: [
+        {
+          path: `${F}/overview.yaml`,
+          raw: diagram(
+            'overview',
+            [
+              { id: 'db', kind: 'datastore', name: 'Postgres' },
+              { id: 'x', kind: 'step', name: 'X', realizedBy: ['ghost'], ref: 'missing' },
+            ],
+            [{ id: 'e1', from: 'x', to: 'y', kind: 'calls' }],
+          ),
+        },
+      ],
+    },
+    PARTS,
+  );
+  assert.deepEqual(codes(r.diagnostics), ['invalid-manifest', 'invalid-manifest', 'unknown-node', 'unknown-node', 'unresolved-ref', 'unresolved-ref']);
+});

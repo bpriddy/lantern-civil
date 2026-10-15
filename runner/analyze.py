@@ -1,5 +1,4 @@
-"""Codebase analysis by agents: analysts propose claims, verifiers try to refute them,
-and an architect reviews the whole domain tree.
+"""Codebase analysis by agents: analysts propose claims, verifiers try to refute them.
 
 The repo lift's agent stage (docs/lift-repo.md, "Claims"). The API's deterministic
 reader has already restated what it found as claims; this module adds independent
@@ -23,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 # Bump whenever a prompt or tool changes: the API keys memoised analyses on it.
-PROMPT_VERSION = "6"
+PROMPT_VERSION = "7"
 
 MAX_TOKENS = int(os.environ.get("CIVIL_ANALYZE_MAX_TOKENS", "8192"))
 MAX_TURNS = int(os.environ.get("CIVIL_ANALYZE_MAX_TURNS", "14"))
@@ -39,9 +38,6 @@ RELATION_KINDS = ("depends-on", "exposes", "calls", "uses-agent", "contains")
 KINDS = ENTITY_KINDS + RELATION_KINDS
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 ATTR_KEYS = {"files", "description", "name", "foundation", "label", "framework", "path", "schedule", "tools", "engine"}
-
-# Levels a domain may hold before the architect is asked to group it (containment.ts).
-MAX_CHILDREN = 12
 
 # The prompts follow Civil's technical writing rules: imperative, one instruction per
 # sentence, each term defined once with the schema's word, checkable criteria, no
@@ -122,36 +118,6 @@ the code is a test double or an example.
 {TERMS}
 
 {EVIDENCE}"""
-
-ARCHITECT_SYSTEM = f"""\
-You review the domain tree Civil drew for a codebase. Read the repository's docs \
-(README.md, docs/) first: they may name the product's parts. Read the code with the \
-tools. Call submit_claims once.
-
-{TERMS}
-
-Input: the concept view's tree: services, processes, and datastores. Clients and \
-servers are not in this view. Each domain has an id, a name, a description, and its \
-unsure members. A level marked over holds more than \
-{MAX_CHILDREN} members.
-
-Tasks
-1. Bring each level marked over to {MAX_CHILDREN} members or fewer. Group related \
-members: claim contains from an existing domain, or propose a domain (claim it with \
-attrs.name) and claim contains to each of its members.
-2. Claim contains to move a member to its domain.
-3. Merge two domains that implement one product feature: claim contains from one to \
-each member of the other, and refute the other.
-4. Claim the domain with attrs.foundation true when most other domains depend on it.
-5. Refute a domain whose members share no feature, data, or caller.
-
-Rules
-{EVIDENCE}
-- For contains, cite code or docs that tie the member to the domain: an import, a call, \
-or a description.
-- For a proposed domain, cite a file of one of its members.
-- Use the ids in the tree. Give a new domain a kebab-case id that ends in -domain.
-- Do not rename a domain in the tree."""
 
 _EVIDENCE_SCHEMA = {
     "type": "array",
@@ -311,7 +277,7 @@ class Workspace:
 
 
 def _loop(client: Any, model: str, system: str, prompt: str, submit: dict, ws: Workspace,
-          turns: int | None = None) -> tuple[dict | None, int]:
+          turns: int | None = None, max_tokens: int | None = None) -> tuple[dict | None, int]:
     """A bounded tool loop that ends in one forced call to `submit`."""
     limit = turns or MAX_TURNS
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
@@ -319,7 +285,7 @@ def _loop(client: Any, model: str, system: str, prompt: str, submit: dict, ws: W
         final = turn == limit or ws.reads >= MAX_READS
         response = client.messages.create(
             model=model,
-            max_tokens=MAX_TOKENS,
+            max_tokens=max_tokens or MAX_TOKENS,
             system=system,
             messages=messages,
             tools=[*TOOLS, submit],
@@ -459,41 +425,12 @@ def verify(client: Any, model: str, label: str, claims: list[dict[str, Any]],
     return {"label": label, "claims": out, "issues": issues, "turns": turns, "reads": ws.reads}
 
 
-# The architect reads across the whole tree, so it gets a larger budget than an area.
-ARCHITECT_TURNS = int(os.environ.get("CIVIL_ARCHITECT_MAX_TURNS", "28"))
-
-
-def architect(client: Any, model: str, tree: Any, files: dict[str, str], index: list[str]) -> dict[str, Any]:
-    """One review of the whole domain tree: the questions no single area's analyst can
-    answer (which domain a member belongs to across areas, what to merge, how to group an
-    overfull level). Its claims are verified like an analyst's."""
-    ws = Workspace(files, index)
-    levels = tree.get("levels", []) if isinstance(tree, dict) else []
-    over = [f"{lv.get('domain') or 'top'} ({len(lv.get('members', []))} members)" for lv in levels if lv.get("over")]
-    prompt = (
-        ("Levels over the limit: " + ", ".join(over) + ".\n\n" if over else "")
-        + "Tree:\n" + json.dumps(tree, indent=1)[:40_000]
-    )
-    answer, turns = _loop(client, model, ARCHITECT_SYSTEM, prompt, SUBMIT_CLAIMS, ws, ARCHITECT_TURNS)
-    claims, issues = validate_claims((answer or {}).get("claims"), set(ws.index), "architect:tree")
-    checked = [c for c in claims if c["stance"] == "assert"]
-    # A whole tree's claims take longer to check than an area's: the verifier gets the
-    # architect's budget.
-    verified = verify(client, model, "architect", checked, files, index, ARCHITECT_TURNS) if checked else {"claims": [], "issues": []}
-    return {
-        "claims": claims + verified["claims"],
-        "areas": [{"area": "architect", "turns": turns, "reads": ws.reads, "issues": issues,
-                   **({} if answer is not None else {"error": "no answer within the turn budget"})}],
-        "verifiers": [{k: verified[k] for k in ("label", "turns", "reads", "issues") if k in verified}] if checked else [],
-        "promptVersion": PROMPT_VERSION,
-    }
-
-
 def analyze(body: dict[str, Any], client: Any, model: str) -> dict[str, Any]:
     """Every area's analyst, then a verifier per analyst, concurrently and bounded. With
-    mode "architect", the one review of the whole tree instead."""
-    if body.get("mode") == "architect":
-        return architect(client, model, body.get("tree"), body["files"], body.get("index") or sorted(body["files"]))
+    mode "interpret", one interpretation task instead (interpret.py)."""
+    if body.get("mode") == "interpret":
+        from interpret import interpret  # imports this module's helpers, so not at the top
+        return interpret(body, client, model)
     files: dict[str, str] = body["files"]
     index: list[str] = body.get("index") or sorted(files)
     reader_claims: list[dict[str, Any]] = body.get("claims") or []

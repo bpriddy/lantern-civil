@@ -18,6 +18,7 @@ import type { ProjectBundle } from '../project.js';
 import { nextEdgeId, proposeCompositionEdge, proposeGraphEdge } from './edges.js';
 import { compositionToFlow, graphToFlow } from './model.js';
 import { OUTSIDE } from './levels.js';
+import { diagramToFlow } from './diagram.js';
 import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js';
 
 /**
@@ -30,11 +31,11 @@ import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js'
 export type CanvasAltitude =
   // `view` is a view of the composition (§21), absent for the composition as written;
   // `domain` is the level inside one of that view's domains, absent for its top.
-  | { kind: 'composition'; label: string; view?: string; domain?: string }
+  | { kind: 'composition'; label: string; view?: string; domain?: string; diagram?: string }
   | { kind: 'graph'; path: string; label: string };
 
 export type Altitude =
-  | { kind: 'composition'; label: string; view?: string; domain?: string }
+  | { kind: 'composition'; label: string; view?: string; domain?: string; diagram?: string }
   | { kind: 'graph'; path: string; label: string }
   // PRD 5: a node is a canvas or it is code. A code level is a viewport takeover,
   // not another canvas, which is why it carries files rather than a manifest path.
@@ -143,6 +144,11 @@ function Surface({
     };
 
     if (current.kind === 'composition') {
+      // A flow or architecture view is drawn from its own diagrams, not the composition.
+      const shown = diagramShown(bundle, current);
+      if (shown) {
+        return { ...diagramToFlow(shown.doc, shown.path, current.view!, bundle.diagnostics), nodeTypes: compositionNodeTypes };
+      }
       const composition = bundle.composition;
       if (!composition) return { nodes: [], edges: [], nodeTypes: compositionNodeTypes };
       return {
@@ -250,6 +256,10 @@ function Surface({
         onRefuse('A node cannot connect to itself.');
         return;
       }
+      if (diagramShown(bundle, current)) {
+        onRefuse('This view is a reading of the code. Its lines are drawn by Generate or Update graph from repo.');
+        return;
+      }
       if (connection.source.startsWith(OUTSIDE) || connection.target.startsWith(OUTSIDE)) {
         onRefuse('That is outside this domain. Go up to the level that holds both ends to connect them.');
         return;
@@ -342,7 +352,14 @@ function Surface({
         // domain's file inside it. A stub is never moved; it stands for something elsewhere.
         if (node.id.startsWith(OUTSIDE)) return;
         const loaded = current.kind === 'composition' && current.view ? bundle.views?.[current.view] : undefined;
-        const path = loaded ? (current.kind === 'composition' && current.domain ? loaded.domains[current.domain]?.path : loaded.path) : undefined;
+        const shown = diagramShown(bundle, current);
+        const path = shown
+          ? shown.path
+          : loaded
+            ? current.kind === 'composition' && current.domain
+              ? loaded.domains[current.domain]?.path
+              : loaded.path
+            : undefined;
         onMoveNode(node.id, Math.round(node.position.x), Math.round(node.position.y), path);
       }}
       // Deletion belongs to the command registry — one named action, one op path,
@@ -381,6 +398,9 @@ export function descentTarget(data: NodeData): Altitude | undefined {
     return { kind: 'code', label, files: descent.files };
   }
 
+  if (manifest.type === 'role') {
+    return manifest.node.ref ? { kind: 'composition', view: manifest.view, diagram: manifest.node.ref, label: data.label } : undefined;
+  }
   if (manifest.type === 'domain' && !data.outside && 'view' in manifest) {
     return { kind: 'composition', view: manifest.view, domain: manifest.id, label: data.label };
   }
@@ -391,4 +411,26 @@ export function descentTarget(data: NodeData): Altitude | undefined {
     return { kind: 'graph', path: manifest.impl.graph, label: manifest.id };
   }
   return undefined;
+}
+
+/**
+ * The diagram a composition level shows, when its view is a flow or architecture view
+ * (docs/interpretation.md): the one stepped into, else the view's entry, else its first.
+ */
+export function diagramShown(
+  bundle: ProjectBundle,
+  level: Altitude | CanvasAltitude,
+): { path: string; doc: import('@civil/schema').Diagram } | undefined {
+  if (level.kind !== 'composition' || !level.view) return undefined;
+  const loaded = bundle.views?.[level.view];
+  if (!loaded || loaded.view.spec.shape === 'grouping' || !loaded.diagrams) return undefined;
+  const id = level.diagram ?? loaded.view.spec.entry ?? Object.keys(loaded.diagrams).sort()[0];
+  const found = id ? loaded.diagrams[id] : undefined;
+  if (found) return found;
+  // A diagram that did not parse (its diagnostics say why) is drawn empty — never the
+  // composition in its place, where a drag or an added node would land in the wrong file.
+  return {
+    path: loaded.path,
+    doc: { apiVersion: 'civil/v1', kind: 'Diagram', metadata: { id: id ?? 'missing' }, spec: { nodes: [], edges: [] }, layout: { nodes: {} } },
+  };
 }

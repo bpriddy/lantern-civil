@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Editor, descentTarget, type Altitude } from './canvas/Editor.js';
+import { Editor, descentTarget, type Altitude, diagramShown } from './canvas/Editor.js';
 import { parseRoute, routePath, type Route } from './routes.js';
 import { compositionToFlow, graphToFlow } from './canvas/model.js';
+import { diagramToFlow } from './canvas/diagram.js';
 import { exposesSync } from './canvas/edges.js';
 import type { NodeData } from './canvas/nodes.js';
 /**
@@ -21,7 +22,8 @@ import { GENERATION_UNSUPPORTED, SourceControl } from './panes/SourceControl.js'
 import { ConfirmDelete } from './panes/ConfirmDelete.js';
 import { KeyHelp } from './commands/KeyHelp.js';
 import { Toast, type LiveProgress } from './commands/Toast.js';
-import { liftAnalysisNote, liftProgressFraction, liftProgressText } from './lift.js';
+import { liftAnalysisNote,
+  liftInterpretationNote, liftProgressFraction, liftProgressText } from './lift.js';
 import { useCommands } from './commands/useCommands.js';
 import { commandById, titleOf, type CommandContext } from './commands/registry.js';
 import { Home } from './panes/Home.js';
@@ -159,7 +161,7 @@ const ACTIVE_PROJECT_KEY = 'civil.activeProject';
 
 /** Views in reading order: what the application is, then how it is built, then the rest. */
 const viewOrder = (ids: string[]): string[] => {
-  const rank = (id: string) => (id === 'concept' ? 0 : id === 'architecture' ? 1 : 2);
+  const rank = (id: string) => (id === 'flow' ? 0 : id === 'architecture' ? 1 : id === 'concept' ? 2 : 3);
   return [...ids].sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
 };
 
@@ -298,7 +300,8 @@ function Workspace({ me }: { me: Me }) {
         break;
       }
       if (level?.kind === 'composition' && level.view) {
-        place = { view: level.view, ...(level.domain ? { domain: level.domain } : {}) };
+        const inside = level.domain ?? level.diagram;
+        place = { view: level.view, ...(inside ? { domain: inside } : {}) };
         break;
       }
     }
@@ -401,7 +404,8 @@ function Workspace({ me }: { me: Me }) {
           // the application is, before how it is built.
           const asked = current.find((l): l is Extract<Altitude, { kind: 'composition' }> => l.kind === 'composition')?.view;
           const views = bundle.views ?? {};
-          const view = asked !== undefined ? (views[asked] ? asked : undefined) : views['concept'] ? 'concept' : undefined;
+          const preferred = ['flow', 'architecture', 'concept'].find((v) => views[v]);
+          const view = asked !== undefined ? (views[asked] ? asked : undefined) : preferred;
           const composition: Altitude = {
             kind: 'composition',
             label: bundle.project.name || 'app',
@@ -412,6 +416,12 @@ function Workspace({ me }: { me: Me }) {
           // domains above it is rebuilt from the view, so the breadcrumb reads from the top
           // however the place was reached.
           const loaded = view ? views[view] : undefined;
+          // A diagram stepped into survives too (the route names it like a domain).
+          const into = top?.kind === 'composition' ? (top.diagram ?? top.domain) : undefined;
+          if (into && loaded?.diagrams?.[into] && into !== loaded.view.spec.entry) {
+            const doc = loaded.diagrams[into]!.doc;
+            return [composition, { kind: 'composition', view: view!, diagram: into, label: doc.metadata.name ?? into }];
+          }
           if (top?.kind === 'composition' && top.domain && loaded?.domains[top.domain]) {
             const chain: Altitude[] = [];
             for (let at: string | undefined = top.domain; at && chain.length < 32; at = loaded.domains[at]?.doc.spec.parent) {
@@ -620,8 +630,11 @@ function Workspace({ me }: { me: Me }) {
           contracts: bundle.contracts,
           ...(bundle.lift ? { repoUnits: bundle.lift.units } : {}),
         };
+        const shown = diagramShown(bundle, current);
         const flow =
-          current.kind === 'composition'
+          shown && current.kind === 'composition'
+            ? diagramToFlow(shown.doc, shown.path, current.view!, bundle.diagnostics)
+            : current.kind === 'composition'
             ? bundle.composition &&
               compositionToFlow(
                 bundle.composition,
@@ -665,6 +678,9 @@ function Workspace({ me }: { me: Me }) {
         if (selectedIds.length === 0 && selectedEdgeIds.length === 0) return undefined;
         // A view groups parts; it never removes one (§21). Lines are the composition's,
         // so those may go from here.
+        if (bundle && diagramShown(bundle, current)) {
+          return 'This view is a reading of the code; Generate or Update graph from repo draws it. Nothing here is removed by hand.';
+        }
         if (commandContext.inView && selectedIds.length > 0) {
           return 'A view only groups parts. Remove a part in the parts view (press v until it shows).';
         }
@@ -1011,6 +1027,7 @@ function Workspace({ me }: { me: Me }) {
       ascendTo(0);
       const extras = [
         liftAnalysisNote(result.analysis),
+        liftInterpretationNote(result.interpretation),
         result.note,
         result.diagnostics.length > 0
           ? `${result.diagnostics.length} thing${result.diagnostics.length === 1 ? '' : 's'} could not be resolved — see civil/architecture.md.`

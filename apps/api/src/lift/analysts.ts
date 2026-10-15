@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto';
 import { isSampleCode, isTestSupport } from './read.js';
-import { claimKey, isEntity, READER, reconcile, toSkeleton, type Claim, type Evidence } from './claims.js';
-import { MAX_CHILDREN } from './containment.js';
+import { claimKey, isEntity, READER, type Claim, type Evidence } from './claims.js';
 import { JsonText } from '../http/transpile-routes.js';
-import type { FileMap, Skeleton, SkeletonDomain } from './skeleton.js';
+import type { FileMap, Skeleton } from './skeleton.js';
 
 /**
  * The agent stage of the repo lift (docs/lift-repo.md, "Claims"): the repository is
@@ -208,37 +207,6 @@ export function domainAreas(reader: Skeleton, listed: readonly string[]): Area[]
   return areas;
 }
 
-/** The tree as the architect is shown it: every level, what it holds, and what is unsure. */
-export function treeForArchitect(skeleton: Skeleton): Record<string, unknown> {
-  // The concept view (§21): what the application is. Clients and servers are how it
-  // is run — the architecture view's — so the architect is not shown them.
-  const kinds = new Map<string, string>();
-  for (const s of skeleton.services) if (!s.infrastructure) kinds.set(s.id, 'service');
-  for (const p of skeleton.processes) kinds.set(p.id, 'process');
-  for (const d of skeleton.datastores ?? []) kinds.set(d.id, 'datastore');
-  const domains = skeleton.domains ?? [];
-  const inside = new Set(domains.flatMap((d) => d.members));
-  const level = (parent: string | undefined) => [
-    ...domains.filter((d) => d.parent === parent).map((d) => ({ id: d.id, kind: 'domain', name: d.name })),
-    ...(parent === undefined
-      ? [...kinds].filter(([id]) => !inside.has(id)).map(([id, kind]) => ({ id, kind }))
-      : (domains.find((d) => d.id === parent)?.members ?? []).map((id) => ({ id, kind: kinds.get(id) ?? 'unknown' }))),
-  ];
-  const describe = (d: SkeletonDomain) => ({
-    domain: d.id,
-    name: d.name,
-    ...(d.description ? { description: d.description } : {}),
-    ...(d.foundation ? { foundation: true } : {}),
-    members: level(d.id),
-    ...(d.unsure.length ? { unsure: d.unsure } : {}),
-  });
-  const top = level(undefined);
-  return {
-    maxChildren: MAX_CHILDREN,
-    levels: [{ domain: null, members: top, ...(top.length > MAX_CHILDREN ? { over: true } : {}) }, ...domains.map(describe)],
-  };
-}
-
 /** Civil's own documents: what a lift writes, never what it reads as the product. */
 export const isCivilDocument = (path: string): boolean => path.startsWith('civil/') || path === 'civil.yaml';
 
@@ -280,8 +248,8 @@ export function validateAnswer(answer: Record<string, unknown>, listed: Readonly
       issues.push(`malformed claim: ${JSON.stringify(item).slice(0, 100)}`);
       continue;
     }
-    if (typeof by !== 'string' || by === READER || !/^(analyst|verifier|architect):/.test(by)) {
-      issues.push(`${kind}:${subject}: voice ${String(by)} is not an analyst, verifier or architect`);
+    if (typeof by !== 'string' || by === READER || !/^(analyst|verifier):/.test(by)) {
+      issues.push(`${kind}:${subject}: voice ${String(by)} is not an analyst or verifier`);
       continue;
     }
     const relation = !isEntity(kind as Claim['kind']);
@@ -576,7 +544,7 @@ export async function analyzeRepository(
   const stale: string[] = [];
   let cached = 0;
   let done = 0;
-  const total = areas.length + (reader.domains?.length ? 1 : 0);
+  const total = areas.length;
   opts.progress?.(0, total);
 
   // The repository is the bulk of every request and the same in each: serialised once,
@@ -625,43 +593,9 @@ export async function analyzeRepository(
   raw.sort((a, b) => areaOf(a) - areaOf(b));
 
   const { claims: resolved, aliases } = resolveEntities(raw, reader);
-  let normalized = normalizeClaims(resolved, reader);
+  const normalized = normalizeClaims(resolved, reader);
 
-  // The architect: one review of the tree the reader and analysts drew together, for
-  // what no single area can see. Only when there are levels to review; memoised on the
-  // tree it is shown, like an area on its code.
-  if (reader.domains?.length) {
-    const provisional = toSkeleton(reconcile([...readerClaims, ...normalized], files, new Set(listed)), reader).skeleton;
-    const tree = treeForArchitect(provisional);
-    const fingerprint = opts.version
-      ? `sha256:${createHash('sha256').update(opts.version).update('\0architect\0').update(JSON.stringify(tree)).digest('hex')}`
-      : undefined;
-    const remembered = fingerprint ? await opts.memo?.get(fingerprint) : undefined;
-    let review: Claim[] = [];
-    if (remembered) {
-      cached += 1;
-      review = remembered;
-    } else {
-      try {
-        const answer = await ask(body({ mode: 'architect', tree }));
-        const valid = validateAnswer(answer, productSet);
-        review = valid.claims;
-        issues.push(...valid.issues);
-        if (fingerprint) await opts.memo?.put(fingerprint, 'architect', review);
-      } catch (error) {
-        const last = await opts.memo?.latest('architect');
-        if (last) {
-          review = last;
-          stale.push(`architect (${(error as Error).message.slice(0, 160)})`);
-        } else failed.push(`architect (${(error as Error).message.slice(0, 160)})`);
-      }
-    }
-    done += 1;
-    opts.progress?.(done, total);
-    const again = resolveEntities([...resolved, ...review], reader);
-    Object.assign(aliases, again.aliases);
-    normalized = normalizeClaims(again.claims, reader);
-  }
+
   return {
     claims: normalized,
     report: {

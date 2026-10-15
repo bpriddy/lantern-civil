@@ -87,31 +87,6 @@ export function architectureMarkdown(input: ArchitectureInput): string {
 
   const describe = (n: ModelNode) => (n.description ? ` ${n.description}` : '');
 
-  // §21: the views. Each as an outline of its domains and what each holds — the shape
-  // a reader steps through on the canvas, in one place.
-  if (model.views.length) {
-    out.push('## Views', '');
-    out.push(
-      'The composition holds every part once. Each view groups the same parts in its own way; ' +
-        'switch views on the canvas, and step into a domain to see what it holds.',
-      '',
-    );
-    for (const view of model.views) {
-      out.push(`### ${view.name}`, '', view.description, '');
-      const outline = (parent: string | undefined, depth: number) => {
-        for (const d of view.domains.filter((x) => x.parent === parent)) {
-          const what = d.description ? ` ${d.description}` : '';
-          const members = d.members.map(idOf);
-          out.push(`${'  '.repeat(depth)}- **${cell(d.name)}**${what}${members.length ? ` — ${members.join(', ')}` : ''}`);
-          outline(d.id, depth + 1);
-        }
-      };
-      outline(undefined, 0);
-      if (view.top.length) out.push(`- At the top level: ${view.top.map(idOf).join(', ')}`);
-      out.push('');
-    }
-  }
-
   out.push('## The canvas', '');
   if (clients.length) {
     out.push('### Clients', '');

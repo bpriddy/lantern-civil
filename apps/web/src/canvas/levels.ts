@@ -1,4 +1,4 @@
-import type { Composition, CompositionEdge, CompositionNode, Domain, View } from '@civil/schema';
+import type { Composition, CompositionEdge, CompositionNode, Diagram, Domain, View } from '@civil/schema';
 
 /**
  * One level of one view (docs/prd-deltas.md §21). The composition holds every part and
@@ -21,6 +21,8 @@ export interface LoadedView {
   path: string;
   view: View;
   domains: Record<string, { path: string; doc: Domain }>;
+  /** A flow or architecture view's diagrams (optional: an older server omits them). */
+  diagrams?: Record<string, { path: string; doc: Diagram }>;
 }
 
 /** What the canvas draws for a domain: it is not a composition node, it is the view's. */

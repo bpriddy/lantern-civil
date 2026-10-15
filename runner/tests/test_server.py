@@ -133,7 +133,7 @@ def test_transpile_meta_reaches_its_handler() -> None:
     status, body = request("GET", "/transpile/meta")
     ok(status == 200, "GET /transpile/meta answers 200")
     ok(
-        body == {"model": server.DEFAULT_MODEL, "promptVersion": server.PROMPT_VERSION, "analyzeVersion": server.ANALYZE_PROMPT_VERSION},
+        body == {"model": server.DEFAULT_MODEL, "promptVersion": server.PROMPT_VERSION, "analyzeVersion": f"{server.ANALYZE_PROMPT_VERSION}+{server.INTERPRET_PROMPT_VERSION}"},
         "meta carries the model and prompt version the memo hash folds in",
     )
 
@@ -290,17 +290,22 @@ def test_lift_rejects_bad_body() -> None:
     ok(status == 400, "a non-string graphDoc answers 400")
 
 
-def test_lift_analyze_takes_areas_or_the_architect_tree() -> None:
-    print("test_lift_analyze_takes_areas_or_the_architect_tree")
+def test_lift_analyze_takes_areas() -> None:
+    print("test_lift_analyze_takes_areas")
     files = {"a.ts": "export {}"}
     status, _ = request("POST", "/lift/analyze", {"files": files, "areas": [{"id": "a", "prefixes": [""]}]})
     ok(status == 200, "an area request reaches the analysts")
-    status, _ = request("POST", "/lift/analyze", {"files": files, "mode": "architect", "tree": {"levels": []}})
-    ok(status == 200 and RECORD["lift_analyze"]["mode"] == "architect", "an architect request needs no areas")
-    status, body = request("POST", "/lift/analyze", {"files": files, "mode": "architect"})
-    ok(status == 400 and "tree" in body["error"], "an architect request without a tree answers 400")
     status, _ = request("POST", "/lift/analyze", {"files": files})
     ok(status == 400, "an area request without areas answers 400")
+
+
+def test_lift_analyze_takes_an_interpretation_task() -> None:
+    print("test_lift_analyze_takes_an_interpretation_task")
+    files = {"a.ts": "export {}"}
+    status, _ = request("POST", "/lift/analyze", {"files": files, "mode": "interpret", "task": {"id": "tasks", "shape": "flow"}})
+    ok(status == 200 and RECORD["lift_analyze"]["task"]["id"] == "tasks", "an interpretation task reaches interpret")
+    status, body = request("POST", "/lift/analyze", {"files": files, "mode": "interpret", "task": {"id": "x", "shape": "other"}})
+    ok(status == 400 and "task" in body["error"], "a task of no known shape answers 400")
 
 
 def test_unknown_routes_404() -> None:

@@ -25,12 +25,78 @@ export const zView = z.object({
   metadata: zMetadata,
   spec: z
     .object({
+      /**
+       * How the view is drawn (docs/interpretation.md): `grouping` places the
+       * composition's parts in domains; `flow` and `architecture` are sets of diagrams
+       * — how the application thinks, and what it is built on.
+       */
+      shape: z.enum(['grouping', 'flow', 'architecture']).default('grouping'),
+      /** For a diagram view: the diagram it opens at. */
+      entry: zId.optional(),
       members: z.array(zId).default([]),
       unplaced: z.enum(['hide', 'top']).default('top'),
       /** A sentence on what this way of looking shows. */
       description: z.string().min(1).optional(),
     })
-    .default({ members: [], unplaced: 'top' }),
+    .default({ shape: 'grouping', members: [], unplaced: 'top' }),
+  layout: zLayout,
+});
+
+/** The node kinds of each diagram shape: closed, like every vocabulary (PRD §3). */
+export const FLOW_NODE_KINDS = ['actor', 'trigger', 'agent', 'orchestrator', 'guard', 'step', 'tools', 'store', 'output', 'flow'] as const;
+export const ARCHITECTURE_NODE_KINDS = ['client', 'service', 'worker', 'datastore', 'queue', 'external', 'platform', 'concern'] as const;
+export const FLOW_EDGE_KINDS = ['next', 'uses'] as const;
+export const ARCHITECTURE_EDGE_KINDS = ['uses', 'calls', 'hosts', 'governs'] as const;
+
+/** A decision that defines a piece: what was chosen, why when it is said, where it shows. */
+export const zDecision = z.object({
+  statement: z.string().min(1),
+  why: z.string().min(1).optional(),
+  evidence: z.array(z.string().min(1)).default([]),
+  source: z.enum(['code', 'docs']).optional(),
+});
+
+export const zDiagramNode = z.object({
+  id: zId,
+  kind: z.string().min(1),
+  name: z.string().min(1),
+  /** One sentence on what it is or does. */
+  summary: z.string().min(1).optional(),
+  /** The composition parts that implement it. */
+  realizedBy: z.array(zId).default([]),
+  /** Where the reading rests: "path" or "path:line". */
+  evidence: z.array(z.string().min(1)).default([]),
+  decisions: z.array(zDecision).default([]),
+  /** Another diagram of the same view, to step into. */
+  ref: zId.optional(),
+  confidence: z.enum(['high', 'medium', 'low']).optional(),
+});
+
+export const zDiagramEdge = z.object({
+  id: zId,
+  from: zId,
+  to: zId,
+  kind: z.string().min(1),
+  /** What passes, in a few words. */
+  label: z.string().min(1).optional(),
+  evidence: z.array(z.string().min(1)).default([]),
+  confidence: z.enum(['high', 'medium', 'low']).optional(),
+});
+
+/**
+ * One diagram of a flow or architecture view (docs/interpretation.md). Unlike the
+ * dataflow canvas it does not execute, so it may loop: a check that sends work back is
+ * a loop, and drawing it is the point.
+ */
+export const zDiagram = z.object({
+  apiVersion: zApiVersion,
+  kind: z.literal('Diagram'),
+  metadata: zMetadata,
+  spec: z.object({
+    description: z.string().min(1).optional(),
+    nodes: z.array(zDiagramNode).default([]),
+    edges: z.array(zDiagramEdge).default([]),
+  }),
   layout: zLayout,
 });
 
@@ -57,3 +123,7 @@ export const zDomain = z.object({
 
 export type View = z.infer<typeof zView>;
 export type Domain = z.infer<typeof zDomain>;
+export type Diagram = z.infer<typeof zDiagram>;
+export type DiagramNode = z.infer<typeof zDiagramNode>;
+export type DiagramEdge = z.infer<typeof zDiagramEdge>;
+export type Decision = z.infer<typeof zDecision>;

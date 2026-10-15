@@ -30,6 +30,7 @@ from patterns import analyze  # noqa: E402
 from lift import LiftError, lift_graph  # noqa: E402
 from refine import KINDS as REFINE_KINDS, RefineValidationError, refine  # noqa: E402
 from analyze import PROMPT_VERSION as ANALYZE_PROMPT_VERSION, analyze as analyze_codebase  # noqa: E402
+from interpret import PROMPT_VERSION as INTERPRET_PROMPT_VERSION  # noqa: E402
 from transpile import PROMPT_VERSION, TranspileValidationError, transpile  # noqa: E402
 
 
@@ -57,7 +58,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, {
                 "model": DEFAULT_MODEL,
                 "promptVersion": PROMPT_VERSION,
-                "analyzeVersion": ANALYZE_PROMPT_VERSION,
+                # Interpretation's prompts ride the same key: one memo, both kinds of task.
+                "analyzeVersion": f"{ANALYZE_PROMPT_VERSION}+{INTERPRET_PROMPT_VERSION}",
             })
             return
         self.send_response(404)
@@ -259,10 +261,11 @@ class Handler(BaseHTTPRequestHandler):
         if claims is not None and not (isinstance(claims, list) and all(isinstance(c, dict) for c in claims)):
             self._json(400, {"error": '"claims" must be a list of claim objects'})
             return
-        if body.get("mode") == "architect":
-            # One review of the whole domain tree: no areas, the tree instead.
-            if not isinstance(body.get("tree"), dict):
-                self._json(400, {"error": '"tree" must be the domain tree as an object'})
+        if body.get("mode") == "interpret":
+            # One interpretation task: a diagram drawn and checked (interpret.py).
+            task = body.get("task")
+            if not (isinstance(task, dict) and isinstance(task.get("id"), str) and task.get("shape") in ("flow", "architecture")):
+                self._json(400, {"error": '"task" must be {id, shape: flow | architecture, ...}'})
                 return
         elif not (
             isinstance(areas, list) and areas

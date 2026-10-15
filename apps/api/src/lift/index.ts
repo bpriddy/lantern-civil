@@ -10,7 +10,9 @@ import type { FileMap, Skeleton } from './skeleton.js';
 import { skeletonToDocuments } from './to-documents.js';
 import { claimsFromSkeleton, reconcile, toSkeleton } from './claims.js';
 import { buildContainment, toSkeletonDomains } from './containment.js';
-import { analysisPaths, analyzeRepository, type AnalysisReport, type AnalyzeAsk, type AnalyzeOptions } from './analysts.js';
+import { analysisPaths, analyzeRepository, isCivilDocument, type AnalysisReport, type AnalyzeAsk, type AnalyzeOptions } from './analysts.js';
+import { interpretApplication, type InterpretReport, type Reading } from './interpret.js';
+import { buildFacts } from './facts.js';
 
 /** Where a lift is, for progress: in order. */
 export type LiftStage = 'listing' | 'reading' | 'analysing' | 'refining' | 'writing';
@@ -47,6 +49,8 @@ export interface LiftResult {
   filesDropped: number;
   /** The agent stage's run, when it was asked: what it said and what was not believed. */
   analysis?: AnalysisReport & { disbelieved: string[] };
+  /** The flow and architecture reading, when it was asked (interpret.ts). */
+  interpretation?: InterpretReport & { flows: number; angles: number };
 }
 
 /**
@@ -221,13 +225,39 @@ export async function liftRepository(
     }
     seen = { ...files, ...more };
   }
-  const analysis = opts.analyze
-    ? await analyzeRepository(opts.analyze, seen, listed, readerClaims, read, {
-        ...opts.analyzeOptions,
-        progress: (done, total) =>
-          report('analysing', `Analysts are reading the code: ${done} of ${total} areas done.`, { done, total }),
-      })
-    : null;
+  // The agent stage: area analysts (claims about the parts) and interpretation (how the
+  // application thinks, what it is built on) run side by side — neither needs the
+  // other's answer — and their progress is counted together.
+  const counts = { areas: [0, 0], reading: [0, 0] };
+  const progress = () => {
+    const done = counts.areas[0]! + counts.reading[0]!;
+    const total = counts.areas[1]! + counts.reading[1]!;
+    report('analysing', `Analysts are reading the code: ${done} of ${total} tasks done.`, { done, total });
+  };
+  const product = listed.filter((p) => !isSampleCode(p) && !isCivilDocument(p));
+  const [analysis, interpreted] = opts.analyze
+    ? await Promise.all([
+        analyzeRepository(opts.analyze, seen, listed, readerClaims, read, {
+          ...opts.analyzeOptions,
+          progress: (done, total) => {
+            counts.areas = [done, total];
+            progress();
+          },
+        }),
+        interpretApplication(
+          opts.analyze,
+          { skeleton: read, files: seen, listed, product, facts: buildFacts(seen, listed) },
+          {
+            ...(opts.analyzeOptions?.memo ? { memo: opts.analyzeOptions.memo } : {}),
+            ...(opts.analyzeOptions?.version ? { version: opts.analyzeOptions.version } : {}),
+            progress: (done, total) => {
+              counts.reading = [done, total];
+              progress();
+            },
+          },
+        ),
+      ])
+    : [null, null];
   const beliefs = reconcile([...readerClaims, ...(analysis?.claims ?? [])], seen, new Set(listed));
   const { skeleton: deterministic, provenance, dropped: disbelieved } = toSkeleton(beliefs, read);
 
@@ -286,7 +316,19 @@ export async function liftRepository(
   // 6. Map to civil/ documents, merging with what the project already has (Update):
   //    the author's node ids, layout, and anything added by hand survive.
   report('writing', 'Writing the documents.');
+  // A reading names parts as the reader did; the model pass may have renamed them.
+  const renamed = (reading: Reading | undefined): Reading | undefined =>
+    reading && {
+      ...reading,
+      diagrams: reading.diagrams.map((d) => ({
+        ...d,
+        nodes: d.nodes.map((n) => ({ ...n, realizedBy: n.realizedBy.map((e) => refinement?.renames[e] ?? e) })),
+      })),
+    };
+  const readings = [renamed(interpreted?.flow), renamed(interpreted?.architecture)].filter((r): r is Reading => !!r);
+
   const mapped = skeletonToDocuments(skeleton, {
+    readings,
     projectName: opts.projectName,
     existing,
     refinement,
@@ -354,6 +396,15 @@ export async function liftRepository(
     filesDropped: dropped,
     ...(analysis
       ? { analysis: { ...analysis.report, disbelieved: disbelieved.map((b) => `${b.key} (${[...b.refuters, ...b.issues].join('; ').slice(0, 160)})`) } }
+      : {}),
+    ...(interpreted
+      ? {
+          interpretation: {
+            ...interpreted.report,
+            flows: interpreted.flow?.diagrams.length ?? 0,
+            angles: interpreted.architecture?.diagrams.length ?? 0,
+          },
+        }
       : {}),
   };
 }
