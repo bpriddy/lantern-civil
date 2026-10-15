@@ -246,7 +246,7 @@ export async function liftRepository(
         }),
         interpretApplication(
           opts.analyze,
-          { skeleton: read, files: seen, listed, product, facts: buildFacts(seen, listed) },
+          { skeleton: read, files: seen, listed, product, facts: buildFacts(seen, listed), name: opts.projectName },
           {
             ...(opts.analyzeOptions?.memo ? { memo: opts.analyzeOptions.memo } : {}),
             ...(opts.analyzeOptions?.version ? { version: opts.analyzeOptions.version } : {}),

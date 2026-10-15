@@ -72,6 +72,8 @@ export interface InterpretReport {
 
 interface Task {
   id: string;
+  /** The application's own name, so a reading never calls it by another. */
+  product?: string;
   shape: DiagramShape;
   role: 'analyst' | 'synth';
   title: string;
@@ -339,7 +341,7 @@ export const INTERPRET_CONCURRENCY = 6;
 
 export async function interpretApplication(
   ask: AnalyzeAsk | undefined,
-  input: { skeleton: Skeleton; files: FileMap; listed: readonly string[]; product: readonly string[]; facts: Facts },
+  input: { skeleton: Skeleton; files: FileMap; listed: readonly string[]; product: readonly string[]; facts: Facts; name?: string },
   opts: InterpretOptions = {},
 ): Promise<{ flow?: Reading; architecture?: Reading; report: InterpretReport }> {
   const report: InterpretReport = { tasks: 0, cached: 0, dropped: 0, note: null };
@@ -388,7 +390,8 @@ export async function interpretApplication(
     else {
       let why = '';
       try {
-        answer = await ask(new JsonText(`${shared},${JSON.stringify({ mode: 'interpret', task }).slice(1)}`));
+        const named = input.name ? { ...task, product: input.name } : task;
+        answer = await ask(new JsonText(`${shared},${JSON.stringify({ mode: 'interpret', task: named }).slice(1)}`));
         if (!usable(answer)) why = String(answer?.['error'] ?? 'nothing was drawn');
       } catch (error) {
         why = (error as Error).message.slice(0, 160);

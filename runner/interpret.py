@@ -22,7 +22,7 @@ from typing import Any
 from analyze import EVIDENCE, MAX_READS, Workspace, _decode, _loop, _EVIDENCE_SCHEMA
 
 # Bump whenever a prompt or the diagram shape changes: the API memoises answers on it.
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 
 ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
@@ -108,6 +108,7 @@ Rules
 {EVIDENCE}
 - Give every node except an actor at least one piece of evidence.
 - Use kebab-case node ids.
+- Call the application by the name in the input.
 - Do not draw a function, a class, or a file as a node.
 
 Budget: {TURNS} tool calls and {MAX_READS} file reads."""
@@ -299,6 +300,15 @@ SUBMIT_ITEM_VERDICTS = {
 }
 
 
+def _clip(text: str, most: int) -> str:
+    """Shortened at a word, never mid-word."""
+    text = text.strip()
+    if len(text) <= most:
+        return text
+    cut = text[:most].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
+
+
 def _evidence(raw: Any, index: set[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for ev in _decode(raw) or []:
@@ -334,7 +344,7 @@ def validate_diagram(raw: Any, shape: str, role: str, index: set[str], refs: set
             continue
         node: dict[str, Any] = {"id": nid, "kind": kind, "name": name.strip()[:80]}
         if isinstance(item.get("summary"), str) and item["summary"].strip():
-            node["summary"] = item["summary"].strip()[:400]
+            node["summary"] = _clip(item["summary"], 600)
         realized = [p for p in (_decode(item.get("realizedBy")) or []) if isinstance(p, str) and ID_PATTERN.match(p)]
         if realized:
             node["realizedBy"] = realized[:8]
@@ -345,9 +355,9 @@ def validate_diagram(raw: Any, shape: str, role: str, index: set[str], refs: set
         for d in _decode(item.get("decisions")) or []:
             if not isinstance(d, dict) or not isinstance(d.get("statement"), str) or not d["statement"].strip():
                 continue
-            dec: dict[str, Any] = {"statement": d["statement"].strip()[:300], "evidence": _evidence(d.get("evidence"), index)}
+            dec: dict[str, Any] = {"statement": _clip(d["statement"], 300), "evidence": _evidence(d.get("evidence"), index)}
             if isinstance(d.get("why"), str) and d["why"].strip():
-                dec["why"] = d["why"].strip()[:300]
+                dec["why"] = _clip(d["why"], 300)
             if d.get("source") in ("code", "docs"):
                 dec["source"] = d["source"]
             decisions.append(dec)
@@ -427,7 +437,7 @@ def verify_diagram(client: Any, model: str, diagram: dict[str, Any], files: dict
 def _task_prompt(task: dict[str, Any], ws: Workspace) -> str:
     """The analyst's or synthesizer's request: the task, what it covers, and what Civil
     already knows. Inputs are trimmed to stay a reasonable size."""
-    sections = [f"Task: {task.get('title', task['id'])}."]
+    sections = [f"Application: {task['product']}." if task.get("product") else "", f"Task: {task.get('title', task['id'])}."]
     if task.get("focus"):
         sections.append(f"Angle: {task['focus']}")
     if task.get("description"):
@@ -442,7 +452,7 @@ def _task_prompt(task: dict[str, Any], ws: Workspace) -> str:
         sections.append("Fact sheet:\n" + json.dumps(task["facts"], indent=1)[:16_000])
     if task.get("inputs"):
         sections.append("Diagrams to work from:\n" + json.dumps(task["inputs"], indent=1)[:40_000])
-    return "\n\n".join(sections)
+    return "\n\n".join(x for x in sections if x)
 
 
 def interpret(body: dict[str, Any], client: Any, model: str) -> dict[str, Any]:
