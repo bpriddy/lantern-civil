@@ -23,7 +23,7 @@ const NODE_H = 170;
  * smaller card) is laid out again; one the author moved is kept — moving a node edits
  * layout.nodes and leaves this stamp as it was.
  */
-export const LAYOUT_BY = 'civil-dagre-2';
+export const LAYOUT_BY = 'civil-dagre-3';
 
 /**
  * Laid out as a layered graph (dagre): left to right in the order work passes, lines
@@ -34,7 +34,9 @@ export const LAYOUT_BY = 'civil-dagre-2';
  */
 export function layoutDiagram(diagram: ReadDiagram, shape: 'flow' | 'architecture'): Map<string, Point> {
   const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({ rankdir: 'LR', nodesep: 48, ranksep: 140, marginx: 40, marginy: 40 });
+  // Ranks far enough apart for a chip saying what passes (labelled-edge.tsx) to sit
+  // between two cards.
+  g.setGraph({ rankdir: 'LR', nodesep: 48, ranksep: 220, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of diagram.nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
   const ids = new Set(diagram.nodes.map((n) => n.id));

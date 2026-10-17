@@ -51,17 +51,15 @@ export function diagramToFlow(
       },
     };
   });
-  const edges = diagram.spec.edges.map((e): Edge => {
-    const uses = e.kind !== 'next';
-    return {
-      id: e.id,
-      source: e.from,
-      target: e.to,
-      className: `edge-diagram edge-diagram-${e.kind}${e.confidence === 'low' ? ' edge-uncertain' : ''}`,
-      markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-      ...(e.label ? { label: e.label } : {}),
-      ...(uses ? { style: { strokeDasharray: '4 4' } } : {}),
-    };
-  });
+  // What passes is drawn by LabelledEdge (labelled-edge.tsx), in context; the editor
+  // marks which lines are in focus.
+  const edges = diagram.spec.edges.map((e): Edge => ({
+    id: e.id,
+    source: e.from,
+    target: e.to,
+    type: 'labelled',
+    markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
+    data: { ...(e.label ? { label: e.label } : {}), kind: e.kind, ...(e.confidence === 'low' ? { uncertain: true } : {}) },
+  }));
   return { nodes, edges };
 }

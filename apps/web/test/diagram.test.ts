@@ -38,10 +38,11 @@ test('roles are faces of their kind; a door descends; decisions are counted on t
   assert.equal(nodes.find((n) => n.id === 'user')!.data.descent, undefined);
 });
 
-test('lines say what passes; a loop is drawn; uses lines are dashed; an unsure line is faint', () => {
+test('lines carry what passes for the chip, their kind, and whether they are unsure', () => {
   const { edges } = diagramToFlow(diagram, 'civil/views/flow/overview.yaml', 'flow', []);
-  assert.equal(edges.find((e) => e.id === 'e1')!.label, 'a request');
+  assert.ok(edges.every((e) => e.type === 'labelled'));
+  assert.equal(edges.find((e) => e.id === 'e1')!.data!['label'], 'a request');
   assert.ok(edges.some((e) => e.source === 'writer' && e.target === 'user'), 'the loop back is there');
-  assert.ok(edges.find((e) => e.id === 'e3')!.style?.strokeDasharray);
-  assert.match(edges.find((e) => e.id === 'e2')!.className ?? '', /edge-uncertain/);
+  assert.equal(edges.find((e) => e.id === 'e3')!.data!['kind'], 'uses');
+  assert.equal(edges.find((e) => e.id === 'e2')!.data!['uncertain'], true);
 });

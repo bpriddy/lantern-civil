@@ -19,6 +19,7 @@ import { nextEdgeId, proposeCompositionEdge, proposeGraphEdge } from './edges.js
 import { compositionToFlow, graphToFlow } from './model.js';
 import { OUTSIDE } from './levels.js';
 import { diagramToFlow } from './diagram.js';
+import { diagramEdgeTypes } from './labelled-edge.js';
 import { compositionNodeTypes, graphNodeTypes, type NodeData } from './nodes.js';
 
 /**
@@ -103,6 +104,8 @@ function Surface({
   onMoveNode,
 }: EditorProps) {
   const flow = useReactFlow();
+  /** The node under the pointer: its lines come forward and say what passes. */
+  const [hovered, setHovered] = useState<string | null>(null);
 
   useEffect(() => {
     onRegisterActions?.({
@@ -334,7 +337,16 @@ function Surface({
         selected: selectedIds.includes(n.id),
         ...(runStates[n.id] ? { className: `run-${runStates[n.id]}` } : {}),
       }))}
-      edges={edges.map((e) => ({ ...e, selected: selectedEdgeIds.includes(e.id) }))}
+      edges={edges.map((e) => {
+        if (e.type !== 'labelled') return { ...e, selected: selectedEdgeIds.includes(e.id) };
+        const focused = new Set([...(hovered ? [hovered] : []), ...selectedIds]);
+        const focus = focused.has(e.source) || focused.has(e.target);
+        const anything = focused.size > 0 || selectedEdgeIds.length > 0;
+        return { ...e, selected: selectedEdgeIds.includes(e.id), data: { ...e.data, focus, dim: anything && !focus } };
+      })}
+      edgeTypes={diagramEdgeTypes}
+      onNodeMouseEnter={(_e, node) => setHovered(node.id)}
+      onNodeMouseLeave={() => setHovered(null)}
       nodeTypes={nodeTypes}
       onNodeDoubleClick={handleDoubleClick}
       onConnect={handleConnect}

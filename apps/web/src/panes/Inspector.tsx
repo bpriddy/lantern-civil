@@ -47,6 +47,8 @@ export function Inspector({
   // even when an id is shared — so it is looked up there first.
   const shown = bundle ? diagramShown(bundle, altitude) : undefined;
   const role = single && shown ? shown.doc.spec.nodes.find((n) => n.id === selectedIds[0]) : undefined;
+  const line = singleEdge && shown ? shown.doc.spec.edges.find((e) => e.id === selectedEdgeIds[0]) : undefined;
+  const nameIn = (id: string) => shown?.doc.spec.nodes.find((n) => n.id === id)?.name ?? id;
   const node = single && !shown ? findNode(bundle, altitude, selectedIds[0]!) : undefined;
   // A domain is the view's, not the composition's (§21): its own detail, from its file.
   const loaded = altitude.kind === 'composition' && altitude.view ? bundle?.views?.[altitude.view] : undefined;
@@ -57,7 +59,36 @@ export function Inspector({
     <>
       <div className="pane-title">Inspector</div>
       <div className="pane-body">
-        {role && shown ? (
+        {line ? (
+          <>
+            <dl className="kv">
+              <dt>from</dt>
+              <dd>{nameIn(line.from)}</dd>
+              <dt>to</dt>
+              <dd>{nameIn(line.to)}</dd>
+              <dt>{line.kind === 'next' ? 'passes' : line.kind}</dt>
+              <dd>{line.label ?? '—'}</dd>
+            </dl>
+            {line.evidence.length ? (
+              <>
+                <div className="provenance-label muted">Where it rests</div>
+                <ul className="repo-files provenance-evidence">
+                  {line.evidence.map((e, i) => (
+                    <li key={`${i}-${e}`}>
+                      {onOpenFile ? (
+                        <button type="button" className="repo-file-link" onClick={() => onOpenFile(e.split(':')[0]!, e.split(':')[1] ? Number(e.split(':')[1]) : undefined)}>
+                          <code>{e}</code>
+                        </button>
+                      ) : (
+                        <code>{e}</code>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </>
+        ) : role && shown ? (
           <RoleDetail node={role} path={shown.path} {...(onOpenFile ? { onOpenFile } : {})} />
         ) : domain ? (
           <DomainDetail
