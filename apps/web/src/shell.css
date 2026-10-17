@@ -23,7 +23,7 @@
   --warn: #e0a458;
   --danger: #e5674f;
 
-  --row: 34px;
+  --row: 40px;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
   --sans: ui-sans-serif, -apple-system, "Inter", system-ui, sans-serif;
 }
@@ -37,14 +37,14 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 15px;
   -webkit-font-smoothing: antialiased;
 }
 
 .shell {
   display: grid;
   grid-template-rows: var(--row) 1fr;
-  grid-template-columns: 260px 1fr 320px;
+  grid-template-columns: 280px 1fr 380px;
   grid-template-areas:
     "top    top     top"
     "tree   centre  inspector";
@@ -69,7 +69,7 @@ body {
   border-right: 1px solid var(--border);
   padding: 2px 10px;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
 }
 .view-tab:last-child { border-right: 0; }
@@ -96,7 +96,7 @@ body {
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 
@@ -115,7 +115,7 @@ body {
   border-radius: 4px;
   background: var(--bg-inset);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 
@@ -139,7 +139,7 @@ body {
   background: transparent;
   color: var(--accent);
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -174,7 +174,7 @@ body {
 
 .pane-title {
   padding: 8px 12px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -193,14 +193,14 @@ body {
 
 .empty h2 {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
   color: var(--text-dim);
 }
 
 .empty code {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 
@@ -208,7 +208,7 @@ body {
   display: grid;
   grid-template-columns: 84px 1fr;
   gap: 6px 10px;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .kv dt { color: var(--text-faint); }
@@ -231,7 +231,7 @@ body {
 }
 
 .gate-card h1 {
-  font-size: 16px;
+  font-size: 18px;
   color: var(--text);
   margin: 0 0 10px;
 }
@@ -259,7 +259,7 @@ body {
   background: var(--bg-inset);
   color: var(--text-dim);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   overflow: hidden;
@@ -281,7 +281,7 @@ body {
   padding: 0;
   color: var(--text-faint);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
@@ -293,7 +293,7 @@ body {
 
 .section {
   margin: 22px 0 8px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -309,7 +309,7 @@ body {
   background: transparent;
   color: var(--text-dim);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -322,7 +322,7 @@ body {
   border: 1px solid var(--danger);
   border-radius: 4px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 /* ---- canvas ------------------------------------------------------------- */
@@ -356,7 +356,7 @@ body {
   border-radius: 6px;
   background: var(--bg-raised);
   color: var(--text);
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 
@@ -367,20 +367,20 @@ body {
   margin-bottom: 5px;
 }
 
-.node-glyph { color: var(--accent); font-size: 11px; line-height: 1; }
+.node-glyph { color: var(--accent); font-size: 13px; line-height: 1; }
 
 .node-kind {
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
 
-.node-descend { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+.node-descend { margin-left: auto; color: var(--text-faint); font-size: 13px; }
 
 .node-label {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -389,7 +389,7 @@ body {
 
 .node-detail {
   margin-top: 3px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -400,7 +400,7 @@ body {
   margin-top: 6px;
   padding-top: 5px;
   border-top: 1px solid var(--border);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--danger);
 }
 
@@ -463,8 +463,75 @@ body {
 }
 .node-domain .node-label { font-weight: 600; }
 
+/* Diagram views (docs/interpretation.md): the card is built to be scanned — a kind in
+   its colour, a name you can read from across the canvas, a summary in sentences,
+   and room around all of it. The kind's colour runs down the left edge. */
+.node.node-role {
+  --kind: var(--text-dim);
+  position: relative;
+  min-width: 272px;
+  max-width: 300px;
+  padding: 14px 18px 16px 22px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 14px;
+}
+.node.node-role::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 0 3px 3px 0;
+  background: var(--kind);
+}
+.node-role .node-head { margin-bottom: 8px; gap: 8px; }
+.node-role .node-glyph { color: var(--kind); font-size: 15px; }
+.node-role .node-kind { color: var(--kind); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; }
+.node-role .node-label {
+  font-family: var(--sans);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+}
+.node-role .node-detail {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.node-role .node-badge {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+/* A door into another diagram: a quiet "open" line, not a nested box. */
+.node-role .node-interior { margin-top: 10px; padding: 0; border: 0; background: none; }
+.node-role .node-interior-empty { font-style: normal; font-size: 12px; color: var(--kind); }
+.node-role .node-interior-empty::after { content: ' ›'; }
+.node-role.node-descends-canvas { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), 5px 5px 0 -1px var(--bg-raised), 5px 5px 0 0 var(--border-strong); }
+.react-flow__node.selected .node.node-role { box-shadow: 0 0 0 2px var(--accent), 0 6px 22px rgba(90, 169, 255, 0.35); }
+.node-role.node-actor, .node-role.node-trigger { --kind: #7cc4ff; }
+.node-role.node-agent, .node-role.node-orchestrator { --kind: #c792ea; }
+.node-role.node-guard, .node-role.node-concern { --kind: var(--warn); }
+.node-role.node-step, .node-role.node-tools, .node-role.node-worker, .node-role.node-service { --kind: var(--ok); }
+.node-role.node-store, .node-role.node-queue, .node-role.node-datastore, .node-role.node-external, .node-role.node-platform { --kind: #b4c3d6; }
+.node-role.node-output, .node-role.node-flow, .node-role.node-client { --kind: #e8c36a; }
+
 /* Diagram views (docs/interpretation.md): a role's or a piece's kind names its colour. */
-.node-badge { margin-top: 4px; font-size: 9px; color: var(--text-faint); }
+.node-badge { margin-top: 4px; font-size: 11px; color: var(--text-faint); }
 .decision { border-left: 2px solid var(--border-strong); padding-left: 8px; margin: 6px 0; }
 .decision p { margin: 2px 0; }
 .node-agent .node-glyph, .node-orchestrator .node-glyph { color: #c792ea; }
@@ -516,7 +583,7 @@ body {
 .react-flow__edge.edge-calls .react-flow__edge-path { stroke: #7cc4ff; stroke-width: 1.4; }
 .react-flow__edge.edge-calls .react-flow__edge-text { fill: #7cc4ff; }
 .react-flow__edge.edge-calls .react-flow__edge-textbg { fill: var(--bg); }
-.react-flow__edge-text { fill: var(--text-faint); font-size: 9px; }
+.react-flow__edge-text { fill: var(--text-faint); font-size: 11px; }
 /* A count on a rolled-up line ("×5"), on the canvas ground rather than a white chip. */
 .react-flow__edge-textbg { fill: var(--bg); }
 
@@ -546,7 +613,7 @@ body {
 
 /* ---- tree --------------------------------------------------------------- */
 
-.tree-list { font-family: var(--mono); font-size: 11px; }
+.tree-list { font-family: var(--mono); font-size: 13px; }
 .tree-group { margin-bottom: 10px; }
 .tree-dir { color: var(--text-faint); margin-bottom: 3px; }
 .tree-file { color: var(--text-dim); padding: 1px 0 1px 10px; }
@@ -561,7 +628,7 @@ body {
   border-radius: 4px;
   background: var(--bg-inset);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
   color: var(--text-dim);
   white-space: pre-wrap;
@@ -588,7 +655,7 @@ body {
   padding: 7px 8px;
   border-left: 2px solid var(--danger);
   background: var(--bg-inset);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
 }
@@ -599,7 +666,7 @@ body {
 
 .diagnostic-code {
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -609,7 +676,7 @@ body {
 .diagnostic-where {
   margin-top: 3px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 
@@ -624,8 +691,8 @@ body {
   text-align: left;
 }
 
-.example-name { color: var(--text); font-size: 13px; margin-bottom: 4px; }
-.example-description { color: var(--text-faint); font-size: 11px; line-height: 1.55; }
+.example-name { color: var(--text); font-size: 15px; margin-bottom: 4px; }
+.example-description { color: var(--text-faint); font-size: 13px; line-height: 1.55; }
 .example .connect { margin-top: 10px; }
 
 /* ---- descent: a canvas, or code ----------------------------------------- */
@@ -643,7 +710,7 @@ body {
 /* Code behind the door: a gutter down the left edge, like an editor margin. */
 .node-descends-code { border-left: 3px solid var(--ok); padding-left: 8px; }
 
-.node-descend { margin-left: auto; font-size: 10px; color: var(--text-faint); }
+.node-descend { margin-left: auto; font-size: 12px; color: var(--text-faint); }
 .node-descends-canvas .node-descend { color: #7cc4ff; }
 .node-descends-code .node-descend { font-family: var(--mono); color: var(--ok); }
 
@@ -662,7 +729,7 @@ body {
   gap: 5px;
   align-items: baseline;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -670,12 +737,12 @@ body {
 .node-port-arrow { color: var(--text-faint); width: 8px; }
 .node-port-out { justify-content: flex-end; }
 .node-port-out .node-port-arrow { order: 2; }
-.node-interior-empty { font-size: 10px; color: var(--text-faint); font-style: italic; }
+.node-interior-empty { font-size: 12px; color: var(--text-faint); font-style: italic; }
 
 .node-code-meta {
   margin-top: 6px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 
@@ -694,7 +761,7 @@ body {
 
 .code-files-title {
   padding: 8px 12px;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -711,7 +778,7 @@ body {
   background: none;
   padding: 3px 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
   cursor: pointer;
 }
@@ -739,7 +806,7 @@ body {
   align-items: stretch;
   border-right: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-faint);
 }
 
@@ -759,7 +826,7 @@ body {
   background: none;
   padding: 0 8px 0 2px;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   color: transparent;
   cursor: pointer;
 }
@@ -769,8 +836,8 @@ body {
 .code-tab-close:hover { color: var(--danger); }
 .code-tabs-spacer { flex: 1; }
 
-.code-dirty { color: var(--warn); margin-right: 5px; font-size: 9px; }
-.code-error { align-self: center; color: var(--danger); font-size: 11px; margin-right: 10px; }
+.code-dirty { color: var(--warn); margin-right: 5px; font-size: 11px; }
+.code-error { align-self: center; color: var(--danger); font-size: 13px; margin-right: 10px; }
 
 .code-save {
   align-self: center;
@@ -781,22 +848,22 @@ body {
   background: transparent;
   color: var(--accent);
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 .code-save:disabled { border-color: var(--border); color: var(--text-faint); cursor: default; }
-.code-empty { display: grid; place-items: center; color: var(--text-faint); font-size: 12px; }
+.code-empty { display: grid; place-items: center; color: var(--text-faint); font-size: 14px; }
 
 /* ---- commit indicator ---------------------------------------------------- */
 
 .commit-wrap { position: relative; }
-.chip-pending, .chip-note { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
-.chip-apply { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; border-color: var(--warn); }
-.chip-applying { font-family: var(--mono); font-size: 11px; }
+.chip-pending, .chip-note { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 13px; }
+.chip-apply { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 13px; border-color: var(--warn); }
+.chip-applying { font-family: var(--mono); font-size: 13px; }
 /* A non-Python project: nothing to apply, said rather than offered (registry.ts). */
-.chip-unsupported { font-family: var(--mono); font-size: 11px; cursor: help; }
-.scm-unsupported { font-size: 11px; line-height: 1.5; color: var(--text-dim); }
+.chip-unsupported { font-family: var(--mono); font-size: 13px; cursor: help; }
+.scm-unsupported { font-size: 13px; line-height: 1.5; color: var(--text-dim); }
 .dot.pulse { animation: civil-pulse 1.2s ease-in-out infinite; }
 @keyframes civil-pulse { 50% { opacity: 0.3; } }
 .dot.warn { background: var(--warn); }
@@ -824,7 +891,7 @@ body {
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .commit-message:focus { outline: none; border-color: var(--accent-dim); }
@@ -839,13 +906,13 @@ body {
 
 .node-contract-name {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-dim);
   margin-bottom: 3px;
 }
 
-.node-port-type { color: var(--text-faint); font-size: 9px; }
-.node-port-untyped { color: var(--warn); font-size: 9px; font-style: italic; }
+.node-port-type { color: var(--text-faint); font-size: 11px; }
+.node-port-untyped { color: var(--warn); font-size: 11px; font-style: italic; }
 
 /* ---- project switcher and picker ---------------------------------------- */
 
@@ -856,13 +923,13 @@ body {
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
   cursor: pointer;
 }
 
 .project-switch:hover { color: var(--text); }
-.project-switch-caret { color: var(--text-faint); font-size: 9px; }
+.project-switch-caret { color: var(--text-faint); font-size: 11px; }
 
 .picker {
   position: absolute;
@@ -897,7 +964,7 @@ body {
   background: var(--bg-inset);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .picker-filter:focus { outline: none; border-color: var(--accent-dim); }
@@ -906,7 +973,7 @@ body {
 
 .picker-section {
   padding: 8px 10px 4px;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -930,15 +997,15 @@ body {
 .picker-pick:hover:not(:disabled) { background: var(--bg-inset); }
 .picker-pick:disabled { cursor: default; opacity: 0.45; }
 
-.picker-name { display: block; font-size: 12px; color: var(--text); }
-.picker-meta { display: block; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.picker-name { display: block; font-size: 14px; color: var(--text); }
+.picker-meta { display: block; font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
 
 .picker-remove {
   border: 0;
   background: none;
   padding: 0 10px;
   color: var(--text-faint);
-  font-size: 14px;
+  font-size: 16px;
   cursor: pointer;
 }
 
@@ -966,8 +1033,8 @@ body {
   z-index: 5;
 }
 
-.home-tagline { color: var(--text-faint); font-size: 11px; }
-.home-account { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.home-tagline { color: var(--text-faint); font-size: 13px; }
+.home-account { font-family: var(--mono); font-size: 13px; color: var(--text-faint); }
 
 .home-body {
   max-width: 900px;
@@ -982,7 +1049,7 @@ body {
   align-items: baseline;
   gap: 8px;
   margin: 0 0 12px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -991,7 +1058,7 @@ body {
 
 .home-count {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1031,11 +1098,11 @@ button.home-card:hover:not(:disabled) { border-color: var(--accent-dim); }
 .home-card-open:hover:not(:disabled) { background: var(--bg-inset); }
 button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: default; }
 
-.home-card-name { display: block; font-size: 13px; color: var(--text); margin-bottom: 4px; }
+.home-card-name { display: block; font-size: 15px; color: var(--text); margin-bottom: 4px; }
 .home-card-meta {
   display: block;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
   line-height: 1.5;
 }
@@ -1046,7 +1113,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   background: none;
   padding: 5px 14px;
   font: inherit;
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -1105,11 +1172,11 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   text-align: left;
   pointer-events: auto;
 }
-.toast.is-sticky .toast-detail { white-space: pre-line; font-size: 12px; }
+.toast.is-sticky .toast-detail { white-space: pre-line; font-size: 14px; }
 .toast-dismiss {
   align-self: flex-end;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   padding: 3px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
@@ -1128,13 +1195,13 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 .toast.is-refused .toast-chord { color: var(--text-faint); }
 
 .toast-title {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
 }
 
 .toast-detail {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
 }
@@ -1169,7 +1236,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   align-items: center;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 13px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -1187,7 +1254,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 
 .keyhelp-chord {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--accent);
   border: 1px solid var(--border-strong);
   border-radius: 4px;
@@ -1196,8 +1263,8 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   background: var(--bg-inset);
 }
 
-.keyhelp-title { font-size: 12px; color: var(--text); }
-.keyhelp-desc { font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+.keyhelp-title { font-size: 14px; color: var(--text); }
+.keyhelp-desc { font-size: 13px; color: var(--text-faint); line-height: 1.5; }
 
 /* ---- add node ------------------------------------------------------------ */
 
@@ -1223,8 +1290,8 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 }
 
 .addnode-row.is-active { background: var(--bg-inset); }
-.addnode-label { display: block; font-size: 12px; color: var(--text); }
-.addnode-hint { display: block; font-size: 11px; color: var(--text-faint); line-height: 1.5; }
+.addnode-label { display: block; font-size: 14px; color: var(--text); }
+.addnode-hint { display: block; font-size: 13px; color: var(--text-faint); line-height: 1.5; }
 
 /* ---- add Civil to this project ------------------------------------------ */
 
@@ -1243,7 +1310,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1253,7 +1320,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 
 .add-civil-note {
   margin: 8px 0 0;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.6;
   color: var(--text-faint);
 }
@@ -1261,7 +1328,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 .add-civil-note code { font-family: var(--mono); color: var(--text-dim); }
 
 /* The second way in: read the repo's own code into a sketch (project.liftRepo). */
-.add-civil-or { margin: 14px 0 8px; font-size: 10px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
+.add-civil-or { margin: 14px 0 8px; font-size: 12px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; }
 .add-civil-button.is-lift { border-style: dashed; }
 .add-civil-button.is-busy { color: var(--warn); border-color: var(--warn); background: none; }
 
@@ -1282,7 +1349,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
 
 /* ---- sync ---------------------------------------------------------------- */
 
-.chip-branch { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
+.chip-branch { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 13px; }
 .chip-branch:disabled { cursor: default; }
 .chip-sync { color: var(--text-faint); margin-left: 2px; }
 .chip-branch:hover:not(:disabled) .chip-sync { color: var(--accent); }
@@ -1294,7 +1361,7 @@ button.home-card:disabled, .home-card-open:disabled { opacity: 0.45; cursor: def
   width: 100%;
   box-sizing: border-box;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
   background: var(--bg-inset);
   border: 1px solid transparent;
@@ -1312,7 +1379,7 @@ select.field { cursor: pointer; }
   background: none;
   padding: 0;
   font: inherit;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-faint);
   cursor: pointer;
 }
@@ -1357,7 +1424,7 @@ select.field { cursor: pointer; }
   border: 0;
   background: none;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
   padding: 5px 12px;
   cursor: pointer;
@@ -1369,7 +1436,7 @@ select.field { cursor: pointer; }
 .diff-kind {
   display: inline-block;
   width: 46px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 .diff-kind-add { color: var(--ok); }
@@ -1391,7 +1458,7 @@ select.field { cursor: pointer; }
   border: 1px solid var(--border);
   border-radius: 4px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
   background: var(--bg-inset);
 }
@@ -1412,7 +1479,7 @@ select.field { cursor: pointer; }
   background: transparent;
   color: var(--danger);
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   cursor: pointer;
 }
 .confirm-delete:hover { background: rgba(229, 103, 79, 0.12); }
@@ -1422,7 +1489,7 @@ select.field { cursor: pointer; }
 /* The centre hosts the drawer, so it needs a positioning context. */
 .centre { position: relative; }
 
-.runchip { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 11px; }
+.runchip { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 13px; }
 .runchip-running .dot, .runchip-queued .dot { background: var(--accent); animation: run-pulse 1.2s ease-in-out infinite; }
 .runchip-finished .dot { background: var(--ok); }
 .runchip-failed .dot { background: var(--danger); }
@@ -1455,7 +1522,7 @@ select.field { cursor: pointer; }
   height: 140px;
   resize: vertical;
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text);
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);
@@ -1463,7 +1530,7 @@ select.field { cursor: pointer; }
   padding: 8px 10px;
 }
 .runpanel-input:focus { outline: none; border-color: var(--accent-dim); }
-.runpanel-complaint { margin: 8px 0 0; color: var(--danger); font-size: 12px; }
+.runpanel-complaint { margin: 8px 0 0; color: var(--danger); font-size: 14px; }
 
 /* The event log drawer: the spine, on screen (PRD 9.1). */
 .runlog {
@@ -1489,7 +1556,7 @@ select.field { cursor: pointer; }
 
 .runlog-status {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   padding: 1px 8px;
   border-radius: 4px;
   border: 1px solid var(--border-strong);
@@ -1500,7 +1567,7 @@ select.field { cursor: pointer; }
 .runlog-status-failed { color: var(--danger); border-color: var(--danger); }
 .runlog-status-cancelled, .runlog-status-partial { color: var(--warn); }
 
-.runlog-count { font-size: 11px; color: var(--text-faint); }
+.runlog-count { font-size: 13px; color: var(--text-faint); }
 
 .runlog-body { flex: 1; overflow-y: auto; padding: 6px 0; }
 
@@ -1510,7 +1577,7 @@ select.field { cursor: pointer; }
   gap: 10px;
   padding: 2px 12px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 .runlog-seq { color: var(--text-faint); text-align: right; }
@@ -1555,7 +1622,7 @@ select.field { cursor: pointer; }
 }
 
 .preview-title {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1590,7 +1657,7 @@ select.field { cursor: pointer; }
   border: 1px solid var(--danger);
   border-radius: 4px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   max-width: 360px;
   word-break: break-word;
@@ -1605,7 +1672,7 @@ select.field { cursor: pointer; }
   padding: 6px 12px;
   border-top: 1px solid var(--border);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-dim);
 }
 
@@ -1630,7 +1697,7 @@ select.field { cursor: pointer; }
    in the accent used elsewhere for "Civil maintains this", not an error red. */
 .code-generated-banner {
   padding: 6px 12px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
   background: var(--bg-inset);
   border-bottom: 1px solid var(--border);
@@ -1652,7 +1719,7 @@ select.field { cursor: pointer; }
   padding: 8px 14px;
   background: var(--bg-raised);
   border-bottom: 1px solid var(--warn);
-  font-size: 12px;
+  font-size: 14px;
   color: var(--text-dim);
 }
 .drift-banner code { font-family: var(--mono); color: var(--text); }
@@ -1661,7 +1728,7 @@ select.field { cursor: pointer; }
 
 /* ---- source control (left pane, above the files) ------------------------- */
 
-.scm { border-bottom: 1px solid var(--border); font-size: 12px; }
+.scm { border-bottom: 1px solid var(--border); font-size: 14px; }
 .scm-block { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 .scm-block:last-child { border-bottom: 0; }
 .scm-row { display: flex; align-items: center; gap: 8px; min-height: 22px; }
@@ -1676,28 +1743,28 @@ select.field { cursor: pointer; }
 .scm-repo { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .scm-repo a { color: var(--text); text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-branch {
-  font-family: var(--mono); font-size: 11px; font-weight: 500;
+  font-family: var(--mono); font-size: 13px; font-weight: 500;
   padding: 1px 6px; border: 1px solid var(--border-strong); border-radius: 10px;
 }
 .scm-head {
   display: block; margin-top: 4px; color: var(--text); text-decoration: none;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.scm-head code, .scm-list code { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.scm-head code, .scm-list code { font-family: var(--mono); font-size: 13px; color: var(--text-faint); }
 .scm-group { margin-top: 6px; }
 .scm-group-title {
-  font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--text-faint); margin-bottom: 2px;
 }
 .scm-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .scm-list li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }
 .scm-list a { color: var(--text); text-decoration: none; }
 .scm-file { display: flex; align-items: center; gap: 6px; }
-.scm-kind { width: 12px; font-family: var(--mono); font-size: 11px; color: var(--warn); }
+.scm-kind { width: 12px; font-family: var(--mono); font-size: 13px; color: var(--warn); }
 .scm-kind-add { color: var(--ok); }
 .scm-path {
   flex: 1; min-width: 0; border: 0; background: none; padding: 0; text-align: left;
-  font: inherit; font-family: var(--mono); font-size: 11px; color: var(--text); cursor: pointer;
+  font: inherit; font-family: var(--mono); font-size: 13px; color: var(--text); cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .scm-path:hover { text-decoration: underline; }
@@ -1705,17 +1772,17 @@ select.field { cursor: pointer; }
 .scm-revert:hover { color: var(--text); }
 .scm-commit { display: flex; gap: 6px; margin-top: 8px; }
 .scm-commit .commit-message { flex: 1; min-width: 0; }
-.scm-why { margin-top: 4px; font-size: 11px; }
+.scm-why { margin-top: 4px; font-size: 13px; }
 /* The last lift's summary under its row: what was found and written, kept after the
    toast is dismissed, with the way to the inventory and the diff. */
-.scm-lift-result { margin: 4px 0 0 16px; font-size: 11px; line-height: 1.45; color: var(--text-dim); }
-.scm-lift-result .link { font-size: 11px; padding: 0; margin-right: 10px; }
-.scm-note { margin-top: 6px; font-size: 11px; color: var(--text); }
+.scm-lift-result { margin: 4px 0 0 16px; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
+.scm-lift-result .link { font-size: 13px; padding: 0; margin-right: 10px; }
+.scm-note { margin-top: 6px; font-size: 13px; color: var(--text); }
 .scm-conflicts { border-left: 2px solid var(--danger); padding-left: 8px; margin-left: -2px; }
 .scm-conflicts .scm-group-title { color: var(--danger); }
 .scm-conflict { display: block; white-space: normal; padding: 2px 0; }
 .scm-conflict .scm-path { display: block; width: 100%; }
-.scm-conflict-what { font-size: 11px; }
+.scm-conflict-what { font-size: 13px; }
 .scm-conflict-actions { display: flex; gap: 12px; }
 button.scm-branch {
   cursor: pointer; background: none; color: var(--text);
@@ -1726,15 +1793,15 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
 .scm-branch-menu { margin-top: 6px; padding: 6px; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-inset); }
 .scm-branch-row {
   display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 4px; border: 0; border-radius: 3px;
-  background: none; color: var(--text); font: inherit; font-family: var(--mono); font-size: 11px; text-align: left; cursor: pointer;
+  background: none; color: var(--text); font: inherit; font-family: var(--mono); font-size: 13px; text-align: left; cursor: pointer;
 }
 .scm-branch-row:hover:not(:disabled) { background: var(--bg-raised); }
 .scm-branch-row.current { cursor: default; font-weight: 600; }
-.scm-badge { font-size: 10px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-dim); }
+.scm-badge { font-size: 12px; padding: 0 5px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text-dim); }
 
 /* A lifted node's repository side in the inspector: the model's sentence, then files. */
-.repo-description { margin: 0 0 6px; font-size: 12px; line-height: 1.45; color: var(--text); }
-.repo-files { list-style: none; margin: 4px 0 0; padding: 0; font-size: 11px; line-height: 1.6; }
+.repo-description { margin: 0 0 6px; font-size: 14px; line-height: 1.45; color: var(--text); }
+.repo-files { list-style: none; margin: 4px 0 0; padding: 0; font-size: 13px; line-height: 1.6; }
 .repo-files code { font-family: var(--mono); color: var(--text-dim); }
 
 /* ---- reading the repository: progress and provenance (docs/lift-repo.md) ---- */
@@ -1752,13 +1819,13 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
   background: var(--accent);
   transition: width 0.4s ease;
 }
-.toast-live-detail { margin-top: 2px; font-size: 11px; color: var(--text-faint); }
-.scm-lift-progress { margin: 4px 0 0 16px; font-size: 11px; line-height: 1.45; color: var(--text-dim); }
-.scm-lift-detail { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-live-detail { margin-top: 2px; font-size: 13px; color: var(--text-faint); }
+.scm-lift-progress { margin: 4px 0 0 16px; font-size: 13px; line-height: 1.45; color: var(--text-dim); }
+.scm-lift-detail { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The inspector's "From the repo": how sure, who says so, and where it rests. */
 .provenance { margin: 6px 0 8px; }
-.provenance p { margin: 0 0 4px; font-size: 12px; line-height: 1.45; }
+.provenance p { margin: 0 0 4px; font-size: 14px; line-height: 1.45; }
 .provenance-confidence { display: flex; align-items: baseline; gap: 6px; }
 .confidence-badge {
   flex: none;
@@ -1768,15 +1835,15 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
   height: 16px;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
 }
 .confidence-badge.is-high { color: var(--ok); }
 .confidence-badge.is-medium { color: var(--text-dim); }
 .confidence-badge.is-low { color: var(--warn); border-style: dashed; }
-.provenance-voices { font-size: 11px; }
-.provenance-label { margin-top: 6px; font-size: 11px; }
+.provenance-voices { font-size: 13px; }
+.provenance-label { margin-top: 6px; font-size: 13px; }
 .repo-file-link {
   font: inherit;
   padding: 0;
@@ -1791,7 +1858,7 @@ button.scm-branch:hover, button.scm-branch.open { border-color: var(--accent); }
 /* A lifted node the weighing was unsure of reads as unsure; the sure stay quiet. */
 .node.node-uncertain { border-style: dashed; }
 .node-uncertain-mark {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--warn);
   border: 1px dashed var(--warn);

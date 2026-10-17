@@ -14,9 +14,16 @@ import type { FileMap } from './skeleton.js';
 
 type Point = { x: number; y: number };
 
-/** A node's face on the canvas, for spacing: wide enough for a name and a summary line. */
-const NODE_W = 220;
-const NODE_H = 90;
+/** A node's card on the canvas, for spacing: a name, three lines of summary, a badge. */
+const NODE_W = 300;
+const NODE_H = 170;
+
+/**
+ * Which layout wrote a diagram's positions. A position written by an older layout (a
+ * smaller card) is laid out again; one the author moved is kept — moving a node edits
+ * layout.nodes and leaves this stamp as it was.
+ */
+export const LAYOUT_BY = 'civil-dagre-2';
 
 /**
  * Laid out as a layered graph (dagre): left to right in the order work passes, lines
@@ -27,7 +34,7 @@ const NODE_H = 90;
  */
 export function layoutDiagram(diagram: ReadDiagram, shape: 'flow' | 'architecture'): Map<string, Point> {
   const g = new dagre.graphlib.Graph({ multigraph: true });
-  g.setGraph({ rankdir: 'LR', nodesep: 30, ranksep: 90, marginx: 40, marginy: 40 });
+  g.setGraph({ rankdir: 'LR', nodesep: 48, ranksep: 140, marginx: 40, marginy: 40 });
   g.setDefaultEdgeLabel(() => ({}));
   for (const n of diagram.nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
   const ids = new Set(diagram.nodes.map((n) => n.id));
@@ -92,7 +99,8 @@ export function readingDocuments(
   for (const d of reading.diagrams) {
     const path = `${dir}/${d.id}.yaml`;
     const fresh = layoutDiagram(d, reading.shape);
-    const theirs = ((parseSafely(existing[path])?.['layout'] as { nodes?: Record<string, Point> } | undefined)?.nodes ?? {}) as Record<string, Point>;
+    const written = parseSafely(existing[path])?.['layout'] as { by?: unknown; nodes?: Record<string, Point> } | undefined;
+    const theirs = (written?.by === LAYOUT_BY ? (written.nodes ?? {}) : {}) as Record<string, Point>;
     const layout: Record<string, Point> = {};
     for (const n of d.nodes) {
       const kept = theirs[n.id];
@@ -137,7 +145,7 @@ export function readingDocuments(
           ...(e.evidence.length ? { evidence: e.evidence } : {}),
         })),
       },
-      layout: { nodes: layout },
+      layout: { by: LAYOUT_BY, nodes: layout },
     };
     files[path] = stringify(body, { lineWidth: 0 });
   }

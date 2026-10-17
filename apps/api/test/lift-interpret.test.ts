@@ -103,9 +103,12 @@ test('the written views name the composition\'s parts, keep the author\'s positi
   );
   assert.deepEqual(result.diagnostics, []);
 
-  const moved = { ...first, 'civil/views/flow/orders.yaml': first['civil/views/flow/orders.yaml']!.replace(/checkout:\n\s+x: \d+\n\s+y: \d+/, 'checkout:\n      x: 999\n      y: 7') };
+  const moved = { ...first, 'civil/views/flow/orders.yaml': first['civil/views/flow/orders.yaml']!.replace(/checkout:\n\s+x: -?\d+\n\s+y: -?\d+/, 'checkout:\n      x: 999\n      y: 7') };
   const again = readingDocuments(reading, new Map([['orders', 'orders-svc']]), moved);
-  assert.deepEqual(parse(again['civil/views/flow/orders.yaml']!).layout.nodes.checkout, { x: 999, y: 7 });
+  assert.deepEqual(parse(again['civil/views/flow/orders.yaml']!).layout.nodes.checkout, { x: 999, y: 7 }, 'a position the author set is kept');
+  const older = { ...moved, 'civil/views/flow/orders.yaml': moved['civil/views/flow/orders.yaml']!.replace(/by: \S+/, 'by: civil-dagre-1') };
+  const relaid = readingDocuments(reading, new Map([['orders', 'orders-svc']]), older);
+  assert.notDeepEqual(parse(relaid['civil/views/flow/orders.yaml']!).layout.nodes.checkout, { x: 999, y: 7 }, 'one an older layout wrote is laid out again');
   assert.equal(readingDocuments(reading, new Map([['orders', 'orders-svc']]), {})['civil/views/flow/orders.yaml'], first['civil/views/flow/orders.yaml'], 'the same reading writes the same bytes');
 });
 

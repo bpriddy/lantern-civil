@@ -59,11 +59,14 @@ function Face({
   glyph,
   data,
   ports,
+  role,
 }: {
   kind: string;
   glyph: string;
   data: NodeData;
   ports: { in: boolean; out: boolean };
+  /** A flow or architecture node (docs/interpretation.md): the larger, scannable card. */
+  role?: boolean;
 }) {
   const fatal = data.diagnostics.some((d) => d.severity === 'error');
   const blocked = data.diagnostics.length > 0 && !fatal;
@@ -74,6 +77,7 @@ function Face({
       className={[
         'node',
         `node-${kind}`,
+        role ? 'node-role' : '',
         fatal ? 'node-error' : '',
         blocked ? 'node-blocked' : '',
         descent ? `node-descends node-descends-${descent.into}` : '',
@@ -231,7 +235,7 @@ const ROLE_GLYPHS: Record<string, string> = {
 const RoleNode = (props: NodeProps) => {
   const data = props.data as NodeData;
   const kind = (data.manifest as RoleItem).kind;
-  return <Face kind={kind} glyph={ROLE_GLYPHS[kind] ?? '•'} data={data} ports={{ in: true, out: true }} />;
+  return <Face kind={kind} glyph={ROLE_GLYPHS[kind] ?? '•'} data={data} ports={{ in: true, out: true }} role />;
 };
 
 const OutsideNode = (props: NodeProps) => {
